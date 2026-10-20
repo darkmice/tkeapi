@@ -46,11 +46,7 @@ pub async fn enrich_poll_response(
 }
 
 /// 客户端轮询出口补齐：fal 注入消耗；腾讯云与 fal 按官方路由组装信封。
-pub fn enrich_client_poll(
-    target_type: &str,
-    json_str: &str,
-    ctx: ClientPollCtx<'_>,
-) -> String {
+pub fn enrich_client_poll(target_type: &str, json_str: &str, ctx: ClientPollCtx<'_>) -> String {
     let p = ctx.path.trim_end_matches('/');
     let is_minimax_query =
         p.starts_with("/v2/query/video_generation/") || p == "/v2/query/video_generation";
@@ -58,15 +54,14 @@ pub fn enrich_client_poll(
     if target_type == "fal_video" {
         if is_minimax_query {
             let fallback_id = (!ctx.task_id.is_empty()).then_some(ctx.task_id);
-            let openai_json =
-                crate::relay::response_formatter::format_openai("视频", json_str, true, fallback_id);
+            let openai_json = crate::relay::response_formatter::format_openai(
+                "视频",
+                json_str,
+                true,
+                fallback_id,
+            );
             let with_usage = vendors::inject_fal_poll_usage(&openai_json, ctx.billing_features);
-            super::wrap_official_client(
-                ctx.path,
-                &with_usage,
-                ctx.model,
-                ctx.request_content,
-            )
+            super::wrap_official_client(ctx.path, &with_usage, ctx.model, ctx.request_content)
         } else {
             vendors::inject_fal_poll_usage(json_str, ctx.billing_features)
         }

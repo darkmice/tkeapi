@@ -87,6 +87,13 @@ static WAN_VID_EN: LazyLock<String> = LazyLock::new(|| {
         include_str!("en/common-errors.md")
     )
 });
+static VIDU_VID_EN: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{}\n\n{}",
+        include_str!("en/vidu-video.md"),
+        include_str!("en/common-errors.md")
+    )
+});
 
 pub struct ArticleTranslation {
     pub lang: &'static str,
@@ -121,10 +128,10 @@ pub fn get_category_translations(slug: &str) -> Vec<(&'static str, &'static str)
             ("vi", "4. Giao thức Volcengine Ark"),
         ],
         "ali-kling" => vec![
-            ("en", "5. Ali DashScope & Kling Protocol"),
-            ("ja", "5. Ali DashScope & Kling プロトコル"),
-            ("ko", "5. 알리 DashScope & Kling 프로토콜"),
-            ("vi", "5. Giao thức Ali DashScope & Kling"),
+            ("en", "5. Vendor Native Protocols (DashScope/Kling/MiniMax/Vidu)"),
+            ("ja", "5. 各社ネイティブプロトコル (DashScope/Kling/MiniMax/Vidu)"),
+            ("ko", "5. 공급업체 네이티브 프로토콜 (DashScope/Kling/MiniMax/Vidu)"),
+            ("vi", "5. Giao thức gốc của nhà cung cấp (DashScope/Kling/MiniMax/Vidu)"),
         ],
         "google-anthropic" => vec![
             ("en", "6. Google & Anthropic Protocol"),
@@ -420,13 +427,11 @@ pub fn get_article_translations(slug: &str) -> Vec<ArticleTranslation> {
                 content: include_str!("vi/kling-ai.md"),
             },
         ],
-        "minimax-native" => vec![
-            ArticleTranslation {
-                lang: "en",
-                title: "MiniMax Native Video API",
-                content: include_str!("en/minimax-native.md"),
-            },
-        ],
+        "minimax-native" => vec![ArticleTranslation {
+            lang: "en",
+            title: "MiniMax Native Video API",
+            content: include_str!("en/minimax-native.md"),
+        }],
         "google-gemini" => vec![
             ArticleTranslation {
                 lang: "en",
@@ -613,6 +618,16 @@ pub fn get_article_translations(slug: &str) -> Vec<ArticleTranslation> {
             lang: "en",
             title: "Alibaba Wan Video Generation",
             content: &*WAN_VID_EN,
+        }],
+        "vidu-video" => vec![ArticleTranslation {
+            lang: "en",
+            title: "Vidu Q4 Video Generation",
+            content: &*VIDU_VID_EN,
+        }],
+        "vidu-native" => vec![ArticleTranslation {
+            lang: "en",
+            title: "Vidu Native Protocol Integration",
+            content: include_str!("en/vidu-native.md"),
         }],
         _ => vec![],
     }

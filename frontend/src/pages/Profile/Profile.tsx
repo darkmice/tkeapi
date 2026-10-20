@@ -5,12 +5,12 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
-import { Card, Typography, Avatar, Space, List, Button, Modal, Form, Input, message, Popconfirm, Select, Grid, Tag, Spin, Alert } from 'antd';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Card, Typography, Avatar, Space, List, Button, Modal, Form, Input, message, Popconfirm, Select, Grid, Tag, Spin, Alert, DatePicker } from 'antd';
 import { UserOutlined, CameraOutlined, LockOutlined, MailOutlined, MobileOutlined, WechatOutlined, GoogleOutlined, SafetyOutlined, IdcardOutlined, EyeOutlined, RedoOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Settings } from 'lucide-react';
 import request from '../../utils/request';
 import type { User, UserKyc, UserKycStatus, UserKycType } from '../../types';
@@ -24,9 +24,44 @@ import UserKycFormFields, {
   formValuesToKycPayload,
 } from '../../components/UserKycFormFields';
 import UserKycDetailViewer from '../../components/UserKycDetailViewer';
+import AvatarCropModal from '../../components/AvatarCropModal';
+import PageHeader from '../../components/PageHeader';
 import { maskDocNumber } from '../../utils/maskDocNumber';
 
 const { Title, Text } = Typography;
+
+function birthYmPayload(value: unknown): string {
+  if (dayjs.isDayjs(value)) {
+    return value.isValid() ? value.format('YYYY-MM') : '';
+  }
+  if (typeof value === 'string') return value.trim();
+  return '';
+}
+
+function formatBirthYm(value: string | undefined, isEn: boolean) {
+  if (!value) return value;
+  const matched = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!matched || isEn) return value;
+  return `${matched[1]}年${matched[2]}月`;
+}
+
+/** 姓在前：中文、日文、韩文、越南文。其余语言名在前、姓在后。 */
+const SURNAME_FIRST_LANG = /^(zh|ja|ko|vi)(-|$)/i;
+
+function isCjkNamePart(value: string) {
+  return /^[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af·・\s]+$/.test(value);
+}
+
+function formatProfileName(firstName?: string | null, lastName?: string | null, language?: string) {
+  const given = (firstName || '').trim();
+  const family = (lastName || '').trim();
+  if (!given && !family) return undefined;
+  const surnameFirst = SURNAME_FIRST_LANG.test((language || 'zh').replace('_', '-'));
+  const parts = (surnameFirst ? [family, given] : [given, family]).filter(Boolean);
+  if (parts.length < 2) return parts[0];
+  const tight = surnameFirst && parts.every(isCjkNamePart);
+  return parts.join(tight ? '' : ' ');
+}
 
 const timezoneOptions = (() => {
   const timezones = Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : [
@@ -82,13 +117,14 @@ const formatTimezoneDisplay = (tz: string) => {
 const Profile: React.FC = () => {
   const { t, i18n } = useTranslation();
   const isEn = i18n.language === 'en';
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [modalType, setModalType] = useState<string>('nickname');
   const [form] = Form.useForm();
   const [kycForm] = Form.useForm();
-  const { setUser } = useAuthStore();
+  const { setUser, logout } = useAuthStore();
   const { settings, fetchSettings } = useSettingsStore();
   const { themeMode } = useThemeStore();
   const isLight = themeMode === 'light';
@@ -100,6 +136,8 @@ const Profile: React.FC = () => {
   const avatarBg = isLight ? '#e8e8e8' : '#303030';
   const avatarBorder = isLight ? '2px solid #d9d9d9' : '2px solid #505050';
   const [countdowns, setCountdowns] = useState<Record<string, number>>({});
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const { useBreakpoint } = Grid;
   const screens = useBreakpoint();
@@ -144,6 +182,41 @@ const Profile: React.FC = () => {
     fetchProfile();
     fetchSettings(true);
   }, [fetchProfile, fetchSettings]);
+
+  const handleAvatarPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      message.error(t('profile.avatar_invalid_type', '头像只支持图片格式'));
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      message.error(t('profile.avatar_too_large', '图片不能超过 50MB'));
+      return;
+    }
+    setAvatarFile(file);
+  };
+
+  const handleAvatarCropped = async (blob: Blob) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', blob, 'avatar.jpg');
+      const res = await (request.post('/user/avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }) as unknown as Promise<{ avatar: string }>);
+      if (profile) {
+        const next = { ...profile, avatar: res.avatar };
+        setProfile(next);
+        setUser(next);
+      }
+      setAvatarFile(null);
+      message.success(t('profile.avatar_updated', '头像已更新'));
+    } catch (err) {
+      const e = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
+      message.error(e?.response?.data?.error?.message || e?.message || t('profile.avatar_upload_failed', '头像上传失败'));
+    }
+  };
 
   const fetchKyc = useCallback(async () => {
     setKycLoading(true);
@@ -230,7 +303,11 @@ const Profile: React.FC = () => {
     setWechatBindState('');
     request
       .get('/user/bind/oauth-state', {
-        params: { provider: 'wechat', action: wechatBindStep },
+        params: { 
+          provider: 'wechat', 
+          action: wechatBindStep,
+          origin: window.location.origin,
+        },
         skipErrorHandler: true,
       } as any)
       .then((res: any) => {
@@ -238,7 +315,7 @@ const Profile: React.FC = () => {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [isModalVisible, modalType, wechatBindStep, wechatQRKey]);
+  }, [isModalVisible, modalType, wechatBindStep, wechatQRKey, settings?.wechat_oauth_callback_domain]);
 
   // ── 监听微信回调 URL 参数 ──────────────────────────────────
   useEffect(() => {
@@ -265,7 +342,7 @@ const Profile: React.FC = () => {
           fetchProfile();
           break;
         case 'bindconflict':
-          message.error(t('profile.wechat_bind_conflict', '此微信已绑定其他账号'));
+          message.error(t('profile.wechat_bind_conflict', '该微信绑定账号数已达上限'));
           break;
       }
     }
@@ -315,16 +392,21 @@ const Profile: React.FC = () => {
   }, [countdowns]);
 
   const handleAction = (type: string) => {
-    setModalType(type);
+    const modal = type === 'first_name' || type === 'last_name' ? 'name' : type;
+    setModalType(modal);
     form.resetFields();
-    if (type === 'bind_wechat') {
+    if (modal === 'bind_wechat') {
       // 已绑定微信 → 换绑模式（先验证）；未绑定 → 直接绑定
       setWechatBindStep(profile?.wechat_id ? 'verify' : 'bind');
       setWechatQRKey(Date.now());
-    } else if (type === 'timezone') {
+    } else if (modal === 'timezone') {
       form.setFieldsValue({ timezone: profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai' });
-    } else if (type === 'nickname') {
+    } else if (modal === 'nickname') {
       form.setFieldsValue({ nickname: profile?.nickname || '' });
+    } else if (modal === 'name') {
+      form.setFieldsValue({ first_name: profile?.first_name || '', last_name: profile?.last_name || '' });
+    } else if (modal === 'birth_ym') {
+      form.setFieldsValue({ birth_ym: profile?.birth_ym ? dayjs(profile.birth_ym) : null });
     }
     setIsModalVisible(true);
   };
@@ -346,7 +428,18 @@ const Profile: React.FC = () => {
 
   const handleUpdate = async (values: any) => {
     try {
-      await request.put('/user/profile', values);
+      const payload = { ...values };
+      if (modalType === 'birth_ym') {
+        payload.birth_ym = birthYmPayload(payload.birth_ym);
+      }
+      await request.put('/user/profile', payload);
+      if (payload.password) {
+        message.success(t('auth.reset_password_success', '密码修改成功，请重新登录'));
+        setIsModalVisible(false);
+        logout();
+        navigate('/login');
+        return;
+      }
       message.success(t('profile.edit_success'));
       setIsModalVisible(false);
       fetchProfile();
@@ -438,6 +531,12 @@ const Profile: React.FC = () => {
   const basicInfoItems = [
     { key: 'username', label: t('profile.account'), value: profile?.username },
     { key: 'nickname', label: t('profile.nickname'), value: profile?.nickname },
+    {
+      key: 'name',
+      label: t('profile.name', '姓名'),
+      value: formatProfileName(profile?.first_name, profile?.last_name, i18n.language),
+    },
+    { key: 'birth_ym', label: t('profile.birth_ym', '出生年月'), value: formatBirthYm(profile?.birth_ym, isEn) },
     { key: 'timezone', label: t('profile.timezone', '时区'), value: formatTimezoneDisplay(profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai') },
   ];
 
@@ -455,6 +554,36 @@ const Profile: React.FC = () => {
             ]}
           >
             <Input placeholder={t('profile.nickname')} />
+          </Form.Item>
+        );
+      case 'name':
+        return (
+          <>
+            <Form.Item
+              name="first_name"
+              label={t('profile.first_name', '名')}
+              rules={[{ max: 32, message: t('profile.first_name_max', '名长度最多不能超过 32 个字符') }]}
+            >
+              <Input placeholder={t('profile.first_name', '名')} allowClear />
+            </Form.Item>
+            <Form.Item
+              name="last_name"
+              label={t('profile.last_name', '姓氏')}
+              rules={[{ max: 32, message: t('profile.last_name_max', '姓氏长度最多不能超过 32 个字符') }]}
+            >
+              <Input placeholder={t('profile.last_name', '姓氏')} allowClear />
+            </Form.Item>
+          </>
+        );
+      case 'birth_ym':
+        return (
+          <Form.Item name="birth_ym" label={t('profile.birth_ym', '出生年月')}>
+            <DatePicker
+              picker="month"
+              style={{ width: '100%' }}
+              placeholder={t('profile.birth_ym_placeholder', '选择出生年月')}
+              disabledDate={(current) => !!current && (current.isAfter(dayjs(), 'month') || current.year() < 1900)}
+            />
           </Form.Item>
         );
       case 'timezone':
@@ -544,7 +673,8 @@ const Profile: React.FC = () => {
         );
       case 'bind_wechat': {
         const appId = settings?.wechat_oauth_app_id || '';
-        const redirectUri = `${window.location.origin}/api/v1/user/bind/wechat/callback`;
+        const wechatBaseOrigin = settings?.wechat_oauth_callback_domain || window.location.origin;
+        const redirectUri = `${wechatBaseOrigin}/api/v1/user/bind/wechat/callback`;
         const isVerifyStep = wechatBindStep === 'verify';
         return (
           <div style={{ textAlign: 'center', padding: '12px 0' }}>
@@ -579,6 +709,8 @@ const Profile: React.FC = () => {
     if (modalType === 'bind_wechat') return wechatBindStep === 'verify' ? t('profile.verify_wechat_identity', '验证微信身份') : t('profile.bind_wechat');
     if (isBindModal) return modalType === 'bind_mobile' ? t('profile.bind_mobile_title') : t('profile.bind_email_title');
     if (modalType === 'nickname') return t('profile.modify_nickname');
+    if (modalType === 'name') return t('profile.modify_name', '修改姓名');
+    if (modalType === 'birth_ym') return t('profile.modify_birth_ym', '修改出生年月');
     if (modalType === 'timezone') return t('profile.timezone', '修改时区');
     if (modalType === 'password') return t('profile.modify_password');
     return '';
@@ -587,23 +719,28 @@ const Profile: React.FC = () => {
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: screens.md ? '16px 0 40px 0' : '12px 0 24px 0' }}>
       {/* Header Area */}
-      <div style={{ marginBottom: 32 }}>
-        <Title level={2} style={{ margin: 0, fontWeight: 700, color: mainText, letterSpacing: '-0.025em' }}>
-          {t('menu.profile', '个人中心')}
-        </Title>
-        <Text style={{ color: subText, fontSize: 15, marginTop: 4, display: 'block' }}>
-          {isEn ? 'Manage your personal information and security settings.' : '管理您的个人基本信息与账号安全设置。'}
-        </Text>
-      </div>
+      <PageHeader
+        title={t('menu.profile', '个人中心')}
+        description={isEn ? 'Manage your personal information and security settings.' : '管理您的个人基本信息与账号安全设置。'}
+        marginBottom={32}
+      />
       {/* Profile Header */}
       <Card style={{ marginBottom: 24, borderRadius: 8, background: cardBg, border: cardBorder }}
         styles={{ body: { padding: '32px' } }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           <div style={{ position: 'relative' }}>
-            <Avatar size={80} icon={<UserOutlined style={{ color: isLight ? '#71717a' : '#a1a1aa' }} />} style={{ background: avatarBg, border: avatarBorder }} />
+            <Avatar size={80} src={profile?.avatar || undefined} icon={<UserOutlined style={{ color: isLight ? '#71717a' : '#a1a1aa' }} />}
+              onClick={() => avatarInputRef.current?.click()}
+              style={{ background: avatarBg, border: avatarBorder, cursor: 'pointer' }} />
             <Button shape="circle" size="small" icon={<CameraOutlined style={{ fontSize: 10 }} />}
+              aria-label={t('profile.avatar_change', '更换头像')}
+              onClick={() => avatarInputRef.current?.click()}
               style={{ position: 'absolute', bottom: 0, right: 0, background: isLight ? '#18181b' : '#fafafa', border: 'none', color: isLight ? '#fafafa' : '#18181b' }} />
+            <input ref={avatarInputRef} type="file" accept="image/*" hidden onChange={handleAvatarPicked} />
           </div>
+          {avatarFile && (
+            <AvatarCropModal file={avatarFile} onCancel={() => setAvatarFile(null)} onConfirm={handleAvatarCropped} />
+          )}
           <div style={{ marginLeft: 24 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
               <Title level={3} style={{ margin: 0, color: mainText }}>
@@ -644,7 +781,7 @@ const Profile: React.FC = () => {
             <List.Item 
               className="hover:bg-zinc-100/30 dark:hover:bg-zinc-800/30 transition-all duration-200"
               style={{ borderBottom: index === basicInfoItems.length - 1 ? 'none' : listBorder, padding: '16px 24px' }}
-              extra={(item.key === 'nickname' || item.key === 'timezone') && (
+              extra={(item.key === 'nickname' || item.key === 'timezone' || item.key === 'name' || item.key === 'birth_ym') && (
                 <button
                   onClick={() => handleAction(item.key)}
                   className="p-1 rounded-md border border-zinc-200 dark:border-zinc-800 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors cursor-pointer"

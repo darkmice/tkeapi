@@ -43,10 +43,15 @@
 | 알리바바 Bailian | 텍스트 임베딩 | `/compatible-mode/v1/embeddings` | `POST` |
 | 알리바바 Bailian | 문서 재순위화 (Rerank) | `/compatible-api/v1/reranks` | `POST` |
 | 알리바바 Bailian | 문서 재순위화 (Native) | `/api/v1/services/rerank/text-rerank/text-rerank` | `POST` |
-| Kling AI | 텍스트 기반 비디오 생성 (Kling) | `/v1/videos/text2video` | `POST` |
-| Kling AI | 이미지 기반 비디오 생성 (Kling) | `/v1/videos/image2video` | `POST` |
-| Kling AI | 작업 상태 조회 (비디오/이미지) | `/v1/videos/{endpoint}/{task_id}` | `GET` |
-| Google | Gemini 텍스트 생성 | `/v1beta/models/{model}:generateContent` | `POST` |
-| Google | Gemini 스트리밍 텍스트 생성 | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Kling AI | 텍스트 기반 비디오 생성 (Native) | `/text-to-video/{model_id}` | `POST` |
+| Kling AI | 이미지 기반 비디오 생성 (Native) | `/image-to-video/{model_id}` | `POST` |
+| Kling AI | Omni 비디오 생성 (Native) | `/omni-video/{model_id}` | `POST` |
+| Kling AI | 작업 상태 조회 (Native) | `/tasks` | `GET` |
+| Google | Gemini 콘텐츠 생성 | `/v1/models/{model}:generateContent` | `POST` |
+| Google | Gemini 스트리밍 콘텐츠 생성 | `/v1/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini 콘텐츠 생성 (v1beta) | `/v1beta/models/{model}:generateContent` | `POST` |
+| Google | Gemini 스트리밍 콘텐츠 생성 (v1beta) | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini Interactions 인터랙션 | `/v1/interactions` | `POST` |
+| Google | Gemini Interactions 인터랙션 (v1beta) | `/v1beta/interactions` | `POST` |
 | Anthropic | Claude 네이티브 메시지 | `/v1/messages` | `POST` |
 | MiniMax | Anthropic 호환 Messages | `/anthropic/v1/messages` | `POST` |

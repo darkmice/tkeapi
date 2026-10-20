@@ -22,10 +22,8 @@ fn is_volc_enhance_version(_: &str) -> bool {
 }
 
 fn cascade_is_res(s: &str) -> bool {
-    matches!(
-        s.trim().to_ascii_lowercase().as_str(),
-        "480p" | "720p" | "768p" | "1080p" | "2k" | "4k"
-    )
+    let norm = crate::relay::usage_extractor::normalize_resolution_label(s);
+    !norm.is_empty() && norm.chars().any(|c| c.is_ascii_digit())
 }
 
 /// 有分辨率计费时返回已启用集合；非分辨率计费或无配置则返回 None
@@ -137,26 +135,46 @@ pub(crate) fn cascade_check_resolution(
     )))
 }
 
-/// 优先用转发规则 res_base[目标]；缺省/非法回退默认一级底座（allowed 首项）
+/// 解析级联底座分辨率：预设档位安全回退默认一级底座，自定义档位未配置底座则抛错避免无意义调用
 pub(crate) fn cascade_resolve_base(
     target: &str,
     res_base: &HashMap<String, String>,
-) -> &'static str {
-    let key = target.trim().to_ascii_lowercase();
-    let allowed: &'static [&'static str] = match key.as_str() {
-        "480p" => &["480p"],
-        "720p" => &["480p", "720p"],
-        "1080p" => &["720p", "480p", "1080p"],
-        "2k" | "4k" => &["1080p", "720p", "480p"],
-        _ => &["720p"],
-    };
-    res_base
+) -> AppResult<String> {
+    let key = crate::relay::usage_extractor::normalize_resolution_label(target);
+    let configured = res_base
         .get(&key)
-        .and_then(|configured| {
-            let b = configured.trim().to_ascii_lowercase();
-            allowed.iter().copied().find(|a| a.eq_ignore_ascii_case(&b))
-        })
-        .unwrap_or(allowed[0])
+        .map(String::as_str)
+        .filter(|s| !s.trim().is_empty());
+
+    match key.as_str() {
+        "480p" => Ok(configured.unwrap_or("480p").into()),
+        "540p" => Ok(configured.filter(|&b| b == "480p" || b == "540p").unwrap_or("540p").into()),
+        "720p" => Ok(configured.filter(|&b| b == "480p" || b == "720p").unwrap_or("480p").into()),
+        "1080p" => Ok(configured.filter(|&b| matches!(b, "720p" | "480p" | "1080p")).unwrap_or("720p").into()),
+        "2k" | "4k" => Ok(configured.filter(|&b| matches!(b, "1080p" | "720p" | "480p")).unwrap_or("1080p").into()),
+        _ => configured
+            .map(|b| b.trim().to_string())
+            .ok_or_else(|| AppError::BadRequest(format!("级联规则未配置分辨率 {} 的底座", target.trim()))),
+    }
+}
+
+/// 根据目标分辨率与成片宽高比（如 "1:1", "3:4" 等），从规则中解析短边限制像素
+pub(crate) fn resolve_cascade_res_limit(
+    res_limit: &HashMap<String, i64>,
+    target_res: &str,
+    ratio_opt: Option<&str>,
+) -> Option<i64> {
+    let norm_res = target_res.trim().to_ascii_lowercase();
+    // 1. 优先匹配指定比例（如 "720p@1:1"）
+    if let Some(r) = ratio_opt {
+        let norm_ratio = r.trim().to_ascii_lowercase();
+        let key = format!("{}@{}", norm_res, norm_ratio);
+        if let Some(&limit) = res_limit.get(&key).filter(|&&l| (128..=4320).contains(&l)) {
+            return Some(limit);
+        }
+    }
+    // 2. 兜底匹配该分辨率全局短边（如 "720p"）
+    res_limit.get(&norm_res).copied().filter(|&l| (128..=4320).contains(&l))
 }
 
 /// 480→720 且 ratio∈{16:9,9:16} 的裁剪角点。仅信 S1 回显分辨率；ratio 优先 S1，缺则 hints。
@@ -201,28 +219,20 @@ fn cascade_crop_rect(
         }
     } else {
         match ratio {
-            "16:9" => Some(
-                resolved
-                    .crop_coords_480p
-                    .get("16:9")
-                    .copied()
-                    .unwrap_or(if is_tencent {
-                        (0, 5, 864, 491)
-                    } else {
-                        (2, 6, 862, 490)
-                    }),
-            ),
-            "9:16" => Some(
-                resolved
-                    .crop_coords_480p
-                    .get("9:16")
-                    .copied()
-                    .unwrap_or(if is_tencent {
-                        (5, 0, 491, 864)
-                    } else {
-                        (6, 2, 490, 862)
-                    }),
-            ),
+            "16:9" => Some(resolved.crop_coords_480p.get("16:9").copied().unwrap_or(
+                if is_tencent {
+                    (0, 5, 864, 491)
+                } else {
+                    (2, 6, 862, 490)
+                },
+            )),
+            "9:16" => Some(resolved.crop_coords_480p.get("9:16").copied().unwrap_or(
+                if is_tencent {
+                    (5, 0, 491, 864)
+                } else {
+                    (6, 2, 490, 862)
+                },
+            )),
             _ => None,
         }
     }
@@ -298,6 +308,35 @@ async fn cascade_maybe_crop(
     cropped.unwrap_or_else(|| video_url.to_string())
 }
 
+pub(crate) fn cascade_is_skip_s2(plugin_tag: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(plugin_tag) else {
+        return false;
+    };
+    v.pointer("/cascade/skip_s2")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false)
+}
+
+/// 级联跳过 S2 时：直接对 S1 响应中的 usage 按 res_mul 分辨率倍率放大，并返回实际生效倍率
+pub(crate) fn cascade_apply_s1_res_mul(
+    body: &mut String,
+    plugin_tag: &str,
+    req_content: &str,
+    res_mul: &HashMap<String, f64>,
+) -> f64 {
+    let res = cascade_json_str(plugin_tag, "/cascade/resolution")
+        .or_else(|| cascade_json_str(req_content, "/resolution"))
+        .unwrap_or_else(|| "720p".into());
+    let mul = forward::lookup_res_mul(res_mul, &res);
+    if (mul - 1.0).abs() > 1e-9 {
+        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(body) {
+            forward::scale_usage_in_json(&mut v, mul);
+            *body = v.to_string();
+        }
+    }
+    mul
+}
+
 fn cascade_s2_ready(plugin_tag: &str) -> Option<(String, String)> {
     let v = serde_json::from_str::<serde_json::Value>(plugin_tag).ok()?;
     let r = v.get("cascade")?.get("s2_ready")?;
@@ -305,6 +344,19 @@ fn cascade_s2_ready(plugin_tag: &str) -> Option<(String, String)> {
         r.get("s1")?.as_str()?.to_string(),
         r.get("s2")?.as_str()?.to_string(),
     ))
+}
+
+fn s2_first_video_url(s2: &serde_json::Value) -> Option<String> {
+    response_formatter::find_urls(s2)
+        .into_iter()
+        .next()
+        .filter(|s| !s.is_empty())
+}
+
+fn set_s2_video_url(s2: &mut serde_json::Value, url: &str) {
+    if let Some(res_obj) = s2.pointer_mut("/result").and_then(|v| v.as_object_mut()) {
+        res_obj.insert("video_url".into(), serde_json::json!(url));
+    }
 }
 
 /// 倍率 + 后裁 + 抽尾帧。失败跳过，不整单失败。
@@ -341,11 +393,7 @@ async fn cascade_s2_postprocess(
         && resolved.crop_timing == "post"
         && s2.get("cropped_720p").and_then(|v| v.as_bool()) != Some(true)
     {
-        if let Some(video_url) = response_formatter::find_urls(&s2)
-            .into_iter()
-            .next()
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(video_url) = s2_first_video_url(&s2) {
             let req_hint: serde_json::Value =
                 serde_json::from_str(request_content).unwrap_or(serde_json::json!({}));
             let cropped_url = cascade_maybe_crop(
@@ -363,9 +411,7 @@ async fn cascade_s2_postprocess(
             )
             .await;
             if cropped_url != video_url {
-                if let Some(res_obj) = s2.pointer_mut("/result").and_then(|v| v.as_object_mut()) {
-                    res_obj.insert("video_url".into(), serde_json::json!(cropped_url));
-                }
+                set_s2_video_url(&mut s2, &cropped_url);
                 if let Some(obj) = s2.as_object_mut() {
                     obj.insert("cropped_720p".into(), serde_json::json!(true));
                 }
@@ -374,12 +420,61 @@ async fn cascade_s2_postprocess(
         }
     }
 
+    let output_format = cascade_json_str(plugin_tag, "/cascade/output_format")
+        .or_else(|| cascade_json_str(request_content, "/output_format"))
+        .unwrap_or_default();
+
+    if output_format.eq_ignore_ascii_case("mov") {
+        if let Some(video_url) = s2_first_video_url(&s2) {
+            let mov_res: Result<String, String> = match engine.as_str() {
+                "tencent" => {
+                    #[cfg(feature = "plugin_tencent_enhance")]
+                    {
+                        crate::api::plugins::transcode_tencent_mov(
+                            state,
+                            &video_url,
+                            Some(relay_log_id),
+                        )
+                        .await
+                    }
+                    #[cfg(not(feature = "plugin_tencent_enhance"))]
+                    {
+                        let _ = state;
+                        Err("增强插件未编译".into())
+                    }
+                }
+                _ => {
+                    #[cfg(feature = "plugin_volcengine_enhance")]
+                    {
+                        crate::api::plugins::transcode_volc_mov(
+                            state,
+                            s2_ch,
+                            s2_auth,
+                            &video_url,
+                            Some(relay_log_id),
+                        )
+                        .await
+                    }
+                    #[cfg(not(feature = "plugin_volcengine_enhance"))]
+                    {
+                        Err("增强插件未编译".into())
+                    }
+                }
+            };
+            match mov_res {
+                Ok(mov_url) => {
+                    set_s2_video_url(&mut s2, &mov_url);
+                    s2_modified = true;
+                }
+                Err(e) => {
+                    crate::relay_debug!("[Cascade S2] MOV 转码失败: {}", e);
+                }
+            }
+        }
+    }
+
     if response_formatter::find_last_frame_url(&s1).is_some() {
-        if let Some(video_url) = response_formatter::find_urls(&s2)
-            .into_iter()
-            .next()
-            .filter(|s| !s.is_empty())
-        {
+        if let Some(video_url) = s2_first_video_url(&s2) {
             let frame: Option<String> = match engine.as_str() {
                 "tencent" => {
                     #[cfg(feature = "plugin_tencent_enhance")]
@@ -459,8 +554,7 @@ pub(crate) async fn cascade_on_s2_succeeded<'a>(
     let plugin_tag = plugin_tag.to_string();
     let request_content = request_content.to_string();
     tokio::spawn(async move {
-        let Some(_g) =
-            CascadeS2InflightGuard::try_acquire(&state_bg.cascade_s2_inflight, log_id)
+        let Some(_g) = CascadeS2InflightGuard::try_acquire(&state_bg.cascade_s2_inflight, log_id)
         else {
             return;
         };
@@ -474,15 +568,19 @@ pub(crate) async fn cascade_on_s2_succeeded<'a>(
             log_id,
         )
         .await;
-        let mut v = serde_json::from_str::<serde_json::Value>(&plugin_tag)
-            .unwrap_or(serde_json::json!({}));
+        let mut v =
+            serde_json::from_str::<serde_json::Value>(&plugin_tag).unwrap_or(serde_json::json!({}));
         v["cascade"]["s2_ready"] = serde_json::json!({ "s1": s1, "s2": s2 });
         let t = v.to_string();
-        let _ = sqlx::query(&state_bg.db.format_query("UPDATE logs SET plugin_tag = ? WHERE id = ?"))
-            .bind(&t)
-            .bind(log_id)
-            .execute(&state_bg.db.pool)
-            .await;
+        let _ = sqlx::query(
+            &state_bg
+                .db
+                .format_query("UPDATE logs SET plugin_tag = ? WHERE id = ?"),
+        )
+        .bind(&t)
+        .bind(log_id)
+        .execute(&state_bg.db.pool)
+        .await;
     });
     None
 }
@@ -565,16 +663,29 @@ pub(crate) struct CascadeS2PollOk {
 }
 
 pub(crate) enum CascadeS2PollErr {
-    Retryable { status: u16, message: String },
+    Retryable {
+        status: u16,
+        message: String,
+    },
     /// 插件未编译：不回落通用 GET。两家都编译时不会构造。
     #[cfg(not(all(
         feature = "plugin_tencent_enhance",
         feature = "plugin_volcengine_enhance"
     )))]
-    Settled { status: u16, message: String },
+    Settled {
+        status: u16,
+        message: String,
+    },
 }
 
 /// S2 单次查询：按引擎走插件；未编译则 Settled，不回落通用 GET。
+#[cfg_attr(
+    not(any(
+        feature = "plugin_tencent_enhance",
+        feature = "plugin_volcengine_enhance"
+    )),
+    allow(unreachable_code, unused_variables)
+)]
 pub(crate) async fn cascade_s2_poll(
     state: &AppState,
     plugin_tag: &str,
@@ -587,7 +698,7 @@ pub(crate) async fn cascade_s2_poll(
             let _ = state;
             return Err(CascadeS2PollErr::Settled {
                 status: 400,
-                message: "腾讯云增强插件未编译".into(),
+                message: "增强插件未编译".into(),
             });
         }
         #[cfg(feature = "plugin_tencent_enhance")]
@@ -598,7 +709,7 @@ pub(crate) async fn cascade_s2_poll(
             let _ = poll;
             return Err(CascadeS2PollErr::Settled {
                 status: 400,
-                message: "火山增强插件未编译".into(),
+                message: "增强插件未编译".into(),
             });
         }
         #[cfg(feature = "plugin_volcengine_enhance")]
@@ -692,8 +803,8 @@ fn cascade_s1_with_s2_url(s1_raw: &str, s2: &serde_json::Value, plugin_tag: &str
         ("framespersecond", fps_lit.as_str()),
         ("fps", fps_lit.as_str()),
     ];
-    let frame_lit = response_formatter::find_last_frame_url(s2)
-        .map(|f| serde_json::json!(f).to_string());
+    let frame_lit =
+        response_formatter::find_last_frame_url(s2).map(|f| serde_json::json!(f).to_string());
     if let Some(ref fl) = frame_lit {
         field_replacements.push(("last_frame_url", fl.as_str()));
     }
@@ -740,7 +851,7 @@ pub(crate) fn cascade_sanitize_for_user(
     is_completed: bool,
     task_id: &str,
     log_model: &str,
-    status_code: i32,
+    status_code: i64,
 ) {
     fn fold_post(raw: String) -> String {
         response_formatter::json_root_raw_value(&raw, "stage1")
@@ -1068,7 +1179,7 @@ pub(crate) fn cascade_prepare_poll<'a>(
             #[cfg(not(feature = "plugin_volcengine_enhance"))]
             {
                 let _ = (channel, resolved, poll_model);
-                return Err(("火山增强插件未编译".into(), 400));
+                return Err(("增强插件未编译".into(), 400));
             }
             #[cfg(feature = "plugin_volcengine_enhance")]
             {
@@ -1283,10 +1394,33 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
         .filter(|s| !s.is_empty())
         .or_else(|| cascade_json_str(&ctx.request_content, "/resolution"))
         .unwrap_or_else(|| "720p".into());
+
+    let req_hint: serde_json::Value =
+        serde_json::from_str(&ctx.request_content).unwrap_or(serde_json::json!({}));
+    let up_hint: serde_json::Value =
+        serde_json::from_str(&ctx.upstream_req).unwrap_or(serde_json::json!({}));
+    let ratio_opt = cascade_json_root_str(&s1_json, "ratio")
+        .or_else(|| cascade_json_root_str(&up_hint, "ratio"))
+        .or_else(|| cascade_json_root_str(&req_hint, "ratio"));
+    #[cfg_attr(
+        not(any(
+            feature = "plugin_tencent_enhance",
+            feature = "plugin_volcengine_enhance"
+        )),
+        allow(unused_variables)
+    )]
+    let target_limit = resolve_cascade_res_limit(&ctx.resolved.res_limit, &target_resolution, ratio_opt)
+        .or_else(|| {
+            cascade_snap
+                .get("res_limit")
+                .and_then(|v| v.as_i64())
+                .filter(|&l| (128..=4320).contains(&l))
+        });
+
     if engine == "tencent" {
         #[cfg(not(feature = "plugin_tencent_enhance"))]
         {
-            let err_msg = "腾讯云增强插件未编译";
+            let err_msg = "增强插件未编译";
             write_error(
                 state,
                 err_msg,
@@ -1299,6 +1433,7 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
             .await;
             return;
         }
+
         #[cfg(feature = "plugin_tencent_enhance")]
         {
             let video_url = cascade_s2_maybe_pre_crop(
@@ -1316,6 +1451,7 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
                 ctx.log_id,
                 &video_url,
                 &target_resolution,
+                target_limit,
             )
             .await
             {
@@ -1362,7 +1498,7 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
 
     #[cfg(not(feature = "plugin_volcengine_enhance"))]
     {
-        let err_msg = "火山增强插件未编译";
+        let err_msg = "增强插件未编译";
         write_error(
             state,
             err_msg,
@@ -1377,8 +1513,11 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
     }
     #[cfg(feature = "plugin_volcengine_enhance")]
     {
-        let (enhance_ch, volc_resolved, final_model) =
+        let (enhance_ch, mut volc_resolved, final_model) =
             crate::api::plugins::volc_s2_from_tag(&ctx.channel, &cascade_snap);
+        if let Some(limit) = target_limit {
+            volc_resolved.res_limit.insert(target_resolution.trim().to_ascii_lowercase(), limit);
+        }
         let volc_model_mid = volc_resolved.mid.clone().unwrap_or_default();
 
         let base_video_url = cascade_s2_maybe_pre_crop(
@@ -1404,6 +1543,7 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
             &final_model,
             &base_video_url,
             &target_resolution,
+            target_limit,
             &volc_model_mid,
             scene.as_deref(),
             ctx.log_id,
@@ -1444,3 +1584,30 @@ async fn cascade_stage2_submit_run(state: &Arc<AppState>, ctx: &CascadeS2SubmitC
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_cascade_res_limit() {
+        let mut map = HashMap::new();
+        map.insert("720p".to_string(), 720);
+        map.insert("720p@1:1".to_string(), 960);
+        map.insert("720p@3:4".to_string(), 834);
+        map.insert("1080p@21:9".to_string(), 946);
+        map.insert("invalid@1:1".to_string(), 50);
+
+        // 优先命中比例
+        assert_eq!(resolve_cascade_res_limit(&map, "720p", Some("1:1")), Some(960));
+        assert_eq!(resolve_cascade_res_limit(&map, "720p", Some("3:4")), Some(834));
+        assert_eq!(resolve_cascade_res_limit(&map, "1080p", Some("21:9")), Some(946));
+
+        // 比例未配置时回退到全局
+        assert_eq!(resolve_cascade_res_limit(&map, "720p", Some("16:9")), Some(720));
+        assert_eq!(resolve_cascade_res_limit(&map, "720p", None), Some(720));
+
+        // 未配置或非法范围返回 None
+        assert_eq!(resolve_cascade_res_limit(&map, "4k", Some("1:1")), None);
+        assert_eq!(resolve_cascade_res_limit(&map, "invalid", Some("1:1")), None);
+    }
+}

@@ -95,12 +95,17 @@ const OAuthSettings: React.FC = () => {
       <Form.Item label={t('settings.wechat_app_secret')} name="app_secret" rules={[{ required: true }]}>
         <Input.Password placeholder="请输入网站应用密钥" />
       </Form.Item>
-      <Form.Item label="授权回调域">
-        <Space.Compact style={{ display: 'flex' }}>
-          <Input value={wechatCallbackDomain} readOnly />
-          <Button icon={<CopyOutlined />} onClick={() => copyToClipboard(wechatCallbackDomain)}>{t('settings.copy_callback_url')}</Button>
-        </Space.Compact>
-        <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>请将此域名填写到微信开放平台 → 网站应用 → 开发信息 → 授权回调域中</Text>
+      <Form.Item
+        label={t('settings.wechat_callback_domain_config', '授权回调域名')}
+        name="callback_domain"
+        extra={
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            当前访问域名：<Text copyable={{ text: wechatCallbackDomain }}>{wechatCallbackDomain}</Text>
+            （<a onClick={() => wechatForm.setFieldValue('callback_domain', wechatCallbackDomain)}>填入</a>）。留空默认跟随当前访问域名；多域名站点请填微信开放平台绑定的老域名。
+          </Text>
+        }
+      >
+        <Input placeholder={wechatCallbackDomain} allowClear />
       </Form.Item>
       <Space>
         <Button type="primary" onClick={handleSaveWechat} loading={loading}>{t('common.save')}</Button>

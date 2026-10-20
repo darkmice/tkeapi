@@ -74,6 +74,7 @@ export function getPluginAdminTabs(
         { key: 'playground_video_edit', label: t ? t('playground_2026:admin_video_workbench', '视频编辑') : '视频编辑' },
         { key: 'playground_skill_config', label: t ? t('playground_2026:admin_tab_skill', 'Skill 配置') : 'Skill 配置' },
         { key: 'playground_prompt_optimize', label: t ? t('playground_2026:admin_tab_prompt_optimize', 'AI 优化提示词') : 'AI 优化提示词' },
+        { key: 'playground_error_mappings', label: t ? t('playground_2026:admin_tab_error_mappings', '异常映射') : '异常映射' },
       ];
     case 'model_marketplace':
       return [
@@ -93,9 +94,8 @@ export function getPluginAdminTabs(
     case 'site_portal_pro':
       return [
         { key: 'portal_manager', label: '门户管理' },
+        { key: 'article_manager', label: '栏目文章' },
         { key: 'docs_manager', label: 'DOCS文档' },
-        { key: 'about_manager', label: '关于我们' },
-        { key: 'contact_manager', label: '联系我们' },
         { key: 'style_selection', label: '风格选择' },
         BASIC,
         { key: 'storage', label: '门户存储配置' },

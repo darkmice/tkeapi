@@ -5,12 +5,13 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Table, Button, Space, Tag, Modal, Form, Input, InputNumber, Switch, Segmented, message, Popconfirm, Card, Typography, AutoComplete, Grid, Tooltip, Progress, Select, Divider, TimePicker, Popover, Checkbox } from 'antd';
 import MobileCardList, { MobileCard, CardRow, CardActions } from '../../components/MobileCardList';
-import { listPagination } from '../../components/ListPagination';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SyncOutlined, ClearOutlined, StopOutlined, PlayCircleOutlined, SettingOutlined, CheckSquareOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { listPagination, useListPager } from '../../components/ListPagination';
+import { TableStickyHorizontalScroll } from '../../components/TableStickyHorizontalScroll';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SyncOutlined, ClearOutlined, StopOutlined, PlayCircleOutlined, SettingOutlined, CheckSquareOutlined, CheckCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import dayjs from 'dayjs';
 import request from '../../utils/request';
@@ -19,6 +20,7 @@ import useSettingsStore from '../../store/settings';
 import { useThemeStore } from '../../store/theme';
 import type { ChannelConfig, ChannelCategory, Upstream } from '../../types';
 import ChannelCategoryManager from '../../components/Channels/ChannelCategoryManager';
+import UpstreamSystemDetailPanel, { type ChannelConfigSyncLog } from './components/UpstreamSystemDetailPanel';
 import { channelEditPath } from './channelPaths';
 import {
   formatQuotaLimitDisplay,
@@ -102,42 +104,6 @@ function appliedChannelRate(
   return Number(total.toFixed(4));
 }
 
-function renderUpstreamSyncInline(record: ChannelConfig) {
-  const system = (record.upstream_system || '').trim();
-  const group = (record.upstream_group || '').trim();
-  if (!system || !group) return null;
-  const interval = Number(record.upstream_sync_interval_minutes) || 0;
-  const add = Number(record.upstream_sync_rate_add) || 0;
-  const rate = record.rate ?? 1;
-  const upCurr = (record.upstream_currency || '').trim();
-  const stCurr = (record.site_currency || '').trim();
-  const hasConversion = Boolean(upCurr && stCurr && upCurr.toLowerCase() !== stCurr.toLowerCase());
-  const currRate = Number(record.upstream_currency_rate) > 0 ? Number(record.upstream_currency_rate) : 7.2;
-
-  const tip = [
-    `上游 ${system}`,
-    `分组 ${group}（渠道倍率 ${rate}x）`,
-    hasConversion ? `货币换算: ${upCurr} → ${stCurr} (汇率 ${currRate})` : null,
-    interval > 0 ? `每 ${interval} 分钟同步` : '不自动同步',
-    add > 0 ? `同步增量 +${add}` : null,
-    record.upstream_synced_at ? `上次同步 ${formatApiDateTime(record.upstream_synced_at)}` : null,
-  ].filter(Boolean).join('\n');
-  const tagStyle: React.CSSProperties = { margin: 0, padding: '0 5px', fontSize: 11, height: 19, lineHeight: '17px', borderRadius: 4 };
-  return (
-    <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
-        <Tag color="blue" style={tagStyle}>{system}</Tag>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          <Tag style={tagStyle}>{group} {rate}x</Tag>
-          {hasConversion ? <Tag color="geekblue" style={tagStyle}>{upCurr}→{stCurr}</Tag> : null}
-          {interval > 0 ? <Tag color="cyan" style={tagStyle}>每{interval}分</Tag> : null}
-          {add > 0 ? <Tag color="orange" style={tagStyle}>+{add}</Tag> : null}
-        </div>
-      </div>
-    </Tooltip>
-  );
-}
-
 /** 紧凑展示在「日额度」标签后：01:00 (UTC+8) · 冷30分 */
 function formatDailyResetInline(
   hour: number,
@@ -162,6 +128,7 @@ const ChannelConfigs: React.FC = () => {
   const adminPath = localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
   const [configs, setConfigs] = useState<ChannelConfig[]>([]);
   const [categories, setCategories] = useState<ChannelCategory[]>([]);
+  const [providers, setProviders] = useState<ChannelCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingConfig, setEditingConfig] = useState<ChannelConfig | null>(null);
@@ -170,14 +137,20 @@ const ChannelConfigs: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<number | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<number | 'all' | 'unclassified'>('all');
+  const [providerFilter, setProviderFilter] = useState<'all' | '__unclassified__' | string>('all');
+  const [upstreamSystemFilter, setUpstreamSystemFilter] = useState<'all' | '__unclassified__' | string>('all');
   const [enableQuota, setEnableQuota] = useState(false);
   const [isCategoryManagerVisible, setIsCategoryManagerVisible] = useState(false);
+  const [isProviderManagerVisible, setIsProviderManagerVisible] = useState(false);
   const [dailyResetModalOpen, setDailyResetModalOpen] = useState(false);
   const [dailyResetDraft, setDailyResetDraft] = useState({ hour: 0, minute: 0, cooldown: 0 });
   const [upstreamGroups, setUpstreamGroups] = useState<UpstreamGroupOption[]>([]);
   const [selectedGroupRatio, setSelectedGroupRatio] = useState<number | null>(null);
   const [fetchingGroups, setFetchingGroups] = useState(false);
   const [syncAddEnabled, setSyncAddEnabled] = useState(false);
+  const [syncLogsMap, setSyncLogsMap] = useState<Record<number, ChannelConfigSyncLog[]>>({});
+  const [syncLogsLoadingMap, setSyncLogsLoadingMap] = useState<Record<number, boolean>>({});
+  const [syncTriggerLoadingMap, setSyncTriggerLoadingMap] = useState<Record<number, boolean>>({});
   const [quotaSortPeriod, setQuotaSortPeriod] = useState<QuotaSortPeriod>('auto');
   const [quotaSortMetric, setQuotaSortMetric] = useState<QuotaSortMetric>('rate');
   const [quotaSortOrder, setQuotaSortOrder] = useState<'ascend' | 'descend' | null>(null);
@@ -188,6 +161,261 @@ const ChannelConfigs: React.FC = () => {
   const siteCurrency = Form.useWatch('site_currency', form);
   const upstreamCurrencyRate = Form.useWatch('upstream_currency_rate', form);
   const upstreamSyncRateAdd = Form.useWatch('upstream_sync_rate_add', form);
+  const upstreamSyncIntervalMinutes = Form.useWatch('upstream_sync_interval_minutes', form);
+
+  const fetchSyncLogs = async (configId: number) => {
+    if (!configId) return;
+    setSyncLogsLoadingMap(prev => ({ ...prev, [configId]: true }));
+    try {
+      const resp = await (request.get(`/channel-configs/${configId}/sync-logs`) as unknown as Promise<{ data?: ChannelConfigSyncLog[] }>);
+      setSyncLogsMap(prev => ({ ...prev, [configId]: resp.data || [] }));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSyncLogsLoadingMap(prev => ({ ...prev, [configId]: false }));
+    }
+  };
+
+  const handleManualSyncRate = async (record: ChannelConfig) => {
+    if (!record.id || syncTriggerLoadingMap[record.id]) return;
+    setSyncTriggerLoadingMap(prev => ({ ...prev, [record.id]: true }));
+    try {
+      const resp = await (request.post(`/channel-configs/${record.id}/sync-rate`) as unknown as Promise<{
+        success?: boolean;
+        upstream_ratio?: number;
+        rate?: number;
+        upstream_synced_at?: string;
+      }>);
+      if (resp.rate !== undefined) {
+        setConfigs(prev => prev.map(c => c.id === record.id ? {
+          ...c,
+          rate: resp.rate!,
+          upstream_synced_at: resp.upstream_synced_at || c.upstream_synced_at,
+        } : c));
+        if (editingConfig && editingConfig.id === record.id) {
+          setEditingConfig(prev => prev ? {
+            ...prev,
+            rate: resp.rate!,
+            upstream_synced_at: resp.upstream_synced_at || prev.upstream_synced_at,
+          } : prev);
+          form.setFieldsValue({ rate: resp.rate });
+        }
+      }
+      message.success(`已同步分组倍率，当前渠道倍率: ${resp.rate}x`);
+      await fetchSyncLogs(record.id);
+    } catch (e) {
+      console.error(e);
+      await fetchSyncLogs(record.id);
+    } finally {
+      setSyncTriggerLoadingMap(prev => ({ ...prev, [record.id]: false }));
+    }
+  };
+
+  const renderSyncLogsHeader = (record: ChannelConfig) => {
+    const interval = Number(record.upstream_sync_interval_minutes) || 0;
+    const isSyncing = Boolean(syncTriggerLoadingMap[record.id]);
+    const isLoading = Boolean(syncLogsLoadingMap[record.id]);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 12, fontWeight: 600, paddingBottom: 4 }}>
+        <Space size={6} wrap>
+          <span>同步分组倍率历史记录</span>
+          <Tag color="cyan" style={{ margin: 0, padding: '0 5px', fontSize: 10, lineHeight: '15px', height: 17, borderRadius: 3 }}>
+            {interval > 0 ? `每 ${interval} 分钟` : '手动同步'}
+          </Tag>
+        </Space>
+        <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            icon={<SyncOutlined spin={isSyncing} />}
+            loading={isSyncing}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleManualSyncRate(record);
+            }}
+            style={{ padding: '0 4px', fontSize: 11, height: 20 }}
+          >
+            立即同步
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            disabled={isLoading}
+            onClick={(e) => {
+              e.stopPropagation();
+              fetchSyncLogs(record.id);
+            }}
+            style={{ padding: '0 4px', fontSize: 11, height: 20 }}
+          >
+            刷新
+          </Button>
+        </Space>
+      </div>
+    );
+  };
+
+  const renderSyncLogsList = (record: ChannelConfig, maxHeight = 260) => {
+    const logs = syncLogsMap[record.id] || [];
+    const isLoading = Boolean(syncLogsLoadingMap[record.id]);
+    if (isLoading && logs.length === 0) {
+      return (
+        <div style={{ padding: '16px 12px', textAlign: 'center', minWidth: 320 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>加载同步记录中...</Text>
+        </div>
+      );
+    }
+    if (logs.length === 0) {
+      return (
+        <div style={{ padding: '14px 12px', textAlign: 'center', minWidth: 320 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            暂无同步历史记录（将按同步间隔自动记录或点击右上角「立即同步」）
+          </Text>
+        </div>
+      );
+    }
+    return (
+      <div style={{ maxHeight, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 340, maxWidth: 480 }}>
+        {logs.map((log) => {
+          const isSuccess = log.status === 1;
+          const upCurr = (log.upstream_currency || '').trim();
+          const stCurr = (log.site_currency || '').trim();
+          const hasConv = Boolean(upCurr && stCurr && upCurr.toLowerCase() !== stCurr.toLowerCase());
+          const rateChanged = Math.abs((log.previous_rate ?? 0) - (log.applied_rate ?? 0)) > 0.00001;
+          return (
+            <div
+              key={log.id}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+                padding: '6px 8px',
+                borderRadius: 6,
+                background: isSuccess
+                  ? (isLight ? '#f8fafc' : 'rgba(255,255,255,0.05)')
+                  : (isLight ? '#fff2f0' : 'rgba(255,77,79,0.12)'),
+                border: isSuccess
+                  ? (isLight ? '1px solid #e2e8f0' : '1px solid rgba(255,255,255,0.08)')
+                  : (isLight ? '1px solid #ffccc7' : '1px solid rgba(255,77,79,0.3)'),
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Space size={4} wrap>
+                  <Tag
+                    color={isSuccess ? 'success' : 'error'}
+                    style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}
+                  >
+                    {isSuccess ? '成功' : '失败'}
+                  </Tag>
+                  <Tag
+                    color={log.trigger_type === 'manual' ? 'purple' : 'cyan'}
+                    style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}
+                  >
+                    {log.trigger_type === 'manual'
+                      ? '手动同步'
+                      : (log.sync_interval_minutes > 0 ? `定时(${log.sync_interval_minutes}分)` : '自动同步')}
+                  </Tag>
+                  <Tag style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}>
+                    {log.upstream_group || record.upstream_group || '-'}
+                    {isSuccess ? ` ${log.upstream_ratio}x` : ''}
+                  </Tag>
+                  {hasConv && (
+                    <Tag color="geekblue" style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}>
+                      {upCurr}→{stCurr} ({log.currency_rate})
+                    </Tag>
+                  )}
+                  {log.rate_add > 0 && (
+                    <Tag color="orange" style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}>
+                      +{log.rate_add}
+                    </Tag>
+                  )}
+                </Space>
+                <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {log.created_at ? formatApiDateTime(log.created_at) : '-'}
+                </Text>
+              </div>
+              {isSuccess ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ color: isLight ? '#595959' : 'rgba(255,255,255,0.65)' }}>
+                    上游分组倍率 <strong>{log.upstream_ratio}x</strong>
+                    {rateChanged ? ` · 原渠道倍率 ${log.previous_rate}x` : ' · 倍率保持一致'}
+                  </span>
+                  <Tag
+                    color={rateChanged ? 'blue' : 'default'}
+                    style={{ margin: 0, padding: '0 5px', fontSize: 10, lineHeight: '15px', height: 17, borderRadius: 3, fontWeight: 600 }}
+                  >
+                    {rateChanged ? `${log.previous_rate}x → ${log.applied_rate}x` : `渠道倍率 ${log.applied_rate}x`}
+                  </Tag>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: '#ff4d4f', wordBreak: 'break-all' }}>
+                  {log.error_message || '同步失败'}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderUpstreamSyncInline = (record: ChannelConfig) => {
+    const system = (record.upstream_system || '').trim();
+    const group = (record.upstream_group || '').trim();
+    if (!system || !group) return null;
+    const interval = Number(record.upstream_sync_interval_minutes) || 0;
+    const add = Number(record.upstream_sync_rate_add) || 0;
+    const rate = record.rate ?? 1;
+    const upCurr = (record.upstream_currency || '').trim();
+    const stCurr = (record.site_currency || '').trim();
+    const hasConversion = Boolean(upCurr && stCurr && upCurr.toLowerCase() !== stCurr.toLowerCase());
+    const currRate = Number(record.upstream_currency_rate) > 0 ? Number(record.upstream_currency_rate) : 7.2;
+
+    const tip = [
+      `上游 ${system}`,
+      `分组 ${group}（渠道倍率 ${rate}x）`,
+      hasConversion ? `货币换算: ${upCurr} → ${stCurr} (汇率 ${currRate})` : null,
+      interval > 0 ? `每 ${interval} 分钟同步` : '不自动同步',
+      add > 0 ? `同步增量 +${add}` : null,
+      record.upstream_synced_at ? `上次同步 ${formatApiDateTime(record.upstream_synced_at)}` : null,
+    ].filter(Boolean).join('\n');
+    const tagStyle: React.CSSProperties = { margin: 0, padding: '0 5px', fontSize: 11, height: 19, lineHeight: '17px', borderRadius: 4 };
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
+        <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+          <Tag color="blue" style={tagStyle}>{system}</Tag>
+        </Tooltip>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          <Tooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tip}</span>}>
+            <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+              <Tag style={tagStyle}>{group} {rate}x</Tag>
+              {hasConversion ? <Tag color="geekblue" style={tagStyle}>{upCurr}→{stCurr}</Tag> : null}
+              {add > 0 ? <Tag color="orange" style={tagStyle}>+{add}</Tag> : null}
+              {interval > 0 ? <Tag color="cyan" style={tagStyle}>每{interval}分</Tag> : null}
+            </span>
+          </Tooltip>
+          <Popover
+            placement="bottom"
+            trigger={['hover', 'click']}
+            onOpenChange={(open) => {
+              if (open) {
+                fetchSyncLogs(record.id);
+              }
+            }}
+            title={renderSyncLogsHeader(record)}
+            content={renderSyncLogsList(record)}
+          >
+            <Tag
+              color="processing"
+              style={{ ...tagStyle, cursor: 'pointer' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              详细
+            </Tag>
+          </Popover>
+        </div>
+      </div>
+    );
+  };
 
   const fetchConfigs = async () => {
     setLoading(true);
@@ -210,6 +438,15 @@ const ChannelConfigs: React.FC = () => {
     }
   };
 
+  const fetchProviders = async () => {
+    try {
+      const resp = await (request.get('/channel-configs/providers') as any);
+      setProviders(Array.isArray(resp) ? resp : (resp?.data || []));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const fetchUpstreams = async () => {
     try {
       const pResp = await (request.get('/upstreams') as unknown as Promise<Upstream[]>);
@@ -222,6 +459,7 @@ const ChannelConfigs: React.FC = () => {
   useEffect(() => {
     fetchConfigs();
     fetchCategories();
+    fetchProviders();
     fetchUpstreams();
   }, []);
 
@@ -230,7 +468,87 @@ const ChannelConfigs: React.FC = () => {
     return categories.find(c => c.id === categoryId)?.name || '';
   };
 
+  const resolveRecordCategoryIds = (record: { category_ids?: number[]; category_id?: number | null }): number[] => {
+    if (Array.isArray(record.category_ids) && record.category_ids.length > 0) {
+      return record.category_ids;
+    }
+    if (record.category_id != null && record.category_id !== undefined && record.category_id > 0) {
+      return [record.category_id];
+    }
+    return [];
+  };
+
   const activeCategories = categories.filter(c => c.is_active === 1 || c.is_active === true);
+
+  const allProviders = useMemo(() => {
+    const seen = new Set(providers.map(p => (p.name || '').trim()).filter(Boolean));
+    const extra: ChannelCategory[] = [];
+    configs.forEach(c => {
+      const pt = (c.provider_type || '').trim();
+      if (pt && !seen.has(pt)) {
+        seen.add(pt);
+        extra.push({ id: -extra.length - 1, name: pt, sort_order: 0, is_active: 1, created_at: '', updated_at: '' });
+      }
+    });
+    return [...providers, ...extra];
+  }, [providers, configs]);
+
+  const activeProviders = useMemo(
+    () => allProviders.filter(p => p.is_active === 1 || p.is_active === true),
+    [allProviders],
+  );
+
+  useEffect(() => {
+    if (
+      providerFilter !== 'all' &&
+      providerFilter !== '__unclassified__' &&
+      allProviders.length > 0 &&
+      !allProviders.some(p => (p.name || '').trim() === providerFilter)
+    ) {
+      setProviderFilter('all');
+    }
+  }, [allProviders, providerFilter]);
+
+  const allUpstreamSystems = useMemo(() => {
+    const seen = new Set(UPSTREAM_SYSTEM_OPTIONS.map(o => o.value));
+    const extra: { value: string; label: string }[] = [];
+    configs.forEach(c => {
+      const sys = (c.upstream_system || '').trim();
+      if (sys && !seen.has(sys)) {
+        seen.add(sys);
+        extra.push({ value: sys, label: sys });
+      }
+    });
+    return [...UPSTREAM_SYSTEM_OPTIONS, ...extra];
+  }, [configs]);
+
+  useEffect(() => {
+    if (
+      upstreamSystemFilter !== 'all' &&
+      upstreamSystemFilter !== '__unclassified__' &&
+      allUpstreamSystems.length > 0 &&
+      !allUpstreamSystems.some(s => s.value === upstreamSystemFilter)
+    ) {
+      setUpstreamSystemFilter('all');
+    }
+  }, [allUpstreamSystems, upstreamSystemFilter]);
+
+  const systemFilteredConfigs = useMemo(() => {
+    if (upstreamSystemFilter === 'all') return [];
+    if (upstreamSystemFilter === '__unclassified__') {
+      return configs.filter(c => !(c.upstream_system || '').trim());
+    }
+    return configs.filter(c => (c.upstream_system || '').trim() === upstreamSystemFilter);
+  }, [configs, upstreamSystemFilter]);
+
+  useEffect(() => {
+    if (upstreamSystemFilter === 'all' || systemFilteredConfigs.length === 0) return;
+    systemFilteredConfigs.forEach(c => {
+      if (c.id && syncLogsMap[c.id] === undefined && !syncLogsLoadingMap[c.id]) {
+        fetchSyncLogs(c.id);
+      }
+    });
+  }, [upstreamSystemFilter, systemFilteredConfigs]);
 
   const updateCalculatedRate = (
     groupName?: string,
@@ -317,11 +635,13 @@ const ChannelConfigs: React.FC = () => {
     form.resetFields();
     const defaultSiteCurrency = settings?.currency?.default_currency || 'USD';
     form.setFieldsValue({
+      provider_type: undefined,
       sort_order: 0,
       rate: 1.0,
       priority: 0,
       weight: 1,
       status: 1,
+      category_ids: [],
       category_id: null,
       quota_limit: -1,
       daily_quota_limit: -1,
@@ -355,11 +675,14 @@ const ChannelConfigs: React.FC = () => {
     const defaultSiteCurrency = settings?.currency?.default_currency || 'USD';
     const rawRate = Number(record.rate ?? 1);
     const safeRate = Number.isFinite(rawRate) ? Number(rawRate.toFixed(4)) : 1;
+    const initialCategoryIds = resolveRecordCategoryIds(record);
     form.setFieldsValue({
       ...record,
+      provider_type: record.provider_type || undefined,
       rate: safeRate,
       status: record.status ?? 1,
-      category_id: record.category_id ?? null,
+      category_ids: initialCategoryIds,
+      category_id: record.category_id ?? (initialCategoryIds[0] ?? null),
       quota_limit: record.quota_limit ?? -1,
       daily_quota_limit: record.daily_quota_limit ?? -1,
       weekly_quota_limit: record.weekly_quota_limit ?? -1,
@@ -379,8 +702,11 @@ const ChannelConfigs: React.FC = () => {
     setSelectedGroupRatio(null);
     setSyncAddEnabled((record.upstream_sync_rate_add ?? 0) > 0);
     setIsModalVisible(true);
-    if (record.upstream_system === 'newapi' && record.base_url) {
-      loadUpstreamGroups(record, true);
+    if (record.upstream_system === 'newapi') {
+      fetchSyncLogs(record.id);
+      if (record.base_url) {
+        loadUpstreamGroups(record, true);
+      }
     }
   };
 
@@ -391,6 +717,35 @@ const ChannelConfigs: React.FC = () => {
       fetchConfigs();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const [copyTarget, setCopyTarget] = useState<ChannelConfig | null>(null);
+  const [copyName, setCopyName] = useState('');
+  const [copying, setCopying] = useState(false);
+
+  const openCopyModal = (record: ChannelConfig) => {
+    setCopyTarget(record);
+    setCopyName(record.name || '');
+  };
+
+  const handleCopy = async () => {
+    if (!copyTarget || copying) return;
+    const trimmedName = copyName.trim();
+    if (!trimmedName) {
+      message.warning('请输入新的配置名称');
+      return;
+    }
+    setCopying(true);
+    try {
+      await request.post(`/channel-configs/${copyTarget.id}/copy`, { name: trimmedName });
+      message.success('复制成功');
+      setCopyTarget(null);
+      fetchConfigs();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCopying(false);
     }
   };
 
@@ -405,10 +760,25 @@ const ChannelConfigs: React.FC = () => {
     }
   };
 
+  const handleUpdateSortOrder = async (id: number, sort_order: number) => {
+    setConfigs(prev =>
+      prev
+        .map(c => (c.id === id ? { ...c, sort_order } : c))
+        .sort((a, b) => ((b.sort_order ?? 0) - (a.sort_order ?? 0)) || (b.id - a.id)),
+    );
+    try {
+      await request.put(`/channel-configs/${id}`, { sort_order });
+    } catch (e) {
+      console.error(e);
+      fetchConfigs();
+    }
+  };
+
   const [isBatchEditMode, setIsBatchEditMode] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchCategoryKey, setBatchCategoryKey] = useState(0);
+  const { page: currentPage, pageSize, setPage: setCurrentPage, onChange: onPageChange } = useListPager();
 
   const batchChecked = (id: number) => selectedRowKeys.some(k => Number(k) === id);
 
@@ -444,9 +814,10 @@ const ChannelConfigs: React.FC = () => {
     if (targets.length === 0) return;
     setBatchLoading(true);
     try {
-      await Promise.all(targets.map(c => request.put(`/channel-configs/${c.id}`, { category_id: categoryId })));
+      const category_ids = categoryId == null ? [] : [categoryId];
+      await Promise.all(targets.map(c => request.put(`/channel-configs/${c.id}`, { category_id: categoryId, category_ids })));
       const done = new Set(targets.map(c => c.id));
-      setConfigs(prev => prev.map(c => done.has(c.id) ? { ...c, category_id: categoryId } : c));
+      setConfigs(prev => prev.map(c => done.has(c.id) ? { ...c, category_id: categoryId, category_ids } : c));
       const name = categoryId == null ? '未分类' : (categories.find(c => c.id === categoryId)?.name || '所选分类');
       message.success(`已将 ${targets.length} 个上游渠道改为「${name}」`);
     } catch (e) {
@@ -514,15 +885,22 @@ const ChannelConfigs: React.FC = () => {
     if (submitting) return;
     setSubmitting(true);
     try {
+      const catIds: number[] = Array.isArray(values.category_ids)
+        ? values.category_ids.map(Number).filter((n: number) => Number.isFinite(n) && n > 0)
+        : (values.category_id ? [Number(values.category_id)] : []);
+      const primaryCatId = catIds.length > 0 ? catIds[0] : null;
+
       const payload = {
         ...values,
+        provider_type: values.provider_type ? String(values.provider_type).trim() : '',
         base_url: values.base_url ? values.base_url.trim() : values.base_url,
         sort_order: Number(values.sort_order) || 0,
         rate: values.rate !== undefined && values.rate !== null ? Number(Number(values.rate).toFixed(4)) : 1.0,
         priority: values.priority !== undefined && values.priority !== null ? Number(values.priority) : 0,
         weight: values.weight !== undefined && values.weight !== null ? Number(values.weight) : 1,
         status: values.status === 0 ? 0 : 1,
-        category_id: values.category_id ?? null,
+        category_id: primaryCatId,
+        category_ids: catIds,
         quota_limit: (!enableQuota || values.quota_limit === undefined || values.quota_limit === null) ? -1 : Number(values.quota_limit),
         daily_quota_limit: (!enableQuota || values.daily_quota_limit === undefined || values.daily_quota_limit === null) ? -1 : Number(values.daily_quota_limit),
         weekly_quota_limit: (!enableQuota || values.weekly_quota_limit === undefined || values.weekly_quota_limit === null) ? -1 : Number(values.weekly_quota_limit),
@@ -708,10 +1086,21 @@ const ChannelConfigs: React.FC = () => {
     if (statusFilter !== 'all' && (config.status ?? 1) !== statusFilter) {
       return false;
     }
+    const catIds = resolveRecordCategoryIds(config);
     if (categoryFilter === 'unclassified') {
-      if (config.category_id) return false;
+      if (catIds.length > 0) return false;
     } else if (categoryFilter !== 'all') {
-      if (config.category_id !== categoryFilter) return false;
+      if (!catIds.includes(categoryFilter as number)) return false;
+    }
+    if (providerFilter === '__unclassified__') {
+      if ((config.provider_type || '').trim()) return false;
+    } else if (providerFilter !== 'all') {
+      if ((config.provider_type || '').trim() !== providerFilter) return false;
+    }
+    if (upstreamSystemFilter === '__unclassified__') {
+      if ((config.upstream_system || '').trim()) return false;
+    } else if (upstreamSystemFilter !== 'all') {
+      if ((config.upstream_system || '').trim() !== upstreamSystemFilter) return false;
     }
     if (searchText) {
       const searchLower = searchText.toLowerCase();
@@ -728,6 +1117,171 @@ const ChannelConfigs: React.FC = () => {
         return quotaSortOrder === 'ascend' ? d : -d;
       })
     : filteredConfigs;
+
+  // ===== 当前页渠道配置列表（全选时仅全选当前页） =====
+  const currentPageConfigs = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return displayedConfigs.slice(startIndex, startIndex + pageSize);
+  }, [displayedConfigs, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchText, statusFilter, categoryFilter, providerFilter, upstreamSystemFilter, quotaSortOrder, quotaSortMetric, quotaSortPeriod]);
+
+  useEffect(() => {
+    const maxPage = Math.ceil(displayedConfigs.length / pageSize);
+    if (maxPage > 0 && currentPage > maxPage) {
+      setCurrentPage(maxPage);
+    }
+  }, [displayedConfigs.length, pageSize, currentPage]);
+
+  const renderScheduleCell = (record: ChannelConfig) => {
+    const defPriority = record.priority ?? 0;
+    const defWeight = record.weight ?? 1;
+    const defRate = record.rate ?? 1.0;
+    const boundChannels = record.bound_channels || [];
+    const customChannels = boundChannels.filter((ch) => ch.has_custom_schedule);
+    const hasCustom = customChannels.length > 0;
+    const sortedBound = [...boundChannels].sort(
+      (a, b) => Number(Boolean(b.has_custom_schedule)) - Number(Boolean(a.has_custom_schedule)),
+    );
+
+    return (
+      <Space size={4} wrap={false} style={{ alignItems: 'center' }}>
+        <Tooltip title="默认优先级（渠道分组未单独设置时采用）">
+          <Text type="secondary" style={{ fontSize: 12 }}>P{defPriority}</Text>
+        </Tooltip>
+        <Tooltip title="默认权重（渠道分组未单独设置时采用）">
+          <Text type="secondary" style={{ fontSize: 12 }}>W{defWeight}</Text>
+        </Tooltip>
+        <Tooltip title="渠道倍率">
+          <Tag color="orange" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 18, fontSize: 11, borderRadius: 4 }}>
+            {defRate}x
+          </Tag>
+        </Tooltip>
+        {hasCustom && (
+          <Popover
+            placement="bottom"
+            trigger={['hover', 'click']}
+            title={
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 12, fontWeight: 600, paddingBottom: 4 }}>
+                <span>分组调度详情 ({customChannels.length}/{boundChannels.length} 自定义)</span>
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>默认:</Text>
+                  <Tag style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}>P{defPriority}</Tag>
+                  <Tag style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', height: 16, borderRadius: 3 }}>W{defWeight}</Tag>
+                </Space>
+              </div>
+            }
+            content={
+              <div style={{ maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 300, maxWidth: 420 }}>
+                {sortedBound.map((ch) => {
+                  const effP = ch.effective_priority ?? defPriority;
+                  const effW = ch.effective_weight ?? defWeight;
+                  const isCustomP = ch.custom_priority !== undefined && ch.custom_priority !== null;
+                  const isCustomW = ch.custom_weight !== undefined && ch.custom_weight !== null;
+
+                  return (
+                    <div
+                      key={`${ch.id}-${ch.is_ha ? 'ha' : 'preset'}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        background: ch.has_custom_schedule
+                          ? (isLight ? 'rgba(22,119,255,0.06)' : 'rgba(22,119,255,0.14)')
+                          : (isLight ? '#f4f4f5' : 'rgba(255,255,255,0.06)'),
+                        border: ch.has_custom_schedule
+                          ? (isLight ? '1px solid #91caff' : '1px solid rgba(22,119,255,0.4)')
+                          : (isLight ? '1px solid #e4e4e7' : '1px solid rgba(255,255,255,0.08)'),
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1 }}>
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 500,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            color: ch.status === 0 ? 'var(--text-secondary, #8c8c8c)' : undefined,
+                          }}
+                          title={`${ch.name}${ch.group_aid ? ` (AID: ${ch.group_aid})` : ''}`}
+                        >
+                          {ch.name}
+                        </span>
+                        {ch.is_ha ? (
+                          <Tag color="purple" style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 2, flexShrink: 0 }}>
+                            HA
+                          </Tag>
+                        ) : (
+                          <Tag style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 2, flexShrink: 0 }}>
+                            预设
+                          </Tag>
+                        )}
+                        {ch.status === 0 && (
+                          <Tag color="error" style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 2, flexShrink: 0 }}>
+                            已禁用
+                          </Tag>
+                        )}
+                        {!ch.has_custom_schedule && (
+                          <Tag style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 2, flexShrink: 0, opacity: 0.75 }}>
+                            默认
+                          </Tag>
+                        )}
+                      </div>
+                      <Space size={4} style={{ flexShrink: 0, alignItems: 'center' }}>
+                        <Tooltip title={isCustomP ? `当前分组独立设置优先级 P${effP}（默认 P${defPriority}）` : `继承默认优先级 P${defPriority}`}>
+                          <Tag
+                            color={isCustomP ? 'blue' : undefined}
+                            style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 3, fontWeight: isCustomP ? 600 : 400 }}
+                          >
+                            P{effP}
+                          </Tag>
+                        </Tooltip>
+                        <Tooltip title={isCustomW ? `当前分组独立设置权重 W${effW}（默认 W${defWeight}）` : `继承默认权重 W${defWeight}`}>
+                          <Tag
+                            color={isCustomW ? 'blue' : undefined}
+                            style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 3, fontWeight: isCustomW ? 600 : 400 }}
+                          >
+                            W{effW}
+                          </Tag>
+                        </Tooltip>
+                        <Link
+                          to={channelEditPath(adminPath, ch.id)}
+                          style={{ fontSize: 11, color: '#1677ff', flexShrink: 0, textDecoration: 'none', marginLeft: 2 }}
+                        >
+                          编辑
+                        </Link>
+                      </Space>
+                    </div>
+                  );
+                })}
+              </div>
+            }
+          >
+            <Tag
+              color="blue"
+              style={{
+                margin: 0,
+                padding: '0 5px',
+                lineHeight: '16px',
+                height: 18,
+                fontSize: 10,
+                borderRadius: 4,
+                cursor: 'pointer',
+              }}
+            >
+              自定义({customChannels.length})
+            </Tag>
+          </Popover>
+        )}
+      </Space>
+    );
+  };
 
   const columns = [
     {
@@ -762,20 +1316,31 @@ const ChannelConfigs: React.FC = () => {
     },
     {
       title: '上游分类',
-      dataIndex: 'category_id',
-      key: 'category_id',
-      width: 95,
-      ellipsis: true,
+      key: 'category_ids',
+      width: 120,
       sorter: (a: ChannelConfig, b: ChannelConfig) => {
-        const nameA = resolveCategoryName(a.category_id);
-        const nameB = resolveCategoryName(b.category_id);
-        return nameA.localeCompare(nameB, 'zh');
+        const namesA = resolveRecordCategoryIds(a).map(id => resolveCategoryName(id)).filter(Boolean).join(',');
+        const namesB = resolveRecordCategoryIds(b).map(id => resolveCategoryName(id)).filter(Boolean).join(',');
+        return namesA.localeCompare(namesB, 'zh');
       },
-      render: (categoryId: number | null | undefined) => {
-        const name = resolveCategoryName(categoryId);
-        return name ? (
-          <Tag style={{ margin: 0, padding: '0 5px', fontSize: 11, height: 19, lineHeight: '17px', borderRadius: 4 }}>{name}</Tag>
-        ) : <Text type="secondary" style={{ fontSize: 12 }}>未分类</Text>;
+      render: (_: unknown, record: ChannelConfig) => {
+        const catIds = resolveRecordCategoryIds(record);
+        if (catIds.length === 0) {
+          return <Text type="secondary" style={{ fontSize: 12 }}>未分类</Text>;
+        }
+        return (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {catIds.map(id => {
+              const name = resolveCategoryName(id);
+              if (!name) return null;
+              return (
+                <Tag key={id} style={{ margin: 0, padding: '0 5px', fontSize: 11, height: 19, lineHeight: '17px', borderRadius: 4 }}>
+                  {name}
+                </Tag>
+              );
+            })}
+          </div>
+        );
       },
     },
     {
@@ -798,7 +1363,7 @@ const ChannelConfigs: React.FC = () => {
               </div>
             }
             content={
-              <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 200, maxWidth: 300 }}>
+              <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260, maxWidth: 360 }}>
                 {channels.map((ch) => (
                   <div
                     key={ch.id}
@@ -837,6 +1402,11 @@ const ChannelConfigs: React.FC = () => {
                           HA
                         </Tag>
                       )}
+                      {ch.has_custom_schedule && (
+                        <Tag color="blue" style={{ margin: 0, fontSize: 10, padding: '0 4px', lineHeight: '14px', height: 16, borderRadius: 2 }}>
+                          独立调度
+                        </Tag>
+                      )}
                     </div>
                     <Link
                       to={channelEditPath(adminPath, ch.id)}
@@ -870,26 +1440,11 @@ const ChannelConfigs: React.FC = () => {
       },
     },
     {
-      title: '服务商',
-      dataIndex: 'provider_type',
-      key: 'provider_type',
-      width: 90,
-      ellipsis: true,
-      sorter: (a: ChannelConfig, b: ChannelConfig) => (a.provider_type || '').localeCompare(b.provider_type || '', 'zh'),
-      render: (text: string) => <Text style={{ fontSize: 12 }}>{text || '-'}</Text>,
-    },
-    {
       title: '调度',
       key: 'schedule',
-      width: 105,
+      width: 158,
       sorter: (a: ChannelConfig, b: ChannelConfig) => (a.priority || 0) - (b.priority || 0),
-      render: (_: unknown, record: ChannelConfig) => (
-        <Space size={3} wrap={false}>
-          <Tooltip title="优先级"><Text type="secondary" style={{ fontSize: 12 }}>P{record.priority || 0}</Text></Tooltip>
-          <Tooltip title="权重"><Text type="secondary" style={{ fontSize: 12 }}>W{record.weight || 1}</Text></Tooltip>
-          <Tag color="orange" style={{ margin: 0, padding: '0 4px', lineHeight: '16px', height: 18, fontSize: 11, borderRadius: 4 }}>{record.rate ?? 1.0}x</Tag>
-        </Space>
-      ),
+      render: (_: unknown, record: ChannelConfig) => renderScheduleCell(record),
     },
     {
       title: (
@@ -934,10 +1489,40 @@ const ChannelConfigs: React.FC = () => {
       title: '排序',
       dataIndex: 'sort_order',
       key: 'sort_order',
-      width: 70,
+      width: 80,
       align: 'center' as const,
       sorter: (a: ChannelConfig, b: ChannelConfig) => (a.sort_order || 0) - (b.sort_order || 0),
-      render: (val: number) => <Text type="secondary" style={{ fontSize: 12 }}>{val || 0}</Text>,
+      render: (_val: number, record: ChannelConfig) => {
+        const order = record.sort_order ?? 0;
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Text
+              editable={{
+                tooltip: false,
+                text: String(order),
+                onChange: (newVal) => {
+                  const num = parseInt(newVal.trim(), 10);
+                  handleUpdateSortOrder(record.id, isNaN(num) ? 0 : num);
+                },
+              }}
+              style={{
+                fontFamily: 'monospace',
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: 6,
+                background: order > 0 ? 'rgba(59, 130, 246, 0.08)' : 'rgba(128, 128, 128, 0.06)',
+                color: order > 0 ? '#2563eb' : 'var(--text-secondary, #8c8c8c)',
+                border: order > 0 ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(128, 128, 128, 0.15)',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              {order}
+            </Text>
+          </div>
+        );
+      },
     },
     {
       title: '最新更新时间',
@@ -966,7 +1551,7 @@ const ChannelConfigs: React.FC = () => {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 130,
+      width: 150,
       fixed: 'right' as const,
       render: (_: unknown, record: ChannelConfig) => (
         <Space size={2} style={{ justifyContent: 'center', width: '100%' }}>
@@ -985,6 +1570,15 @@ const ChannelConfigs: React.FC = () => {
             <Popconfirm title="确定清零该预设的总/日/周/月已用额度吗？" onConfirm={() => handleResetQuota(record.id)}>
               <Button type="text" size="small" className="channel-table-action-btn" icon={<ClearOutlined />} />
             </Popconfirm>
+          </Tooltip>
+          <Tooltip title="复制">
+            <Button
+              type="text"
+              size="small"
+              className="channel-table-action-btn"
+              icon={<CopyOutlined />}
+              onClick={() => openCopyModal(record)}
+            />
           </Tooltip>
           <Tooltip title="编辑">
             <Button type="text" size="small" className="channel-table-action-btn" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
@@ -1009,6 +1603,14 @@ const ChannelConfigs: React.FC = () => {
           border-collapse: collapse !important;
           border-spacing: 0 !important;
         }
+        .channel-configs-table .ant-table-content {
+          overflow-x: auto !important;
+          scrollbar-width: none !important;
+        }
+        .channel-configs-table .ant-table-content::-webkit-scrollbar {
+          display: none !important;
+          height: 0 !important;
+        }
         .channel-configs-table .ant-table-thead {
           background: ${isLight ? '#f9fafb' : '#18181b'} !important;
         }
@@ -1023,6 +1625,7 @@ const ChannelConfigs: React.FC = () => {
           line-height: 20px !important;
           font-size: 12px !important;
           font-weight: 600 !important;
+          white-space: nowrap !important;
           background: ${isLight ? '#f9fafb' : '#18181b'} !important;
           border-bottom: 1px solid ${isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)'} !important;
           color: ${isLight ? '#64748b' : '#a1a1aa'} !important;
@@ -1078,8 +1681,14 @@ const ChannelConfigs: React.FC = () => {
           border: none !important;
           visibility: hidden !important;
         }
-        .channel-configs-table .ant-table-tbody > tr:hover > td {
-          background: ${isLight ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.03)'} !important;
+        .channel-configs-table .ant-table-tbody > tr > td.ant-table-cell-fix-left,
+        .channel-configs-table .ant-table-tbody > tr > td.ant-table-cell-fix-right {
+          background: ${isLight ? '#ffffff' : '#141414'} !important;
+        }
+        .channel-configs-table .ant-table-tbody > tr:hover > td,
+        .channel-configs-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left,
+        .channel-configs-table .ant-table-tbody > tr:hover > td.ant-table-cell-fix-right {
+          background: ${isLight ? '#fafafa' : '#1d1d1d'} !important;
         }
         .channel-configs-table .ant-table-pagination.ant-pagination {
           margin: 10px 0 0 0 !important;
@@ -1134,11 +1743,11 @@ const ChannelConfigs: React.FC = () => {
       </div>
 
       <div style={{
-        backgroundColor: isLight ? '#fafafa' : '#141414',
+        backgroundColor: isLight ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.04)',
         padding: '12px 16px',
         borderRadius: 8,
         marginBottom: 16,
-        border: isLight ? '1px solid #e8e8e8' : '1px solid #303030',
+        border: isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)',
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
@@ -1151,12 +1760,12 @@ const ChannelConfigs: React.FC = () => {
               ...categories.map(c => ({
                 key: c.id,
                 label: c.name,
-                count: configs.filter(ch => ch.category_id === c.id).length,
+                count: configs.filter(ch => resolveRecordCategoryIds(ch).includes(c.id)).length,
               })),
               {
                 key: 'unclassified' as const,
                 label: '未分类',
-                count: configs.filter(ch => !ch.category_id).length,
+                count: configs.filter(ch => resolveRecordCategoryIds(ch).length === 0).length,
               },
             ] as { key: number | 'all' | 'unclassified'; label: string; count: number }[]).map(item => {
               const selected = categoryFilter === item.key;
@@ -1165,21 +1774,22 @@ const ChannelConfigs: React.FC = () => {
                   key={String(item.key)}
                   onClick={() => setCategoryFilter(item.key)}
                   style={{
-                    padding: '4px 12px',
-                    borderRadius: 16,
-                    fontSize: 14,
-                    backgroundColor: selected ? '#1677ff' : (isLight ? '#f0f0f0' : '#1d1d1d'),
-                    color: selected ? '#fff' : (isLight ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.65)'),
-                    border: isLight ? '1px solid #d9d9d9' : '1px solid #303030',
+                    padding: '3px 10px',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontWeight: selected ? 500 : 400,
+                    backgroundColor: selected ? (isLight ? '#18181b' : '#f4f4f5') : (isLight ? '#ffffff' : '#141414'),
+                    color: selected ? (isLight ? '#ffffff' : '#09090b') : (isLight ? '#52525b' : 'rgba(255, 255, 255, 0.65)'),
+                    border: selected ? (isLight ? '1px solid #18181b' : '1px solid #f4f4f5') : (isLight ? '1px solid rgba(0, 0, 0, 0.08)' : '1px solid rgba(255, 255, 255, 0.12)'),
                     cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 6,
-                    transition: 'all 0.2s',
+                    transition: 'all 0.15s ease',
                   }}
                 >
                   {item.label}
-                  <span style={{ opacity: 0.6 }}>{item.count}</span>
+                  <span style={{ opacity: 0.6, fontSize: 11 }}>{item.count}</span>
                 </div>
               );
             })}
@@ -1187,14 +1797,130 @@ const ChannelConfigs: React.FC = () => {
               <Button
                 type="text"
                 size="small"
-                icon={<SettingOutlined style={{ color: '#1677ff' }} />}
+                icon={<SettingOutlined style={{ color: isLight ? '#71717a' : '#a1a1aa' }} />}
                 onClick={() => setIsCategoryManagerVisible(true)}
                 style={{ marginLeft: 8 }}
               />
             </Tooltip>
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', padding: 0 }}>
+          <Text type="secondary" style={{ width: 80, flexShrink: 0, fontSize: 13 }}>服务商</Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flexGrow: 1 }}>
+            {([
+              { key: 'all', label: '全部', count: configs.length },
+              ...allProviders.map(p => ({
+                key: p.name,
+                label: p.name,
+                count: configs.filter(ch => (ch.provider_type || '').trim() === p.name).length,
+              })),
+              {
+                key: '__unclassified__',
+                label: '未分类',
+                count: configs.filter(ch => !(ch.provider_type || '').trim()).length,
+              },
+            ]).map(item => {
+              const selected = providerFilter === item.key;
+              return (
+                <div
+                  key={item.key}
+                  onClick={() => setProviderFilter(item.key)}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontWeight: selected ? 500 : 400,
+                    backgroundColor: selected ? (isLight ? '#18181b' : '#f4f4f5') : (isLight ? '#ffffff' : '#141414'),
+                    color: selected ? (isLight ? '#ffffff' : '#09090b') : (isLight ? '#52525b' : 'rgba(255, 255, 255, 0.65)'),
+                    border: selected ? (isLight ? '1px solid #18181b' : '1px solid #f4f4f5') : (isLight ? '1px solid rgba(0, 0, 0, 0.08)' : '1px solid rgba(255, 255, 255, 0.12)'),
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {item.label}
+                  <span style={{ opacity: 0.6, fontSize: 11 }}>{item.count}</span>
+                </div>
+              );
+            })}
+            <Tooltip title={t('common.manage', '管理')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<SettingOutlined style={{ color: isLight ? '#71717a' : '#a1a1aa' }} />}
+                onClick={() => setIsProviderManagerVisible(true)}
+                style={{ marginLeft: 8 }}
+              />
+            </Tooltip>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', padding: 0 }}>
+          <Text type="secondary" style={{ width: 80, flexShrink: 0, fontSize: 13 }}>上游系统</Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flexGrow: 1 }}>
+            {([
+              { key: 'all', label: '全部', count: configs.length },
+              ...allUpstreamSystems.map(s => ({
+                key: s.value,
+                label: s.label,
+                count: configs.filter(ch => (ch.upstream_system || '').trim() === s.value).length,
+              })),
+              {
+                key: '__unclassified__',
+                label: '未分类',
+                count: configs.filter(ch => !(ch.upstream_system || '').trim()).length,
+              },
+            ]).map(item => {
+              const selected = upstreamSystemFilter === item.key;
+              return (
+                <div
+                  key={item.key}
+                  onClick={() => setUpstreamSystemFilter(item.key)}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: 6,
+                    fontSize: 13,
+                    fontWeight: selected ? 500 : 400,
+                    backgroundColor: selected ? (isLight ? '#18181b' : '#f4f4f5') : (isLight ? '#ffffff' : '#141414'),
+                    color: selected ? (isLight ? '#ffffff' : '#09090b') : (isLight ? '#52525b' : 'rgba(255, 255, 255, 0.65)'),
+                    border: selected ? (isLight ? '1px solid #18181b' : '1px solid #f4f4f5') : (isLight ? '1px solid rgba(0, 0, 0, 0.08)' : '1px solid rgba(255, 255, 255, 0.12)'),
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {item.label}
+                  <span style={{ opacity: 0.6, fontSize: 11 }}>{item.count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      {upstreamSystemFilter !== 'all' && (
+        <UpstreamSystemDetailPanel
+          systemKey={upstreamSystemFilter}
+          configs={systemFilteredConfigs}
+          categories={categories}
+          isLight={isLight}
+          adminPath={adminPath}
+          syncLogsMap={syncLogsMap}
+          syncLogsLoadingMap={syncLogsLoadingMap}
+          syncTriggerLoadingMap={syncTriggerLoadingMap}
+          onRefreshSystemLogs={(targetConfigs) => {
+            targetConfigs.forEach(c => {
+              if (c.id) fetchSyncLogs(c.id);
+            });
+          }}
+          onManualSyncRate={handleManualSyncRate}
+          onEditConfig={handleEdit}
+          onClearSystemFilter={() => setUpstreamSystemFilter('all')}
+        />
+      )}
 
       {isBatchEditMode && (
         <div style={{
@@ -1213,7 +1939,7 @@ const ChannelConfigs: React.FC = () => {
             <Button
               size="small"
               onClick={() => {
-                const ids = displayedConfigs.map(c => c.id);
+                const ids = currentPageConfigs.map(c => c.id);
                 setSelectedRowKeys(prev => Array.from(new Set([...prev.map(k => Number(k)), ...ids])));
               }}
             >
@@ -1267,10 +1993,15 @@ const ChannelConfigs: React.FC = () => {
 
       {screens.xs ? (
         <MobileCardList
-          dataSource={displayedConfigs}
+          dataSource={currentPageConfigs}
           loading={loading}
           rowKey="id"
-          pagination={listPagination()}
+          pagination={listPagination({
+            current: currentPage,
+            pageSize,
+            total: displayedConfigs.length,
+            onChange: onPageChange,
+          })}
           renderCard={(record: ChannelConfig) => {
             const sync = renderUpstreamSyncInline(record);
             return (
@@ -1291,7 +2022,25 @@ const ChannelConfigs: React.FC = () => {
             >
               {sync ? <CardRow label="上游同步">{sync}</CardRow> : null}
               <CardRow label="状态">{renderStatusBadge(record.status)}</CardRow>
-              <CardRow label="上游分类">{resolveCategoryName(record.category_id) || '未分类'}</CardRow>
+              <CardRow label="上游分类">
+                {(() => {
+                  const catIds = resolveRecordCategoryIds(record);
+                  if (catIds.length === 0) return <Text type="secondary" style={{ fontSize: 12 }}>未分类</Text>;
+                  return (
+                    <Space size={4} wrap>
+                      {catIds.map(id => {
+                        const name = resolveCategoryName(id);
+                        if (!name) return null;
+                        return (
+                          <Tag key={id} style={{ margin: 0, fontSize: 11, borderRadius: 4 }}>
+                            {name}
+                          </Tag>
+                        );
+                      })}
+                    </Space>
+                  );
+                })()}
+              </CardRow>
               <CardRow label="绑定渠道分组">
                 {record.bound_channel_count && record.bound_channel_count > 0 ? (
                   <Tag color="processing" style={{ margin: 0, fontSize: 11, borderRadius: 4 }}>
@@ -1302,8 +2051,31 @@ const ChannelConfigs: React.FC = () => {
                 )}
               </CardRow>
               <CardRow label="服务商广场展示">{record.provider_type || '-'}</CardRow>
+              <CardRow label="调度">{renderScheduleCell(record)}</CardRow>
               <CardRow label="Base URL"><Text code style={{ fontSize: 12 }}>{record.base_url}</Text></CardRow>
               <CardRow label="额度">{renderQuotaCell(record)}</CardRow>
+              <CardRow label="页面排序">
+                <div style={{ display: 'flex', alignItems: 'center' }}>
+                  <Text
+                    editable={{
+                      tooltip: false,
+                      text: String(record.sort_order ?? 0),
+                      onChange: (val) => {
+                        const num = parseInt(val.trim(), 10);
+                        handleUpdateSortOrder(record.id, isNaN(num) ? 0 : num);
+                      },
+                    }}
+                    style={{
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: (record.sort_order ?? 0) > 0 ? '#1677ff' : undefined,
+                    }}
+                  >
+                    {record.sort_order ?? 0}
+                  </Text>
+                </div>
+              </CardRow>
               <CardRow label="最新更新时间">
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {record.updated_at || record.created_at ? formatApiDateTime(record.updated_at || record.created_at) : '-'}
@@ -1326,6 +2098,14 @@ const ChannelConfigs: React.FC = () => {
                     <Button type="text" size="small" icon={<ClearOutlined />} />
                   </Popconfirm>
                 </Tooltip>
+                <Tooltip title="复制">
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={() => openCopyModal(record)}
+                  />
+                </Tooltip>
                 <Button type="text" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
                 <Popconfirm title={t('common.confirm_delete')} onConfirm={() => handleDelete(record.id)}>
                   <Button type="text" size="small" icon={<DeleteOutlined />} danger />
@@ -1336,25 +2116,32 @@ const ChannelConfigs: React.FC = () => {
           }}
         />
       ) : (
-        <Table
-          className="channel-configs-table compact-table"
-          size="small"
-          dataSource={displayedConfigs}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={listPagination()}
-          scroll={{ x: 1480 }}
-          rowSelection={isBatchEditMode ? {
-            selectedRowKeys,
-            preserveSelectedRowKeys: true,
-            onChange: (keys) => setSelectedRowKeys(keys),
-          } : undefined}
-          onChange={(_p, _f, sorter) => {
-            const s = Array.isArray(sorter) ? sorter[0] : sorter;
-            if (s?.order && s.columnKey) setQuotaSortOrder(null);
-          }}
-        />
+        <TableStickyHorizontalScroll isLight={isLight}>
+          <Table
+            className="channel-configs-table compact-table"
+            size="small"
+            dataSource={displayedConfigs}
+            columns={columns}
+            rowKey="id"
+            loading={loading}
+            pagination={listPagination({
+              current: currentPage,
+              pageSize,
+              total: displayedConfigs.length,
+              onChange: onPageChange,
+            })}
+            scroll={{ x: 1480 }}
+            rowSelection={isBatchEditMode ? {
+              selectedRowKeys,
+              preserveSelectedRowKeys: true,
+              onChange: (keys) => setSelectedRowKeys(keys),
+            } : undefined}
+            onChange={(_p, _f, sorter) => {
+              const s = Array.isArray(sorter) ? sorter[0] : sorter;
+              if (s?.order && s.columnKey) setQuotaSortOrder(null);
+            }}
+          />
+        </TableStickyHorizontalScroll>
       )}
 
       <Modal
@@ -1395,14 +2182,35 @@ const ChannelConfigs: React.FC = () => {
               label="服务商类型(模型广场展示)"
               style={{ flex: 1, marginBottom: 10 }}
             >
-              <Input placeholder="如: custom / openai" autoComplete="off" />
+              <Select
+                allowClear
+                placeholder="选择服务商"
+                options={activeProviders.map(p => ({ label: p.name, value: p.name }))}
+                dropdownRender={(menu) => (
+                  <>
+                    {menu}
+                    <Divider style={{ margin: '6px 0' }} />
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<SettingOutlined />}
+                      onClick={() => setIsProviderManagerVisible(true)}
+                      style={{ width: '100%' }}
+                    >
+                      管理服务商
+                    </Button>
+                  </>
+                )}
+              />
             </Form.Item>
           </div>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            <Form.Item name="category_id" label="上游分类" style={{ flex: 1, marginBottom: 10 }}>
+            <Form.Item name="category_ids" label="上游分类" style={{ flex: 1, marginBottom: 10 }}>
               <Select
+                mode="multiple"
                 allowClear
+                maxTagCount="responsive"
                 placeholder="选择分类"
                 options={activeCategories.map(c => ({ label: c.name, value: c.id }))}
                 dropdownRender={(menu) => (
@@ -1439,10 +2247,10 @@ const ChannelConfigs: React.FC = () => {
             <Form.Item name="rate" label="渠道倍率" rules={[{ required: true }]} style={{ flex: 1, marginBottom: 10 }}>
               <InputNumber min={0} step={0.0001} precision={4} placeholder="1.0000" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="priority" label="优先级" rules={[{ required: true }]} style={{ flex: 1, marginBottom: 10 }}>
+            <Form.Item name="priority" label="默认优先级" tooltip="绑定到渠道分组时的默认调度优先级；若渠道分组内未单独设置，则按此默认值生效" rules={[{ required: true }]} style={{ flex: 1, marginBottom: 10 }}>
               <InputNumber min={0} placeholder="0" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item name="weight" label="权重" rules={[{ required: true }]} style={{ flex: 1, marginBottom: 10 }}>
+            <Form.Item name="weight" label="默认权重" tooltip="绑定到渠道分组时的默认分流权重；若渠道分组内未单独设置，则按此默认值生效" rules={[{ required: true }]} style={{ flex: 1, marginBottom: 10 }}>
               <InputNumber min={1} placeholder="1" style={{ width: '100%' }} />
             </Form.Item>
           </div>
@@ -1666,8 +2474,8 @@ const ChannelConfigs: React.FC = () => {
             <AutoComplete
               options={[
                 { value: 'https://ark.cn-beijing.volces.com', label: '火山方舟 (https://ark.cn-beijing.volces.com)' },
-                { value: 'https://ark.ap-southeast.bytepluses.com/api/v3', label: 'BytePlus(ap-southeast-1) (https://ark.ap-southeast.bytepluses.com/api/v3)' },
-                { value: 'https://ark.eu-west.bytepluses.com/api/v3', label: 'BytePlus(eu-west-1) (https://ark.eu-west.bytepluses.com/api/v3)' },
+                { value: 'https://ark.ap-southeast.bytepluses.com', label: 'BytePlus(ap-southeast-1) (https://ark.ap-southeast.bytepluses.com)' },
+                { value: 'https://ark.eu-west.bytepluses.com', label: 'BytePlus(eu-west-1) (https://ark.eu-west.bytepluses.com)' },
                 { value: 'https://api-beijing.klingai.com', label: '可灵 (https://api-beijing.klingai.com)' },
                 { value: 'https://dashscope.aliyuncs.com', label: '阿里百炼 (https://dashscope.aliyuncs.com)' },
                 { value: 'https://vod.tencentcloudapi.com', label: '腾讯云 VOD AIGC (https://vod.tencentcloudapi.com)' },
@@ -1721,7 +2529,39 @@ const ChannelConfigs: React.FC = () => {
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                 <Form.Item
                   name="upstream_group"
-                  label="同步分组倍率"
+                  label={
+                    <Space size={6} wrap>
+                      <span>同步分组倍率</span>
+                      {editingConfig?.id ? (
+                        <Popover
+                          placement="bottomLeft"
+                          trigger={['hover', 'click']}
+                          onOpenChange={(open) => {
+                            if (open && editingConfig?.id) {
+                              fetchSyncLogs(editingConfig.id);
+                            }
+                          }}
+                          title={renderSyncLogsHeader({
+                            ...editingConfig,
+                            upstream_sync_interval_minutes: Number(upstreamSyncIntervalMinutes ?? editingConfig.upstream_sync_interval_minutes ?? 0),
+                          })}
+                          content={renderSyncLogsList(editingConfig)}
+                        >
+                          <Tag
+                            color="processing"
+                            style={{ margin: 0, padding: '0 5px', fontSize: 11, height: 18, lineHeight: '16px', borderRadius: 4, cursor: 'pointer' }}
+                          >
+                            历史记录 ({(syncLogsMap[editingConfig.id] || []).length})
+                          </Tag>
+                        </Popover>
+                      ) : null}
+                      {editingConfig?.upstream_synced_at ? (
+                        <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>
+                          上次同步: {formatApiDateTime(editingConfig.upstream_synced_at)}
+                        </Text>
+                      ) : null}
+                    </Space>
+                  }
                   extra="选中后写入上方「渠道倍率」"
                   style={{ flex: 1, marginBottom: 10 }}
                 >
@@ -1938,6 +2778,25 @@ const ChannelConfigs: React.FC = () => {
                   </Space.Compact>
                 </Form.Item>
               </div>
+              {editingConfig?.id ? (
+                <div
+                  style={{
+                    background: isLight ? '#f9fafb' : '#141414',
+                    border: isLight ? '1px solid #f0f0f0' : '1px solid #303030',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    marginBottom: 12,
+                  }}
+                >
+                  {renderSyncLogsHeader({
+                    ...editingConfig,
+                    upstream_sync_interval_minutes: Number(upstreamSyncIntervalMinutes ?? editingConfig.upstream_sync_interval_minutes ?? 0),
+                  })}
+                  <div style={{ marginTop: 6 }}>
+                    {renderSyncLogsList(editingConfig, 160)}
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
           <Form.Item
@@ -2016,15 +2875,50 @@ const ChannelConfigs: React.FC = () => {
             />
           </Form.Item>
           <Text type="secondary" style={{ fontSize: 11 }}>
-            按站点默认时区计算（非系统运行时区）；默认 00:00 / 冷却 0 即自然日刷新
+            按站点运营时区计算（非系统底层 UTC）；默认 00:00 / 冷却 0 即自然日刷新
           </Text>
         </Form>
+      </Modal>
+
+      <Modal
+        title="复制上游渠道配置"
+        open={!!copyTarget}
+        onCancel={() => setCopyTarget(null)}
+        onOk={handleCopy}
+        confirmLoading={copying}
+        okText={t('common.confirm', '确定')}
+        cancelText={t('common.cancel', '取消')}
+        destroyOnHidden
+        centered
+        width={440}
+      >
+        <div style={{ padding: '8px 0' }}>
+          <Text type="secondary">请输入复制后的新上游渠道配置名称，其余参数与密钥将完整保留：</Text>
+          <Input
+            style={{ marginTop: 12 }}
+            value={copyName}
+            onChange={(e) => setCopyName(e.target.value)}
+            placeholder={copyTarget?.name || '请输入新的配置名称'}
+            onPressEnter={handleCopy}
+            autoFocus
+          />
+        </div>
       </Modal>
 
       <ChannelCategoryManager
         visible={isCategoryManagerVisible}
         onClose={() => setIsCategoryManagerVisible(false)}
         onUpdate={fetchCategories}
+      />
+
+      <ChannelCategoryManager
+        mode="provider"
+        visible={isProviderManagerVisible}
+        onClose={() => setIsProviderManagerVisible(false)}
+        onUpdate={() => {
+          fetchProviders();
+          fetchConfigs();
+        }}
       />
     </Card>
   );

@@ -5,14 +5,17 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // Users table
     // ── 初始化核心基础表（受一次性迁移保护） ──
-    once_migration!(pool, done, "init_core_tables_v1",
+    once_migration!(
+        pool,
+        done,
+        "init_core_tables_v1",
         r#"CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             uid TEXT NOT NULL UNIQUE,
@@ -181,7 +184,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
 
     // Model Providers table
     // ── 初始化服务商与模型管理表（受一次性迁移保护） ──
-    once_migration!(pool, done, "init_provider_tables_v1",
+    once_migration!(
+        pool,
+        done,
+        "init_provider_tables_v1",
         r#"CREATE TABLE IF NOT EXISTS model_providers (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
@@ -229,7 +235,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // Seed default user level
-    once_migration!(pool, done, "seed_default_user_level_v1",
+    once_migration!(
+        pool,
+        done,
+        "seed_default_user_level_v1",
         r#"INSERT INTO user_levels (name, group_key, discount, description)
            VALUES ('默认用户', 'default', 1.0, '普通用户，无折扣')
            ON CONFLICT (group_key) DO NOTHING"#
@@ -472,8 +481,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "ALTER TABLE upstreams ADD COLUMN IF NOT EXISTS config TEXT"
     );
 
-
-
     // Plugins table
     // ── 初始化插件管理系统表及种子数据（受一次性迁移保护） ──
     once_migration!(pool, done, "init_plugin_tables_v1",
@@ -648,18 +655,34 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     {
         if !done.contains("backfill_team_invite_codes_v1") {
             let teams_without_code: Vec<i64> = sqlx::query_scalar(
-                "SELECT id FROM marketing_teams WHERE invite_code IS NULL OR invite_code = ''"
-            ).fetch_all(&*pool).await.unwrap_or_default();
+                "SELECT id FROM marketing_teams WHERE invite_code IS NULL OR invite_code = ''",
+            )
+            .fetch_all(&*pool)
+            .await
+            .unwrap_or_default();
             for tid in teams_without_code {
-                let code: String = (0..8).map(|_| {
-                    let idx = rand::random::<u8>() % 36;
-                    if idx < 10 { (b'0' + idx) as char } else { (b'a' + idx - 10) as char }
-                }).collect();
+                let code: String = (0..8)
+                    .map(|_| {
+                        let idx = rand::random::<u8>() % 36;
+                        if idx < 10 {
+                            (b'0' + idx) as char
+                        } else {
+                            (b'a' + idx - 10) as char
+                        }
+                    })
+                    .collect();
                 sqlx::query("UPDATE marketing_teams SET invite_code = $1 WHERE id = $2")
-                    .bind(&code).bind(tid)
-                    .execute(&*pool).await.ok();
+                    .bind(&code)
+                    .bind(tid)
+                    .execute(&*pool)
+                    .await
+                    .ok();
             }
-            let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('backfill_team_invite_codes_v1')").execute(pool).await;
+            let _ = sqlx::query(
+                "INSERT INTO sys_migration_history (id) VALUES ('backfill_team_invite_codes_v1')",
+            )
+            .execute(pool)
+            .await;
             done.insert("backfill_team_invite_codes_v1".into());
         }
     }
@@ -787,7 +810,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
 
     // Marketing Team Leaders table (many-to-many)
     // ── 初始化推广团队关联表与公共配置表（受一次性迁移保护） ──
-    once_migration!(pool, done, "init_marketing_team_relations_v1",
+    once_migration!(
+        pool,
+        done,
+        "init_marketing_team_relations_v1",
         r#"CREATE TABLE IF NOT EXISTS marketing_team_leaders (
             id SERIAL PRIMARY KEY,
             team_id INTEGER NOT NULL,
@@ -815,33 +841,53 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
 
     // -- 多方式登录注册扩展 --
     // users 表新增 google_id（谷歌 OAuth 唯一标识）与微信登录字段，受一次性迁移保护
-    once_migration!(pool, done, "user_oauth_fields_v1",
+    once_migration!(
+        pool,
+        done,
+        "user_oauth_fields_v1",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS wechat_name TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS google_name TEXT",
         "ALTER TABLE verification_codes ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''"
     );
 
-
     // 回填已有令牌的 kid（只处理 kid 为空的记录，受一次性迁移保护）
     if !done.contains("backfill_token_kids_v1") {
         #[derive(sqlx::FromRow)]
-        struct TokenUid { token_id: i64, uid: String }
+        struct TokenUid {
+            token_id: i64,
+            uid: String,
+        }
         let rows: Vec<TokenUid> = sqlx::query_as(
             "SELECT t.id as token_id, u.uid FROM api_tokens t JOIN users u ON t.user_id = u.id WHERE t.kid IS NULL OR t.kid = ''"
         ).fetch_all(&*pool).await.unwrap_or_default();
         for row in rows {
-            let uid_suffix: String = row.uid.chars().rev().take(3).collect::<String>().chars().rev().collect();
-            let random_part: String = (0..3).map(|_| (b'0' + rand::random::<u8>() % 10) as char).collect();
+            let uid_suffix: String = row
+                .uid
+                .chars()
+                .rev()
+                .take(3)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            let random_part: String = (0..3)
+                .map(|_| (b'0' + rand::random::<u8>() % 10) as char)
+                .collect();
             let kid = format!("{}{}", uid_suffix, random_part);
             sqlx::query("UPDATE api_tokens SET kid = $1 WHERE id = $2")
-                .bind(&kid).bind(row.token_id)
-                .execute(&*pool).await.ok();
+                .bind(&kid)
+                .bind(row.token_id)
+                .execute(&*pool)
+                .await
+                .ok();
         }
-        let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('backfill_token_kids_v1')").execute(pool).await;
+        let _ =
+            sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('backfill_token_kids_v1')")
+                .execute(pool)
+                .await;
         done.insert("backfill_token_kids_v1".into());
     }
-
 
     // ── 初始化 GPT-Image 卡池系统表及字段配置（受一次性迁移保护） ──
     once_migration!(pool, done, "init_gptimage_pool_tables_v1",

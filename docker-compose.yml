@@ -38,8 +38,9 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
-    image: ${PROJECT_NAME:-tokensbyte}-backend:latest
+  # 蓝绿热更新：backend 为 blue 槽位（默认运行），backend-green 为 green 槽位（profile=green，由 hot-update.sh 编排）
+  backend: &backend-svc
+    image: ${BACKEND_IMAGE_BLUE:-${PROJECT_NAME:-tokensbyte}-backend:latest}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -70,6 +71,8 @@ services:
       - HTTP_POOL_MAX_IDLE_PER_HOST=${HTTP_POOL_MAX_IDLE_PER_HOST:-300}
       - HTTP_POOL_IDLE_TIMEOUT_SECS=${HTTP_POOL_IDLE_TIMEOUT_SECS:-60}
       - MAX_IN_FLIGHT_REQUESTS=${MAX_IN_FLIGHT_REQUESTS:-2000} # 全局在途请求反压上限（防雪崩保护，小规格主机建议 500-1000，高配主机可调至 5000+）
+      - WORKERS_STANDBY=${WORKERS_STANDBY:-1} # 单例后台任务 leader 选举：蓝绿并存期仅一个进程运行扫库/定时任务；设为 0 恢复"启动即运行"
+      - SHUTDOWN_DRAIN_SECS=${SHUTDOWN_DRAIN_SECS:-30} # HTTP 优雅关闭排空窗口（秒）；放宽时需同步 ≥ 该值的 stop_grace_period
     command: /app/tokensbyte-server
     volumes:
       - ./data:/app/data
@@ -87,13 +90,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    restart: always
+    restart: unless-stopped # 蓝绿槽位被脚本停止后，宿主机/Docker 重启不应把闲置槽位拉起
     healthcheck:
       test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health" ]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 60s
+    # 显式声明文件句柄上限，与生产部署项目 (tokensbyte-deploy-ws) 对齐；根治高并发下 Too many open files (os error 24)
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     deploy:
       resources:
         limits:
@@ -102,6 +110,16 @@ services:
         reservations:
           memory: ${BACKEND_MEM_RES:-256M}
           cpus: '${BACKEND_CPU_RES:-0.5}'
+
+  # green 槽位：复用 backend 全部配置，仅覆盖镜像 / 容器名 / 日志目录；profile 限定后 `docker compose up -d` 不会启动它
+  backend-green:
+    <<: *backend-svc
+    profiles: [ "green" ]
+    image: ${BACKEND_IMAGE_GREEN:-${PROJECT_NAME:-tokensbyte}-backend:latest}
+    container_name: ${PROJECT_NAME:-tokensbyte}-backend-green
+    volumes:
+      - ./data:/app/data
+      - ./logs/backend-green:/app/logs
 
   frontend:
     image: ${PROJECT_NAME:-tokensbyte}-frontend:latest
@@ -118,17 +136,25 @@ services:
       - CLIENT_MAX_BODY_SIZE=${CLIENT_MAX_BODY_SIZE:-50m}
     volumes:
       - ./logs/frontend:/var/log/nginx
+      # 热更新：静态资源版本目录（current 符号链接原子切换）与后端上游声明（nginx -s reload 切换）；空目录启动时由容器入口自动播种
+      - ./web:/srv/web
+      - ./nginx-upstream:/etc/nginx/upstream
     networks:
       - app-network
     depends_on:
       - backend
     restart: always
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/index.html || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    # 显式声明文件句柄上限，与生产部署项目 (tokensbyte-deploy-ws) 对齐；镜像内 worker_rlimit_nofile 65535 依赖此硬限制
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     deploy:
       resources:
         limits:

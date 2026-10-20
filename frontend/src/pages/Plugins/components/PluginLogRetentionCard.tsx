@@ -92,7 +92,7 @@ const PluginLogRetentionCard: React.FC<PluginLogRetentionCardProps> = ({
           />
           <div style={{ marginTop: 4 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              0=关闭自动清理，默认 {defaultDays}；超期记录在站点时区每日 03:00 维护中分批清理
+              0=关闭自动清理，默认 {defaultDays}；超期记录按站点运营时区每日定时维护（默认 04:30）分批清理
             </Text>
           </div>
         </div>

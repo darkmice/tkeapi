@@ -30,6 +30,10 @@ pub struct SimulateUsage {
     pub audio_tokens: i64,
     #[serde(default)]
     pub audio_cached_tokens: i64,
+    #[serde(default)]
+    pub image_tokens: i64,
+    #[serde(default)]
+    pub output_image_tokens: i64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -42,8 +46,6 @@ pub struct SimulateFeatures {
     pub duration_seconds: Option<f64>,
     #[serde(default)]
     pub image_count: Option<i32>,
-    #[serde(default)]
-    pub mode: Option<String>,
     #[serde(default)]
     pub quality: Option<String>,
     #[serde(default)]
@@ -116,7 +118,7 @@ pub struct ChannelSimInfo {
     pub channel_rate: f64,
     pub provider_type: String,
     pub group_aid: Option<String>,
-    pub status: i32,
+    pub status: i64,
     pub is_disabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_warning: Option<String>,
@@ -145,7 +147,7 @@ pub struct SubChannelOption {
     pub id: i64,
     pub name: String,
     pub rate: f64,
-    pub status: i32,
+    pub status: i64,
     pub provider_type: String,
 }
 
@@ -170,15 +172,12 @@ pub async fn simulate_channel_billing(
     req: SimulateBillingRequest,
 ) -> AppResult<SimulateBillingResponse> {
     // 1. 查询目标渠道
-    let channel: Channel = sqlx::query_as(
-        &state
-            .db
-            .format_query("SELECT * FROM channels WHERE id = ?"),
-    )
-    .bind(channel_id)
-    .fetch_optional(&state.db.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("指定的渠道分组不存在".into()))?;
+    let mut channel: Channel =
+        sqlx::query_as(&state.db.format_query("SELECT * FROM channels WHERE id = ?"))
+            .bind(channel_id)
+            .fetch_optional(&state.db.pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("指定的渠道分组不存在".into()))?;
 
     // 2. 检查渠道可用性与配额（只告警，不拦截沙盒推演）
     let tz_name = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
@@ -191,7 +190,8 @@ pub async fn simulate_channel_billing(
     let is_disabled = channel.status != 1;
     let mut general_warning: Option<String> = None;
     if is_disabled {
-        general_warning = Some("当前渠道处于禁用状态，线上调用将被拦截；此处仅演算理论计费。".into());
+        general_warning =
+            Some("当前渠道处于禁用状态，线上调用将被拦截；此处仅演算理论计费。".into());
     } else if let Some(ref q_warn) = channel_quota_warn {
         general_warning = Some(format!("{}；此处仅演算理论计费。", q_warn));
     }
@@ -213,36 +213,66 @@ pub async fn simulate_channel_billing(
         if !sub_ids.is_empty() {
             let placeholders = sub_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT id, name, rate, status, provider_type FROM channel_configs WHERE id IN ({})",
+                "SELECT id, name, rate, status, provider_type, priority FROM channel_configs WHERE id IN ({})",
                 placeholders
             );
             let formatted = state.db.format_query(&sql);
-            let mut query = sqlx::query_as::<_, (i64, String, f64, i32, String)>(&formatted);
+            let mut query = sqlx::query_as::<_, (i64, String, f64, i64, String, i64)>(&formatted);
             for sid in &sub_ids {
                 query = query.bind(sid);
             }
             if let Ok(rows) = query.fetch_all(&state.db.pool).await {
-                for (id, name, rate, status, provider_type) in rows {
-                    available_sub_channels.push(SubChannelOption {
-                        id,
-                        name,
-                        rate,
-                        status,
-                        provider_type,
-                    });
+                let mut rows_with_order: Vec<(i64, usize, SubChannelOption)> = rows
+                    .into_iter()
+                    .map(|(id, name, rate, status, provider_type, def_priority)| {
+                        let eff_priority =
+                            crate::models::channel::extract_upstream_override(&config, id)
+                                .and_then(|ov| ov.priority)
+                                .unwrap_or(def_priority);
+                        let pos = sub_ids
+                            .iter()
+                            .position(|&sid| sid == id)
+                            .unwrap_or(usize::MAX);
+                        (
+                            eff_priority,
+                            pos,
+                            SubChannelOption {
+                                id,
+                                name,
+                                rate,
+                                status,
+                                provider_type,
+                            },
+                        )
+                    })
+                    .collect();
+                rows_with_order.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                for (_, _, opt) in rows_with_order {
+                    available_sub_channels.push(opt);
                 }
             }
         }
 
-        // 高可用下支持下拉任意切换子渠道测试，默认按第一个
+        // 高可用下支持下拉任意切换子渠道测试，默认按最高优先级首项
+        let mut selected_sub_id: Option<i64> = None;
         if let Some(target_sub_id) = req.sub_channel_id {
-            if let Some(matched) = available_sub_channels.iter().find(|s| s.id == target_sub_id) {
+            if let Some(matched) = available_sub_channels
+                .iter()
+                .find(|s| s.id == target_sub_id)
+            {
                 resolved_upstream_name = format!("HA子渠道: {}", matched.name);
                 resolved_upstream_rate = matched.rate;
+                channel.rate = matched.rate;
+                selected_sub_id = Some(matched.id);
             }
         } else if let Some(first_sub) = available_sub_channels.first() {
             resolved_upstream_name = format!("HA子渠道(默认首项): {}", first_sub.name);
             resolved_upstream_rate = first_sub.rate;
+            channel.rate = first_sub.rate;
+            selected_sub_id = Some(first_sub.id);
+        }
+        if let Some(sid) = selected_sub_id {
+            crate::relay::router::apply_ha_model_mapping(&mut channel, sid);
         }
     } else if let Some(preset_id) = channel.preset_id {
         if let Ok(Some(preset)) = sqlx::query_as::<_, ChannelConfig>(
@@ -254,20 +284,25 @@ pub async fn simulate_channel_billing(
         .fetch_optional(&state.db.pool)
         .await
         {
+            let resolved = channel.resolve_upstream_config(&preset);
+            channel.rate = resolved.rate;
+            channel.priority = resolved.priority;
+            channel.weight = resolved.weight;
             resolved_upstream_name = format!("上游预设: {}", preset.name);
-            resolved_upstream_rate = preset.rate;
+            resolved_upstream_rate = resolved.rate;
         }
     }
 
-    // 若请求显式传入自定义上游费率（覆盖默认），以管理员指定为准
+    // 若请求显式传入自定义上游费率（覆盖默认），以管理员指定为准，并同步更新 channel.rate 供折扣比对使用
     if let Some(custom_rate) = req.custom_upstream_rate {
         if custom_rate >= 0.0 {
             resolved_upstream_rate = custom_rate;
+            channel.rate = custom_rate;
             resolved_upstream_name = format!("{} (手动指定倍率)", resolved_upstream_name);
         }
     }
 
-    // 4. 路由与模型映射推导 (Single Source of Truth: Channel::resolve_model)
+    // 4. 路由与模型映射推导 (Single Source of Truth: router::resolve_model)
     // 允许传入 model_id 或 mid；若为空则兜底取渠道首个可用模型
     let raw_model = if req.model.trim().is_empty() {
         channel
@@ -280,7 +315,9 @@ pub async fn simulate_channel_billing(
     };
 
     // 优先尝试按 model_id 精确查找，其次尝试按 6 位系统 mid 查找
-    let db_model = if let Some(m) = find_active_model_exact(state, &raw_model, None, Some(&channel)).await {
+    let db_model = if let Some(m) =
+        find_active_model_exact(state, &raw_model, None, Some(&channel)).await
+    {
         Some(m)
     } else if let Some(m) = crate::relay::proxy::find_active_model_by_mid(state, &raw_model).await {
         Some(m)
@@ -299,14 +336,45 @@ pub async fn simulate_channel_billing(
         raw_model
     };
 
-    let resolved_model = channel.resolve_model(&requested_model);
+    let orig_group_aid = channel.group_aid.clone();
+    if channel.provider_type == "high_availability_group" {
+        let active_sid = req
+            .sub_channel_id
+            .filter(|id| available_sub_channels.iter().any(|s| s.id == *id))
+            .or_else(|| available_sub_channels.first().map(|s| s.id));
+        if let Some(sid) = active_sid {
+            channel.group_aid = Some(format!("ha_group_{}_config_{}", channel.id, sid));
+        }
+    }
+    let sim_res = req
+        .features
+        .as_ref()
+        .and_then(|f| f.resolution.as_deref().or(f.size.as_deref()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let (resolved_model, map_src_opt) = crate::relay::router::resolve_model(
+        &channel,
+        &requested_model,
+        db_model.as_ref(),
+        sim_res,
+    );
+    channel.group_aid = orig_group_aid;
+
     let mapping_map = channel.get_model_mapping();
-    let (mapping_hit, mapping_source) = if mapping_map.contains_key(&requested_model) {
-        (true, "渠道模型映射(精确匹配)".to_string())
-    } else if requested_model != resolved_model {
-        (true, "渠道模型映射(正则规则匹配)".to_string())
-    } else {
-        (false, "无映射(直通模型名)".to_string())
+    let (mapping_hit, mapping_source) = match map_src_opt.as_deref() {
+        Some(src) if src.starts_with("分辨率映射@") => {
+            (true, format!("渠道按{}映射", src))
+        }
+        Some("渠道映射") => {
+            if mapping_map.contains_key(&requested_model) {
+                (true, "渠道模型映射(精确匹配)".to_string())
+            } else {
+                (true, "渠道模型映射(正则规则匹配)".to_string())
+            }
+        }
+        Some("模型映射") => (true, "全局模型库别名映射".to_string()),
+        Some(other) => (true, other.to_string()),
+        None => (false, "无映射(直通模型名)".to_string()),
     };
 
     let mut active_model = if db_model.is_some() {
@@ -338,14 +406,16 @@ pub async fn simulate_channel_billing(
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(time_str) {
             let local = dt.with_timezone(&site_tz_parsed);
             (local.time(), local.weekday())
-        } else if let Ok(dt) =
-            chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S")
+        } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M:%S")
         {
             (dt.time(), dt.weekday())
         } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d %H:%M") {
             (dt.time(), dt.weekday())
         } else if let Ok(t) = chrono::NaiveTime::parse_from_str(time_str, "%H:%M") {
-            (t, chrono::Utc::now().with_timezone(&site_tz_parsed).weekday())
+            (
+                t,
+                chrono::Utc::now().with_timezone(&site_tz_parsed).weekday(),
+            )
         } else {
             let now = chrono::Utc::now().with_timezone(&site_tz_parsed);
             (now.time(), now.weekday())
@@ -354,12 +424,18 @@ pub async fn simulate_channel_billing(
         let now = chrono::Utc::now().with_timezone(&site_tz_parsed);
         (now.time(), now.weekday())
     };
+    let mut site_changed = false;
+    let mut global_changed = false;
     if let Some(model) = active_model.as_mut() {
+        let before_site = model.site_discount;
+        let before_global = model.global_discount;
         model.apply_discount_schedule_at(sim_local_time, sim_weekday);
+        site_changed = (model.site_discount - before_site).abs() > 1e-6;
+        global_changed = (model.global_discount - before_global).abs() > 1e-6;
     }
 
     let time_multiplier = if let Some(ref rule) = db_rule {
-        rule.multiplier_at_local_time(sim_local_time)
+        rule.multiplier_at_local_datetime(sim_local_time, sim_weekday)
     } else {
         1.0
     };
@@ -370,10 +446,24 @@ pub async fn simulate_channel_billing(
     let mut user_model_discounts: Option<String> = None;
     let mut user_context_balance = 0.0;
     let mut user_identity_desc = "默认标准用户".to_string();
+    let mut resolved_real_user_id = String::new();
+
+    let default_level_opt: Option<UserLevel> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM user_levels WHERE is_default = 1 OR group_key = 'default' ORDER BY is_default DESC, id ASC LIMIT 1",
+    ))
+    .fetch_optional(&state.db.pool)
+    .await
+    .unwrap_or(None);
+
+    if let Some(ref def_lvl) = default_level_opt {
+        resolved_level_discount = def_lvl.discount;
+        resolved_discount_type = def_lvl.discount_type;
+        user_identity_desc = format!("默认等级: {} (折扣: {:.2}x)", def_lvl.name, def_lvl.discount);
+    }
 
     if let Some(ref uid_or_name) = req.user_id {
         if !uid_or_name.trim().is_empty() {
-            let u_row: Option<(String, String, f64, f64, Option<String>, i64, String, f64, i32)> = sqlx::query_as(
+            let u_row: Option<(String, String, f64, f64, Option<String>, i64, String, f64, i64)> = sqlx::query_as(
                 &state.db.format_query(
                     "SELECT u.id, u.user_group, u.balance, u.gift_balance, u.model_discounts, \
                      COALESCE(ul.id, 0), COALESCE(ul.name, ''), COALESCE(ul.discount, 1.0), COALESCE(ul.discount_type, 0) \
@@ -388,12 +478,29 @@ pub async fn simulate_channel_billing(
             .await
             .unwrap_or(None);
 
-            if let Some((_uid, u_grp, bal, gift, md, _lid, l_name, d, dt)) = u_row {
+            if let Some((uid, u_grp, bal, gift, md, lid, l_name, d, dt)) = u_row {
+                resolved_real_user_id = uid;
                 user_context_balance = bal + gift;
-                resolved_level_discount = d;
-                resolved_discount_type = dt;
                 user_model_discounts = md;
-                user_identity_desc = format!("真实用户: {} (分组: {}, 等级: {})", uid_or_name, u_grp, l_name);
+                if lid > 0 {
+                    resolved_level_discount = d;
+                    resolved_discount_type = dt;
+                    user_identity_desc = format!(
+                        "真实用户: {} (分组: {}, 等级: {})",
+                        uid_or_name, u_grp, l_name
+                    );
+                } else if let Some(ref def_lvl) = default_level_opt {
+                    resolved_level_discount = def_lvl.discount;
+                    resolved_discount_type = def_lvl.discount_type;
+                    user_identity_desc = format!(
+                        "真实用户: {} (原分组 {} 已失效，回退默认等级: {})",
+                        uid_or_name, u_grp, def_lvl.name
+                    );
+                } else {
+                    resolved_level_discount = d;
+                    resolved_discount_type = dt;
+                    user_identity_desc = format!("真实用户: {} (分组: {})", uid_or_name, u_grp);
+                }
             }
         }
     } else if let Some(lid) = req.user_level_id {
@@ -415,8 +522,11 @@ pub async fn simulate_channel_billing(
     }
 
     if let Some(custom_d) = req.custom_discount {
-        if custom_d >= 0.0 {
+        if custom_d > 0.0 {
             resolved_level_discount = custom_d;
+            resolved_discount_type = crate::relay::proxy::DISC_V2_FLAG
+                | crate::relay::proxy::normalize_discount_mask(resolved_discount_type)
+                | crate::relay::proxy::DISC_LEVEL;
             user_identity_desc = format!("{} [手动折率: {:.2}x]", user_identity_desc, custom_d);
         }
     }
@@ -439,7 +549,9 @@ pub async fn simulate_channel_billing(
         cache_creation: 0,
         audio_tokens: usage_req.audio_tokens as i32,
         audio_cached_tokens: usage_req.audio_cached_tokens as i32,
-        image_tokens: 0,
+        image_tokens: usage_req.image_tokens as i32,
+        output_image_tokens: usage_req.output_image_tokens as i32,
+        reasoning_tokens: 0,
         web_search: features_req.web_search.unwrap_or(0),
     };
 
@@ -456,7 +568,6 @@ pub async fn simulate_channel_billing(
         service_tier: None,
         prompt_extend: false,
         layer_decomposition: false,
-        mode: features_req.mode.clone(),
         sound: None,
         image_ref_count: None,
         size: eff_size,
@@ -482,21 +593,61 @@ pub async fn simulate_channel_billing(
         &extracted_features,
     );
 
-    // 10. 用户身份折扣判定 (Single Source of Truth: resolve_discount)
-    let user_mid_discount = active_model.as_ref().and_then(|m| {
-        parse_user_model_discount(&user_model_discounts, &m.mid)
-    });
-    let (src_discount, discount_source_name) = resolve_discount(
+    // 10. 用户身份与渠道倍率统一折扣判定 (Single Source of Truth: resolve_discount)
+    let user_mid_discount = active_model
+        .as_ref()
+        .and_then(|m| parse_user_model_discount(&user_model_discounts, &m.mid));
+    let (base_src_discount, base_source_name) = resolve_discount(
         active_model.as_ref(),
         resolved_level_discount,
         user_mid_discount,
+        channel.rate,
         resolved_discount_type,
     );
+    let coupon_discount = if !resolved_real_user_id.is_empty() {
+        let voucher_d = crate::relay::voucher::active_vouchers_for_model(
+            &state.db,
+            &resolved_real_user_id,
+            active_model.as_ref(),
+            &requested_model,
+            &resolved_model,
+        )
+        .await
+        .first()
+        .map(|v| v.discount);
+        if voucher_d.is_some() {
+            voucher_d
+        } else {
+            #[cfg(feature = "commercial_plugins")]
+            {
+                crate::api::plugins::marketing_membership::billing::active_coupon_credits_for_model(
+                    state,
+                    &resolved_real_user_id,
+                    active_model.as_ref(),
+                    &requested_model,
+                    &resolved_model,
+                )
+                .await
+                .first()
+                .map(|c| c.discount)
+            }
+            #[cfg(not(feature = "commercial_plugins"))]
+            {
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    // 11. 渠道倍率叠加与保底限价校验 (Single Source of Truth: clamp_discount_floor)
-    let channel_rate = channel.rate;
-    let effective_rate = src_discount * channel_rate;
-    let floor_clamped = clamp_discount_floor(effective_rate, active_model.as_ref());
+    let (src_discount, discount_source_name) = crate::relay::resolve_coupon_or_base_discount(
+        base_src_discount,
+        base_source_name,
+        coupon_discount,
+    );
+
+    // 11. 保底限价校验 (Single Source of Truth: clamp_discount_floor)
+    let floor_clamped = clamp_discount_floor(src_discount, active_model.as_ref());
     let (billing_discount, is_floor_hit) = match floor_clamped {
         Some(floor_val) => (floor_val, true),
         None => (src_discount, false),
@@ -530,20 +681,22 @@ pub async fn simulate_channel_billing(
         detail_str = format!("{} * {:.2}倍(时段倍率)", detail_str, time_multiplier);
     }
 
-    // 渠道倍率如果未被保底拦截，在末尾相乘展示
-    let use_channel_rate = (channel_rate - 1.0).abs() > 0.00001;
     if is_floor_hit {
         detail_str.push_str(&format!(
-            " | 原{:.2}({})×{:.2}(渠道)低于保底限价",
-            src_discount, discount_source_name, channel_rate
+            " | 原{:.2}({})低于保底限价",
+            src_discount, discount_source_name
         ));
-    } else if use_channel_rate {
-        cost_after_discount *= channel_rate;
-        detail_str.push_str(&format!(" * {:.2}倍(渠道倍率)", channel_rate));
     }
 
     if mapping_hit {
-        detail_str.push_str(&format!(" | 渠道映射: {} ➞ {}", requested_model, resolved_model));
+        detail_str.push_str(&format!(
+            " | 渠道映射: {} ➞ {}",
+            requested_model, resolved_model
+        ));
+    }
+    if (is_floor_hit && site_changed) || (discount_source_name == "全站折扣" && global_changed)
+    {
+        detail_str.push_str(" | 时段折扣");
     }
 
     let actual_cost = crate::money::round_money(cost_after_discount);
@@ -553,7 +706,10 @@ pub async fn simulate_channel_billing(
         m.type_name.as_deref().unwrap_or("").contains("视频")
     }) || extracted_features.has_video;
 
-    let unit_pre = active_model.as_ref().map(|m| m.pre_deduction).unwrap_or(0.0);
+    let unit_pre = active_model
+        .as_ref()
+        .map(|m| m.pre_deduction)
+        .unwrap_or(0.0);
     let dur = extracted_features.duration_seconds.unwrap_or(5.0).max(1.0);
     let (pre_deducted, is_by_second) = if is_video_model && unit_pre > 0.0 {
         (crate::money::round_money(unit_pre * dur), true)
@@ -600,7 +756,10 @@ pub async fn simulate_channel_billing(
         title: "路由与模型映射解析".into(),
         formula: format!("{} ➞ {}", requested_model, resolved_model),
         description: if mapping_hit {
-            format!("成功命中{}，实际将请求上游真实模型名 {}", mapping_source, resolved_model)
+            format!(
+                "成功命中{}，实际将请求上游真实模型名 {}",
+                mapping_source, resolved_model
+            )
         } else {
             "未配置模型重命名映射，直接按请求模型名直通转发上游".into()
         },
@@ -650,11 +809,19 @@ pub async fn simulate_channel_billing(
     steps.push(PipelineTraceStep {
         step: 2,
         stage: "pre_deduct".into(),
-        title: if is_by_second { "预扣费冻结校验 (按秒预扣)".into() } else { "预扣费冻结校验".into() },
+        title: if is_by_second {
+            "预扣费冻结校验 (按秒预扣)".into()
+        } else {
+            "预扣费冻结校验".into()
+        },
         formula: step2_formula,
         description: step2_desc,
         value: Some(pre_deducted),
-        status: if pre_deduct_pass { "pass".into() } else { "danger".into() },
+        status: if pre_deduct_pass {
+            "pass".into()
+        } else {
+            "danger".into()
+        },
     });
 
     // Step 3: 基准算力费用
@@ -672,41 +839,75 @@ pub async fn simulate_channel_billing(
             "未关联计费规则，触发系统统一默认兜底公式（1M Tokens = 1.0 货币单位）".into()
         },
         value: Some(base_cost_raw),
-        status: if db_rule.is_some() { "normal".into() } else { "warn".into() },
+        status: if db_rule.is_some() {
+            "normal".into()
+        } else {
+            "warn".into()
+        },
     });
 
-    // Step 4: 用户身份折扣策略判定
+    // Step 4: 多维折扣策略判定
+    let sim_mask = crate::relay::proxy::normalize_discount_mask(resolved_discount_type);
+    let level_disc_str = if (sim_mask & crate::relay::proxy::DISC_LEVEL) != 0 {
+        format!("{:.2}x", resolved_level_discount)
+    } else {
+        format!("{:.2}x(未勾选)", resolved_level_discount)
+    };
+    let umd_str = match user_mid_discount {
+        Some(d) if (sim_mask & crate::relay::proxy::DISC_USER_MODEL) != 0 => format!("{:.2}x", d),
+        Some(d) => format!("{:.2}x(未勾选)", d),
+        None => "无".into(),
+    };
+    let global_str = match active_model
+        .as_ref()
+        .filter(|m| m.global_discount_enabled == 1)
+    {
+        Some(m) if (sim_mask & crate::relay::proxy::DISC_GLOBAL) != 0 => {
+            format!("{:.2}x", m.global_discount)
+        }
+        Some(m) => format!("{:.2}x(未勾选)", m.global_discount),
+        None => "未启用".into(),
+    };
+    let ch_rate_str = if (sim_mask & crate::relay::proxy::DISC_CHANNEL) != 0 {
+        format!("{:.2}x", channel.rate)
+    } else {
+        format!("{:.2}x(未勾选)", channel.rate)
+    };
     steps.push(PipelineTraceStep {
         step: 4,
         stage: "discount".into(),
-        title: "用户身份折扣判定".into(),
-        formula: format!("有效折扣率 = {:.2}x（来源: {}）", src_discount, discount_source_name),
+        title: "多维折扣比对判定".into(),
+        formula: format!(
+            "最低匹配折扣 = {:.2}x（来源: {}）",
+            src_discount, discount_source_name
+        ),
         description: format!(
-            "用户上下文: {}；经裁决 MIN(等级折扣: {:.2}x, 专享折扣: {}, 全站折扣: {}) = {:.2}x",
+            "用户上下文: {}；从已勾选折扣项中匹配最低值 MIN(等级折扣: {}, 专享折扣: {}, 全站折扣: {}, 渠道倍率: {}) = {:.2}x",
             user_identity_desc,
-            resolved_level_discount,
-            user_mid_discount.map(|d| format!("{:.2}x", d)).unwrap_or_else(|| "无".into()),
-            active_model.as_ref().filter(|m| m.global_discount_enabled == 1).map(|m| format!("{:.2}x", m.global_discount)).unwrap_or_else(|| "未启用".into()),
+            level_disc_str,
+            umd_str,
+            global_str,
+            ch_rate_str,
             src_discount
         ),
         value: Some(src_discount),
         status: "normal".into(),
     });
 
-    // Step 5: 渠道倍率叠加与保底限价拦截
+    // Step 5: 保底限价拦截
     steps.push(PipelineTraceStep {
         step: 5,
         stage: "channel_rate_and_floor".into(),
-        title: "渠道倍率与保底限价校验".into(),
+        title: "折扣保底限价校验".into(),
         formula: if is_floor_hit {
             format!(
-                "触碰保底: 原折率 {:.2} × 渠道 {:.2} = {:.2}x < 保底 {:.2}x ➞ 强制保底 {:.2}x",
-                src_discount, channel_rate, effective_rate, billing_discount, billing_discount
+                "触碰保底: 匹配折扣 {:.2}x ({}) < 保底 {:.2}x ➞ 强制保底 {:.2}x",
+                src_discount, discount_source_name, billing_discount, billing_discount
             )
         } else {
             format!(
-                "有效倍率 = 用户折率 {:.2} × 渠道倍率 {:.2} = {:.2}x",
-                src_discount, channel_rate, effective_rate
+                "最终有效倍率 = {:.2}x（{}）",
+                billing_discount, discount_source_name
             )
         },
         description: if is_floor_hit {
@@ -715,7 +916,7 @@ pub async fn simulate_channel_billing(
                 billing_discount
             )
         } else {
-            "倍率未触碰模型保底限价，按正常渠道倍率与身份折扣叠加计算".into()
+            "折扣倍率未低于模型保底限价，按匹配到的最低折扣倍率结算".into()
         },
         value: Some(billing_discount),
         status: if is_floor_hit { "warn".into() } else { "pass".into() },
@@ -728,10 +929,16 @@ pub async fn simulate_channel_billing(
         title: "峰谷时段倍率折算".into(),
         formula: format!(
             "时段倍率 = {:.2}x（模拟时钟: {:02}:{:02}:{:02}）",
-            time_multiplier, sim_local_time.hour(), sim_local_time.minute(), sim_local_time.second()
+            time_multiplier,
+            sim_local_time.hour(),
+            sim_local_time.minute(),
+            sim_local_time.second()
         ),
         description: if (time_multiplier - 1.0).abs() > 0.00001 {
-            format!("当前模拟时间匹配到计费规则的时段波段系数，金额乘以 {:.2} 倍", time_multiplier)
+            format!(
+                "当前模拟时间匹配到计费规则的时段波段系数，金额乘以 {:.2} 倍",
+                time_multiplier
+            )
         } else {
             "当前时段处于基准常价格区间或未启用时段倍率，无额外时段乘数".into()
         },
@@ -740,18 +947,47 @@ pub async fn simulate_channel_billing(
     });
 
     // Step 7: 最终结算与退补对账
-    let settlement_prefix = if is_by_second { "[按秒预扣结算] " } else { "[预扣结算] " };
+    let settlement_prefix = if is_by_second {
+        "[按秒预扣结算] "
+    } else {
+        "[预扣结算] "
+    };
     steps.push(PipelineTraceStep {
         step: 7,
         stage: "settlement".into(),
-        title: if is_by_second { "最终结算与差额退补 (按秒结算)".into() } else { "最终结算与差额退补".into() },
-        formula: format!("{}实扣金额 = {:.6} {}（预扣差额: {}{:.6} {}）", settlement_prefix, actual_cost, c_unit, if refund_amount > 0.0 { "+" } else { "-" }, if refund_amount > 0.0 { refund_amount } else { additional_deduct }, c_unit),
-        description: if refund_amount > 0.0 {
-            format!("{}预扣 {:.6} {} 大于实际结算消费，将向用户原路退回余额 {:.6} {}", settlement_prefix, pre_deducted, c_unit, refund_amount, c_unit)
-        } else if additional_deduct > 0.0 {
-            format!("{}实际结算金额超出预扣，将从用户余额中追加补扣 {:.6} {}", settlement_prefix, additional_deduct, c_unit)
+        title: if is_by_second {
+            "最终结算与差额退补 (按秒结算)".into()
         } else {
-            format!("{}预扣金额与实际消费完全一致，无需额外退补", settlement_prefix)
+            "最终结算与差额退补".into()
+        },
+        formula: format!(
+            "{}实扣金额 = {:.6} {}（预扣差额: {}{:.6} {}）",
+            settlement_prefix,
+            actual_cost,
+            c_unit,
+            if refund_amount > 0.0 { "+" } else { "-" },
+            if refund_amount > 0.0 {
+                refund_amount
+            } else {
+                additional_deduct
+            },
+            c_unit
+        ),
+        description: if refund_amount > 0.0 {
+            format!(
+                "{}预扣 {:.6} {} 大于实际结算消费，将向用户原路退回余额 {:.6} {}",
+                settlement_prefix, pre_deducted, c_unit, refund_amount, c_unit
+            )
+        } else if additional_deduct > 0.0 {
+            format!(
+                "{}实际结算金额超出预扣，将从用户余额中追加补扣 {:.6} {}",
+                settlement_prefix, additional_deduct, c_unit
+            )
+        } else {
+            format!(
+                "{}预扣金额与实际消费完全一致，无需额外退补",
+                settlement_prefix
+            )
         },
         value: Some(actual_cost),
         status: "normal".into(),
@@ -764,15 +1000,36 @@ pub async fn simulate_channel_billing(
         title: "上游采购成本与毛利核算".into(),
         formula: format!(
             "平台实收 {:.6} - 上游成本 {:.6} = 毛利润 {}{:.6} {} (毛利率 {:.2}%)",
-            actual_cost, upstream_cost, if gross_profit >= 0.0 { "+" } else { "" }, gross_profit, c_unit, margin_percent
+            actual_cost,
+            upstream_cost,
+            if gross_profit >= 0.0 { "+" } else { "" },
+            gross_profit,
+            c_unit,
+            margin_percent
         ),
         description: if is_loss_making {
-            format!("⚠️ 出现负毛利倒贴！采购成本超出终端收取 {:.6} {}，建议调整渠道倍率至 ≥ {:.2}x", (upstream_cost - actual_cost).abs(), c_unit, if base_cost_raw > 0.0 { upstream_cost / base_cost_raw } else { 1.0 })
+            format!(
+                "⚠️ 出现负毛利倒贴！采购成本超出终端收取 {:.6} {}，建议调整渠道倍率至 ≥ {:.2}x",
+                (upstream_cost - actual_cost).abs(),
+                c_unit,
+                if base_cost_raw > 0.0 {
+                    upstream_cost / base_cost_raw
+                } else {
+                    1.0
+                }
+            )
         } else {
-            format!("平台盈利健康，当前单次调用毛利为 +{:.6} {}，利润率处于合理安全空间", gross_profit, c_unit)
+            format!(
+                "平台盈利健康，当前单次调用毛利为 +{:.6} {}，利润率处于合理安全空间",
+                gross_profit, c_unit
+            )
         },
         value: Some(gross_profit),
-        status: if is_loss_making { "danger".into() } else { "pass".into() },
+        status: if is_loss_making {
+            "danger".into()
+        } else {
+            "pass".into()
+        },
     });
 
     // 16. 构建响应体
@@ -812,9 +1069,18 @@ pub async fn simulate_channel_billing(
         },
         billing_rule: BillingRuleSimInfo {
             rule_id: db_rule.as_ref().map(|r| r.id),
-            rule_name: db_rule.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| "系统默认兜底规则".into()),
-            pricing_type: db_rule.as_ref().map(|r| r.pricing_type.clone()).unwrap_or_else(|| "token".into()),
-            billing_type: db_rule.as_ref().map(|r| r.billing_type.clone()).unwrap_or_else(|| "tokens".into()),
+            rule_name: db_rule
+                .as_ref()
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| "系统默认兜底规则".into()),
+            pricing_type: db_rule
+                .as_ref()
+                .map(|r| r.pricing_type.clone())
+                .unwrap_or_else(|| "token".into()),
+            billing_type: db_rule
+                .as_ref()
+                .map(|r| r.billing_type.clone())
+                .unwrap_or_else(|| "tokens".into()),
             is_default_fallback: db_rule.is_none(),
             rates: rates_json,
         },
@@ -838,4 +1104,3 @@ pub async fn simulate_channel_billing(
         warning: general_warning,
     })
 }
-

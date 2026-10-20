@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Card, Form, Input, InputNumber, Button, message, Space, Tabs, Spin, Switch, Radio, Row, Col } from 'antd';
+import { Card, Form, Input, InputNumber, Button, message, Space, Tabs, Spin, Switch, Radio, Checkbox, Row, Col } from 'antd';
 import { SaveOutlined, ArrowLeftOutlined, KeyOutlined, FileTextOutlined, SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -17,6 +17,25 @@ import type { UserLevel } from '../../types';
 
 const { TabPane } = Tabs;
 
+const DISCOUNT_OPTIONS = [
+  { label: '用户等级折扣', value: 1 },
+  { label: '用户模型折扣', value: 2 },
+  { label: '模型全站折扣', value: 4 },
+  { label: '上游渠道倍率', value: 8 },
+];
+const ALL_DISCOUNT_VALUES = [1, 2, 4, 8];
+
+const decodeDiscountMask = (dt?: number): number[] => {
+  const v = dt ?? 0;
+  const mask = v >= 16 ? (v & 15) : (v === 1 ? 6 : v === 2 ? 3 : 15);
+  return ALL_DISCOUNT_VALUES.filter(bit => (mask & bit) !== 0);
+};
+
+const encodeDiscountMask = (selected?: number[]): number => {
+  const mask = (selected || []).reduce((acc, bit) => acc | (bit & 15), 0);
+  return 16 | mask;
+};
+
 const UserLevelEdit: React.FC = () => {
   const { t } = useTranslation();
   const { actionId } = useParams<{ actionId: string }>();
@@ -26,6 +45,10 @@ const UserLevelEdit: React.FC = () => {
   const currencyUnit = settings?.currency?.currency_unit || '元';
   const [form] = Form.useForm();
   const marketingEnabled = Form.useWatch('marketing_enabled', form);
+  const selectedDiscounts: number[] = Form.useWatch('discount_options', form) || [];
+  const isAllDiscountsSelected = selectedDiscounts.length === ALL_DISCOUNT_VALUES.length;
+  const isIndeterminateDiscounts = selectedDiscounts.length > 0 && selectedDiscounts.length < ALL_DISCOUNT_VALUES.length;
+  const isLevelDiscountSelected = selectedDiscounts.includes(1);
   const isMarketingActive = Boolean(marketingEnabled);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,7 +80,7 @@ const UserLevelEdit: React.FC = () => {
       setLoading(false);
       form.setFieldsValue({
         discount: 1.0,
-        discount_type: 2,
+        discount_options: ALL_DISCOUNT_VALUES,
         commission_ratio: 0.0,
         commission_basis: 'consumption',
         commission_transfer_min: 0,
@@ -67,6 +90,7 @@ const UserLevelEdit: React.FC = () => {
         daily_invite_limit: 10,
         marketing_enabled: false,
         is_default: false,
+        purchasable: false,
         max_token_count: 10,
         allow_view_log_details: true,
         sort_order: 0,
@@ -83,10 +107,11 @@ const UserLevelEdit: React.FC = () => {
         if (level) {
           form.setFieldsValue({
             ...level,
-            discount_type: level.discount_type ?? 0,
+            discount_options: decodeDiscountMask(level.discount_type),
             marketing_enabled: level.marketing_enabled === 1,
             commission_basis: level.commission_basis === 'recharge' ? 'recharge' : 'consumption',
             is_default: level.is_default === 1,
+            purchasable: level.purchasable === 1,
             allow_view_log_details: level.allow_view_log_details === undefined ? true : level.allow_view_log_details === 1,
             invoice_enabled: level.invoice_enabled === 1,
           });
@@ -106,11 +131,20 @@ const UserLevelEdit: React.FC = () => {
 
   const handleSave = async (values: any) => {
     setSaving(true);
+    const { discount_options, ...restValues } = values;
+    const rawDiscount = values.discount;
+    const resolvedDiscount =
+      rawDiscount === undefined || rawDiscount === null || Number.isNaN(Number(rawDiscount)) || Number(rawDiscount) <= 0
+        ? 1.0
+        : Number(rawDiscount);
     // Convert boolean switch back to number, guarding against undefined to prevent overwriting with 0
     const payload = {
-      ...values,
+      ...restValues,
+      discount: resolvedDiscount,
+      discount_type: discount_options === undefined ? undefined : encodeDiscountMask(discount_options),
       marketing_enabled: values.marketing_enabled === undefined ? undefined : (values.marketing_enabled ? 1 : 0),
       is_default: values.is_default === undefined ? undefined : (values.is_default ? 1 : 0),
+      purchasable: values.purchasable === undefined ? undefined : (values.purchasable ? 1 : 0),
       allow_view_log_details: values.allow_view_log_details === undefined ? undefined : (values.allow_view_log_details ? 1 : 0),
       invoice_enabled: values.invoice_enabled === undefined ? undefined : (values.invoice_enabled ? 1 : 0),
     };
@@ -187,7 +221,7 @@ const UserLevelEdit: React.FC = () => {
               name="group_key" 
               label={t('user_levels.group_key', '等级标志ID (Group Key)')} 
               rules={[{ required: true }]}
-              extra="辅助的英文字母等级标识符（如 vip1）。系统底层已拥有永久不可变的【4位数字用户等级ID】作为安全兜底，您可以在需要的时候安全地修改本标识而不用担心数据解绑。"
+              extra="辅助的英文字母等级标识符（如 vip1），创建后固定作为用户等级关联标识。"
             >
               <Input 
                 placeholder="e.g. vip, primary" 
@@ -195,47 +229,79 @@ const UserLevelEdit: React.FC = () => {
                 onChange={() => { if(isAdd) setGroupKeyManuallyEdited(true); }}
               />
             </Form.Item>
-            <Form.Item 
-              name="discount_type" 
-              label="折扣使用设置" 
+            <Form.Item
+              name="discount_options"
+              label={
+                <Space size={12}>
+                  <span>折扣使用设置</span>
+                  <Checkbox
+                    indeterminate={isIndeterminateDiscounts}
+                    checked={isAllDiscountsSelected}
+                    onChange={(e) => {
+                      const next = e.target.checked ? ALL_DISCOUNT_VALUES : [];
+                      form.setFieldValue('discount_options', next);
+                      if (!next.includes(1)) {
+                        const cur = form.getFieldValue('discount');
+                        if (cur === undefined || cur === null || Number(cur) <= 0) {
+                          form.setFieldValue('discount', 1.0);
+                        }
+                        form.validateFields(['discount']).catch(() => {});
+                      }
+                    }}
+                  >
+                    全选
+                  </Checkbox>
+                </Space>
+              }
               extra={
-                <div className="mt-2 rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground border border-border shadow-sm">
-                  <div className="mb-2 text-[13px] font-medium flex items-center text-foreground">
-                    <span className="mr-1.5">💡</span> 折扣生效规则说明
-                  </div>
-                  <div className="mb-3 text-xs leading-relaxed opacity-90">
-                    <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户模型折扣</code> 是单独为用户设置的对应的专属模型折扣，系统在结算根据以下策略自动取<strong className="text-foreground font-semibold">最大折扣力度（即最大优惠）</strong>：
-                  </div>
-                  <ul className="space-y-3 text-xs m-0 pl-0 list-none">
-                    <li className="flex flex-col gap-1 relative pl-3 before:content-[''] before:absolute before:left-0 before:top-2 before:w-1 before:h-1 before:bg-primary/50 before:rounded-full">
-                      <span className="font-medium text-foreground flex items-center gap-1.5"><span className="text-[14px]">🎚️</span> 用户等级折扣优先</span>
-                      <span className="text-muted-foreground/80 leading-snug">仅比较 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户模型折扣</code> 与 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户等级折扣</code>，自动选取<strong className="text-foreground">最低值</strong>。选取用户等级折扣，模型站点折扣不生效，只有单独为用户设置的模型折扣才生效。</span>
-                    </li>
-                    <li className="flex flex-col gap-1 relative pl-3 before:content-[''] before:absolute before:left-0 before:top-2 before:w-1 before:h-1 before:bg-primary/50 before:rounded-full">
-                      <span className="font-medium text-foreground flex items-center gap-1.5"><span className="text-[14px]">🌐</span> 全站折扣优先</span>
-                      <span className="text-muted-foreground/80 leading-snug">仅比较 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户模型折扣</code> 与 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">全局全站折扣</code>，自动选取<strong className="text-foreground">最低值</strong>。</span>
-                    </li>
-                    <li className="flex flex-col gap-1 relative pl-3 before:content-[''] before:absolute before:left-0 before:top-2 before:w-1 before:h-1 before:bg-primary/50 before:rounded-full">
-                      <span className="font-medium text-foreground flex items-center gap-1.5"><span className="text-[14px]">⚙️</span> 默认融合（不选择）</span>
-                      <span className="text-muted-foreground/80 leading-snug">综合对比 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户模型折扣</code>、<code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">用户等级折扣</code> 及 <code className="bg-background border border-border/50 px-1 py-0.5 rounded text-[11px] font-mono text-foreground">全局全站折扣</code>，自动选取三者<strong className="text-foreground">最低值</strong>。</span>
-                    </li>
-                  </ul>
-                </div>
+                selectedDiscounts.length === 0 ? (
+                  <span style={{ color: 'var(--ant-color-warning)' }}>
+                    当前未勾选任何折扣项：该等级调用所有模型均不享受优惠，统一按 1.00x 原价计费（若模型限价高于 1.00x 则按模型限价兜底）。
+                  </span>
+                ) : (
+                  `已勾选 ${selectedDiscounts.length} 项：系统自动匹配勾选项中的最低值（最大优惠）使用；若低于模型折扣限价，则直接使用模型限价兜底，保证平台不亏损。`
+                )
               }
             >
-              <Radio.Group optionType="button" buttonStyle="solid">
-                <Radio.Button value={2}>用户等级折扣 (默认)</Radio.Button>
-                <Radio.Button value={1}>全站折扣</Radio.Button>
-                <Radio.Button value={0}>不选择 (系统融合)</Radio.Button>
-              </Radio.Group>
+              <Checkbox.Group
+                options={DISCOUNT_OPTIONS}
+                onChange={(vals) => {
+                  if (!vals.includes(1)) {
+                    const cur = form.getFieldValue('discount');
+                    if (cur === undefined || cur === null || Number(cur) <= 0) {
+                      form.setFieldValue('discount', 1.0);
+                    }
+                    form.validateFields(['discount']).catch(() => {});
+                  }
+                }}
+              />
             </Form.Item>
             <Form.Item 
               name="discount" 
               label={t('user_levels.discount', '计费倍率 (Discount/Multiplier)')} 
-              rules={[{ required: true }]}
-              extra="设置用户计费的乘数。1 为原价不打折；小于1为折扣优惠（如 0.8 为 8折）；大于1为加倍收费（如 1.5 表明加价50%）。"
+              rules={[
+                { required: isLevelDiscountSelected, message: '请输入计费倍率' },
+                {
+                  validator: (_, val) => {
+                    if (!isLevelDiscountSelected) return Promise.resolve();
+                    if (val === undefined || val === null || Number.isNaN(Number(val)) || Number(val) <= 0) {
+                      return Promise.reject(new Error('计费倍率必须大于 0'));
+                    }
+                    return Promise.resolve();
+                  },
+                },
+              ]}
+              extra={
+                isLevelDiscountSelected ? (
+                  '设置用户计费的乘数。1 为原价不打折；小于1为折扣优惠（如 0.8 为 8折）；大于1为加倍收费（如 1.5 表明加价50%）。'
+                ) : (
+                  <span style={{ color: 'var(--ant-color-warning)' }}>
+                    上方未勾选「用户等级折扣」，此等级倍率暂不参与计费（如需启用请在上方勾选「用户等级折扣」）。
+                  </span>
+                )
+              }
             >
-              <InputNumber style={{ width: '100%' }} min={0.01} max={999} step={0.01} precision={2} />
+              <InputNumber disabled={!isLevelDiscountSelected} style={{ width: '100%' }} min={0.01} max={999} step={0.01} precision={2} />
             </Form.Item>
             <Form.Item name="description" label={t('user_levels.description')}>
               <Input.TextArea rows={4} placeholder="描述该组特权或补充信息..." />
@@ -252,6 +318,14 @@ const UserLevelEdit: React.FC = () => {
               label="设为默认注册等级" 
               valuePropName="checked"
               extra="开启后，新用户注册时将自动成为该等级。同一时间只能有一个默认注册等级，设置后会覆盖之前的默认等级。"
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              name="purchasable"
+              label="可购买用户等级"
+              valuePropName="checked"
+              extra="开启后，这个等级才会出现在「营销卡券会员 → 会员卡券方案」的会员等级里，可以被选为升级目标。关闭后，新建方案选不到它。"
             >
               <Switch />
             </Form.Item>
@@ -278,7 +352,7 @@ const UserLevelEdit: React.FC = () => {
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground m-0">
-                      开启后该等级用户享有专属返利与赠送策略，并覆盖全局注册赠礼配置
+                      开启后按下方比例发放新返佣，并用本等级注册赠送覆盖全局赠礼。关闭后不再产生新返佣，已入账佣金保留；注册赠送回到全局配置。
                     </p>
                   </div>
                   <div className="shrink-0 flex items-center">

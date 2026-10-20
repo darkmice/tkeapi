@@ -119,7 +119,10 @@ impl StripeClient {
     pub async fn get_session(&self, session_id: &str) -> Result<serde_json::Value> {
         let resp = self
             .http
-            .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
+            .get(format!(
+                "https://api.stripe.com/v1/checkout/sessions/{}",
+                session_id
+            ))
             .basic_auth(&self.settings.secret_key, None::<&str>)
             .send()
             .await?
@@ -172,15 +175,24 @@ impl StripeClient {
     /// 将金额转换为 Stripe 最小单位
     /// 零小数点货币（如 JPY, KRW）不需要乘以 100
     pub fn to_minor_units(&self, amount: f64, currency: &str) -> i64 {
-        let zero_decimal = [
-            "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd",
-            "vuv", "xaf", "xof", "xpf",
-        ];
-        let cur = currency.to_lowercase();
-        if zero_decimal.contains(&cur.as_str()) {
+        if currency_minor_decimals(currency) == 0 {
             amount.round() as i64
         } else {
             (amount * 100.0).round() as i64
         }
+    }
+}
+
+/// Stripe 币种最小单位的小数位数：零小数货币为 0，其余为 2
+pub fn currency_minor_decimals(currency: &str) -> u32 {
+    let zero_decimal = [
+        "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "vnd", "vuv",
+        "xaf", "xof", "xpf",
+    ];
+    let cur = currency.to_lowercase();
+    if zero_decimal.contains(&cur.as_str()) {
+        0
+    } else {
+        2
     }
 }

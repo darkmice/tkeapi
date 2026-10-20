@@ -32,6 +32,11 @@ const COLOR: Record<string, string> = {
   bonuspay: 'geekblue',
   hyperbc: 'purple',
   redemption: 'orange',
+  redemption_refund: 'orange',
+  model_voucher: 'gold',
+  coupon_purchase: 'purple',
+  coupon_pack: 'purple',
+  coupon_subscription: 'blue',
   ark_video_consume: 'volcano',
   ark_video_refund: 'green',
 };
@@ -40,12 +45,13 @@ const WALLET_RECHARGE_FILTERS = [
   'manual',
   'gift',
   'registration',
-  'commission',
   'alipay',
   'wechat',
   'redemption',
-  'ark_video_consume',
-  'ark_video_refund',
+  'model_voucher',
+  'coupon_purchase',
+  'coupon_pack',
+  'coupon_subscription',
 ] as const;
 
 function norm(type: string): string {

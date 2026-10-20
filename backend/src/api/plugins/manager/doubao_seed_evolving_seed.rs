@@ -93,9 +93,10 @@ pub fn doubao_seed_evolving_scheme() -> Value {
 
 pub fn seed_doubao_seed_evolving_scheme(schemes: &mut Vec<Value>) {
     let next = doubao_seed_evolving_scheme();
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(DOUBAO_SEED_EVOLVING_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(DOUBAO_SEED_EVOLVING_SCHEME_ID))
+    {
         schemes[pos] = next;
     } else {
         schemes.push(next);

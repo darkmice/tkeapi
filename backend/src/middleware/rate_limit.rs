@@ -32,12 +32,47 @@ pub struct GlobalRateLimiter {
     /// 日志重度查询按 (User, IP) 限流
     logs_query_limits:
         DashMap<String, Arc<RateLimiter<NotKeyed, InMemoryState, governor::clock::DefaultClock>>>,
+    /// 验证码发送：IP 每小时计数（次数, 窗口起点）
+    code_send_ip_windows: DashMap<String, (u32, Instant)>,
+    /// 验证码发送：目标(邮箱/手机)+用途 每 24 小时计数
+    code_send_target_windows: DashMap<String, (u32, Instant)>,
+    /// 登录按账号连续失败：账号 -> (次数, 上次失败时间)
+    account_failures: DashMap<String, (u32, Instant)>,
+    /// 登录按账号锁定到期时间
+    account_lockouts: DashMap<String, Instant>,
 }
 
 const LOGIN_MAX_FAILURES: u32 = 10;
 const LOGIN_WARN_REMAINING_ATTEMPTS: u32 = 3;
 const LOGIN_LOCKOUT_SECS: u64 = 10 * 60; // 锁定 10 分钟
 const LOGIN_FAILURE_WINDOW_SECS: u64 = 15 * 60; // 连续失败窗口 15 分钟
+/// 同一账号 15 分钟内累计失败 20 次锁 15 分钟（跨 IP 生效，阈值高于单 IP，降低被恶意锁号的影响）
+const ACCOUNT_MAX_FAILURES: u32 = 20;
+const ACCOUNT_LOCKOUT_SECS: u64 = 15 * 60;
+const CODE_SEND_IP_MAX_PER_HOUR: u32 = 20;
+const CODE_SEND_TARGET_MAX_PER_DAY: u32 = 10;
+
+/// 固定窗口计数：未超限则计 1 次并返回 true，已满返回 false
+fn hit_window(
+    map: &DashMap<String, (u32, Instant)>,
+    key: &str,
+    max: u32,
+    window: Duration,
+    now: Instant,
+) -> bool {
+    if map.len() > 16_384 {
+        map.retain(|_, (_, start)| now.duration_since(*start) <= window);
+    }
+    let mut entry = map.entry(key.to_string()).or_insert((0, now));
+    if now.duration_since(entry.1) > window {
+        *entry = (0, now);
+    }
+    if entry.0 >= max {
+        return false;
+    }
+    entry.0 += 1;
+    true
+}
 
 impl GlobalRateLimiter {
     pub fn new() -> Self {
@@ -50,7 +85,97 @@ impl GlobalRateLimiter {
             redeem_ip_windows: DashMap::new(),
             redeem_ip_bans: DashMap::new(),
             logs_query_limits: DashMap::new(),
+            code_send_ip_windows: DashMap::new(),
+            code_send_target_windows: DashMap::new(),
+            account_failures: DashMap::new(),
+            account_lockouts: DashMap::new(),
         }
+    }
+
+    /// 验证码发送配额：同 IP 每小时 20 次，同目标+用途每 24 小时 10 次。
+    /// `target_key` 由调用方规范化（邮箱小写、手机号规范值）。
+    pub fn check_code_send(&self, ip: &str, target_key: &str) -> Result<(), String> {
+        let now = Instant::now();
+        let ip = ip.trim();
+        if !ip.is_empty()
+            && ip != "unknown"
+            && !hit_window(
+                &self.code_send_ip_windows,
+                ip,
+                CODE_SEND_IP_MAX_PER_HOUR,
+                Duration::from_secs(60 * 60),
+                now,
+            )
+        {
+            return Err("当前网络发送验证码过于频繁，请 1 小时后再试".to_string());
+        }
+        if !hit_window(
+            &self.code_send_target_windows,
+            target_key,
+            CODE_SEND_TARGET_MAX_PER_DAY,
+            Duration::from_secs(24 * 60 * 60),
+            now,
+        ) {
+            return Err("该号码/邮箱今日获取验证码次数已达上限，请明天再试".to_string());
+        }
+        Ok(())
+    }
+
+    fn account_key(account: &str) -> String {
+        account.trim().to_lowercase()
+    }
+
+    /// 账号是否处于锁定期（跨 IP 的按账号锁定）
+    pub fn check_account_lock(&self, account: &str) -> Result<(), String> {
+        let key = Self::account_key(account);
+        if key.is_empty() {
+            return Ok(());
+        }
+        let now = Instant::now();
+        if let Some(until) = self.account_lockouts.get(&key) {
+            if *until > now {
+                let remaining_mins = (until.duration_since(now).as_secs() + 59) / 60;
+                return Err(format!(
+                    "该账号登录失败次数过多，已临时锁定，请 {} 分钟后再试",
+                    remaining_mins.max(1)
+                ));
+            }
+            drop(until);
+            self.account_lockouts.remove(&key);
+        }
+        Ok(())
+    }
+
+    /// 记录账号密码错误一次；达到阈值时锁定该账号
+    pub fn record_account_failure(&self, account: &str) {
+        let key = Self::account_key(account);
+        if key.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self.account_lockouts.len() > 4_096 {
+            self.account_lockouts.retain(|_, until| *until > now);
+        }
+        let window = Duration::from_secs(LOGIN_FAILURE_WINDOW_SECS);
+        if !hit_window(
+            &self.account_failures,
+            &key,
+            ACCOUNT_MAX_FAILURES - 1,
+            window,
+            now,
+        ) {
+            self.account_failures.remove(&key);
+            self.account_lockouts
+                .insert(key.clone(), now + Duration::from_secs(ACCOUNT_LOCKOUT_SECS));
+            tracing::warn!(account = %key, "Account login failures exceeded, locked");
+        }
+    }
+
+    /// 登录成功后清理账号失败计数
+    pub fn clear_account_failures(&self, account: &str) {
+        let key = Self::account_key(account);
+        self.account_failures.remove(&key);
+        self.account_lockouts.remove(&key);
     }
 
     /// 检查 IP 是否处于登录锁定状态（失败 10 次锁定 10 分钟）
@@ -103,13 +228,12 @@ impl GlobalRateLimiter {
         let (count, last_fail) = *entry;
 
         // 如果距离上次失败已超过窗口期，重新从 1 开始计
-        let new_count = if now.duration_since(last_fail)
-            > Duration::from_secs(LOGIN_FAILURE_WINDOW_SECS)
-        {
-            1
-        } else {
-            count.saturating_add(1)
-        };
+        let new_count =
+            if now.duration_since(last_fail) > Duration::from_secs(LOGIN_FAILURE_WINDOW_SECS) {
+                1
+            } else {
+                count.saturating_add(1)
+            };
 
         *entry = (new_count, now);
 
@@ -226,26 +350,28 @@ impl GlobalRateLimiter {
         Ok(())
     }
 
-    pub fn check_rps(&self, token_id: i64, rps: i32) -> bool {
+    pub fn check_rps(&self, token_id: i64, rps: i64) -> bool {
         if rps <= 0 {
             return true;
         }
 
         let limiter = self.token_rps_limits.entry(token_id).or_insert_with(|| {
-            let quota = Quota::per_second(NonZeroU32::new(rps as u32).unwrap());
+            let rps_u32 = (rps as u64).min(u32::MAX as u64) as u32;
+            let quota = Quota::per_second(NonZeroU32::new(rps_u32).unwrap());
             Arc::new(RateLimiter::direct(quota))
         });
 
         limiter.check().is_ok()
     }
 
-    pub fn check_rpm(&self, token_id: i64, rpm: i32) -> bool {
+    pub fn check_rpm(&self, token_id: i64, rpm: i64) -> bool {
         if rpm <= 0 {
             return true;
         }
 
         let limiter = self.token_rpm_limits.entry(token_id).or_insert_with(|| {
-            let quota = Quota::per_minute(NonZeroU32::new(rpm as u32).unwrap());
+            let rpm_u32 = (rpm as u64).min(u32::MAX as u64) as u32;
+            let quota = Quota::per_minute(NonZeroU32::new(rpm_u32).unwrap());
             Arc::new(RateLimiter::direct(quota))
         });
 
@@ -297,5 +423,46 @@ mod tests {
         // 第 10 次失败，触发锁定
         let msg10 = limiter.record_login_failure(ip, base_err);
         assert!(msg10.contains("已锁定 10 分钟"));
+    }
+
+    #[test]
+    fn code_send_target_capped_per_day() {
+        let limiter = GlobalRateLimiter::new();
+        for i in 0..CODE_SEND_TARGET_MAX_PER_DAY {
+            let ip = format!("198.51.100.{i}");
+            assert!(limiter
+                .check_code_send(&ip, "reset_password:a@b.com")
+                .is_ok());
+        }
+        assert!(limiter
+            .check_code_send("198.51.100.200", "reset_password:a@b.com")
+            .is_err());
+        assert!(limiter
+            .check_code_send("198.51.100.200", "register:a@b.com")
+            .is_ok());
+    }
+
+    #[test]
+    fn code_send_ip_capped_per_hour() {
+        let limiter = GlobalRateLimiter::new();
+        for i in 0..CODE_SEND_IP_MAX_PER_HOUR {
+            assert!(limiter
+                .check_code_send("192.0.2.9", &format!("register:{i}"))
+                .is_ok());
+        }
+        assert!(limiter.check_code_send("192.0.2.9", "register:x").is_err());
+    }
+
+    #[test]
+    fn account_locks_after_threshold_and_clears() {
+        let limiter = GlobalRateLimiter::new();
+        for _ in 0..ACCOUNT_MAX_FAILURES - 1 {
+            limiter.record_account_failure("Alice");
+            assert!(limiter.check_account_lock("alice").is_ok());
+        }
+        limiter.record_account_failure("alice ");
+        assert!(limiter.check_account_lock("ALICE").is_err());
+        limiter.clear_account_failures("alice");
+        assert!(limiter.check_account_lock("alice").is_ok());
     }
 }

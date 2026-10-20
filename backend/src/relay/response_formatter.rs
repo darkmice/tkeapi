@@ -15,39 +15,38 @@ use crate::relay::usage_extractor;
 use regex::Regex;
 use serde_json::{json, Value};
 
-/// 判定请求路径是否属于标准的 OpenAI 兼容 API 路径（排除如 /api/ 厂商原生接口）
+/// 判定请求路径是否属于标准的 OpenAI 兼容 API 路径（排除厂商官方原生接口，如 /ent/v2/、/v2/、/api/v3/、/text-to-video/ 等）
 pub fn is_openai_compatible_path(raw_path: &str) -> bool {
-    let Some(p) = raw_path.strip_prefix("/v1/") else {
+    let clean = raw_path
+        .split(['|', '?'])
+        .next()
+        .unwrap_or(raw_path)
+        .trim_end_matches('/');
+
+    // 阿里百炼兼容模式
+    if clean.starts_with("/compatible-mode/v1/") || clean.starts_with("/compatible-api/v1/") {
+        return true;
+    }
+
+    // 排除 Google Gemini 官方原生路由（/v1/models/、/v1beta/models/）
+    if crate::relay::forward::is_google_native_path(clean) {
+        return false;
+    }
+
+    // 必须以 /v1/ 开头
+    let Some(sub) = clean.strip_prefix("/v1/") else {
         return false;
     };
 
-    // 1. 图像生成/编辑与通用任务轮询
-    if p == "images/generations" || p == "images/edits" || p.starts_with("tasks/") {
-        return true;
+    // 排除可灵官方原生挂载图片路径与腾讯云官方原生生图路径
+    if sub.starts_with("images/omni-image")
+        || sub.starts_with("images/multi-image2image")
+        || sub.starts_with("wand/hunyuan-image")
+    {
+        return false;
     }
 
-    // 2. 标准视频入口与轮询：/v1/video/generations[/...]
-    if p == "video/generations" || p.starts_with("video/generations/") {
-        return true;
-    }
-
-    // 3. OpenAI Videos 兼容别名（/v1/videos、/v1/videos/generations[/...]、/v1/videos/{task_id}）
-    //    排除可灵原生路径：text2video、image2video、omni-video
-    if let Some(sub) = p.strip_prefix("videos") {
-        if sub.is_empty() {
-            return true; // /v1/videos
-        }
-        if let Some(rest) = sub.strip_prefix('/') {
-            if rest == "generations" || rest.starts_with("generations/") {
-                return true; // /v1/videos/generations 或 /v1/videos/generations/{task_id}
-            }
-            // 单段 task_id 轮询：/v1/videos/{task_id}
-            return !rest.contains('/')
-                && !matches!(rest, "text2video" | "image2video" | "omni-video");
-        }
-    }
-
-    false
+    true
 }
 
 /// 统一格式化入口：对 OpenAI 兼容路由自动转换响应格式。
@@ -80,7 +79,7 @@ pub fn format_openai(
         Err(_) => return raw.to_string(),
     };
 
-    // 异步轮询/结案：一律 poll 骨架（正确 status；error+success → failed）
+    // 1. 异步轮询/结案：一律 poll 骨架（正确 status；error+success → failed）
     if is_poll {
         return build_openai_poll(category, &v, fallback_id);
     }
@@ -108,14 +107,40 @@ pub fn format_openai(
         return raw.to_string();
     }
 
-    // 同步结果：有媒体（无 status）
     let urls = find_urls(&v);
-    if !urls.is_empty() {
+    let id = find_id(&v);
+
+    let raw_status = extract_raw_status(&v);
+    let std_status = parse_raw_status_to_standard(&raw_status);
+
+    // 同步完成：具备媒体 URL，且无 task_id、任务状态明确完成、或图片类别无未完成状态
+    if !urls.is_empty()
+        && (id.is_empty()
+            || std_status == "completed"
+            || (raw_status.is_empty() && category == "图片"))
+    {
         return build_openai_sync(category, &v, urls, fallback_id);
     }
 
-    // 异步 POST 成功：仅当上游响应自身带 task_id（勿用 log fallback 冒充 pending）
-    let id = find_id(&v);
+    // 同步被拦截但已结算用量：无有效媒体，且非 STOP（如 IMAGE_SAFETY、content_filter）
+    if urls.is_empty() {
+        if let Some(reason) = extract_finish_reason(&v).filter(|f| !f.eq_ignore_ascii_case("stop")) {
+            let mut resp = json!({
+                "created": resolve_created(&v),
+                "data": [],
+                "finish_reason": reason,
+            });
+            if let Some(fid) = fallback_id.filter(|s| !s.is_empty()) {
+                resp["id"] = json!(fid);
+            }
+            if let Some(u) = resolve_client_usage(&v) {
+                resp["usage"] = u;
+            }
+            return to_json(&resp);
+        }
+    }
+
+    // 6. 异步 POST 提交：具备有效 task_id
     if !id.is_empty() {
         return build_openai_submit(category, &v, &id);
     }
@@ -141,10 +166,8 @@ pub fn find_id(v: &Value) -> String {
         .or_else(|| v.pointer("/output/task_id")) // DashScope / 阿里百炼
         .or_else(|| v.pointer("/data/task/id"))
         .or_else(|| v.pointer("/Response/TaskId"))
-        .or_else(|| {
-            usage_extractor::tencent_aigc_task(v).and_then(|t| t.get("TaskId"))
-        })
-        .or_else(|| v.get("request_id")) // fal.ai queue: { request_id, status }；须在真实 task_id 之后
+        .or_else(|| usage_extractor::tencent_aigc_task(v).and_then(|t| t.get("TaskId")))
+        .or_else(|| v.get("request_id").filter(|_| !is_upstream_error_response(v))) // fal.ai queue: { request_id, status }；非错误体兜底
         .and_then(|val| {
             // 兼容字符串和数字类型的 task_id（如火山方舟返回数字 ID）
             val.as_str()
@@ -157,30 +180,40 @@ pub fn find_id(v: &Value) -> String {
         .to_string()
 }
 
-/// 统一提取异步任务 ID。自动过滤聊天响应（包含 choices / candidates 字段）的干扰性通用会话 ID。
+/// 统一提取异步任务 ID。自动过滤同步响应（包含 choices / candidates / steps 字段）的通用会话 ID。
 pub fn extract_async_task_id(v: &Value) -> String {
-    let id = find_id(v);
-    // 聊天响应的 id 字段是会话 ID，不是异步任务 ID
-    if !id.is_empty() && (v.get("choices").is_some() || v.get("candidates").is_some()) {
-        String::new()
-    } else {
-        id
+    if v.get("choices").is_some() || v.get("candidates").is_some() || v.get("steps").is_some() {
+        return String::new();
     }
+    find_id(v)
 }
 
 // ── 异步结案失败体 / 状态提取 ──
 
 /// 异步结案失败最小任务体（默认 HTTP 200；体含数字 error.code 时轮询出口透出）
 pub fn async_task_failed_body(task_id: &str, message: &str) -> String {
+    let code = match crate::relay::proxy::infer_error_status_code_from_str(message) {
+        s if (400..600).contains(&s) => s.to_string(),
+        _ => "400".to_string(),
+    };
     json!({
         "id": task_id,
         "status": "failed",
         "error": {
+            "code": code,
             "message": crate::relay::proxy::sanitize_error_message(message),
             "type": "api_error"
         }
     })
     .to_string()
+}
+
+/// 生成统一对外异步任务号：`cgt-{YYYYMMDDHHmmss}-{5位随机}`
+/// 格式规范：cgt- + 14位年月日时分秒 + 5位全局唯一ULID随机码
+pub fn new_cgt_task_id() -> String {
+    let ts = chrono::Local::now().format("%Y%m%d%H%M%S");
+    let u = ulid::Ulid::new().to_string().to_lowercase();
+    format!("cgt-{}-{}", ts, &u[21..26])
 }
 
 /// 强制对外任务号：原位同步全部上游任务号（百炼 output.task_id、可灵 data.task_id 等）。避免 `Value` 重排键。
@@ -365,7 +398,6 @@ pub(crate) fn json_root_set(s: &mut String, key: &str, raw_val: &str) -> bool {
     true
 }
 
-
 pub(crate) fn json_root_remove(s: &mut String, key: &str) {
     let Some(m) = json_find_root(s, key) else {
         return;
@@ -394,7 +426,18 @@ pub(crate) fn json_replace_str(s: &mut String, old: &str, new: &str) {
         return;
     }
     if let (Ok(old_lit), Ok(new_lit)) = (serde_json::to_string(old), serde_json::to_string(new)) {
-        *s = s.replace(&old_lit, &new_lit);
+        if s.contains(&old_lit) {
+            // 99.99% 主路径：带双引号的标准字符串 ID，单次极速替换，零多余内存分配
+            *s = s.replace(&old_lit, &new_lit);
+        } else {
+            // 容错路径：原生未带引号的数字 ID（如 : 12345），原位替换为带引号的目标字符串
+            for p in [format!(": {old}"), format!(":{old}")] {
+                if s.contains(&p) {
+                    *s = s.replace(&p, &p.replace(old, &new_lit));
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -414,7 +457,7 @@ pub(crate) fn json_replace_fields(s: &mut String, kv: &[(&str, &str)]) {
     }
 }
 
-/// 结案失败客户端体：OpenAI 兼容路径经 apply_format（轮询态），并固定对外 id
+/// 结案失败客户端体：统一封装为合法失败响应 JSON（OpenAI 兼容端点或官方原生路由）
 pub fn format_async_task_failed(
     raw_path: &str,
     category: &str,
@@ -422,11 +465,26 @@ pub fn format_async_task_failed(
     message: &str,
 ) -> String {
     let body = async_task_failed_body(task_id, message);
-    let mut s = apply_format(raw_path, category, &body, true, Some(task_id));
-    if is_openai_compatible_path(raw_path) {
-        force_json_task_id(&mut s, task_id);
+    if crate::relay::forward::is_official_route(raw_path) {
+        return crate::relay::forward::wrap_official_client(raw_path, &body, "", "");
     }
+    if !is_openai_compatible_path(raw_path) {
+        return body;
+    }
+    let mut s = apply_format(raw_path, category, &body, true, Some(task_id));
+    force_json_task_id(&mut s, task_id);
     s
+}
+
+/// 统一从响应体中提取 finish_reason（兼容 Google 原生 candidates、OpenAI choices 与顶层扩展格式）
+pub fn extract_finish_reason(v: &Value) -> Option<&str> {
+    v.pointer("/candidates/0/finishReason")
+        .or_else(|| v.pointer("/candidates/0/finish_reason"))
+        .or_else(|| v.pointer("/choices/0/finish_reason"))
+        .or_else(|| v.pointer("/choices/0/finishReason"))
+        .or_else(|| v.pointer("/finish_reason"))
+        .or_else(|| v.pointer("/finishReason"))
+        .and_then(|f| f.as_str())
 }
 
 /// 从任意厂商响应 JSON 中提取原始状态字，并自动应用特定平台的校验（如腾讯云 ErrCode、即梦 code）
@@ -476,6 +534,7 @@ pub fn extract_raw_status(v: &Value) -> String {
 
     v.get("status")
         .or_else(|| v.get("task_status"))
+        .or_else(|| v.get("state"))
         .or_else(|| v.pointer("/task/status")) // MiniMax H3 v2: { task: { status, content } }
         .or_else(|| v.pointer("/data/status"))
         .or_else(|| v.pointer("/data/task_status"))
@@ -496,7 +555,7 @@ pub fn parse_raw_status_to_standard(raw: &str) -> &'static str {
         | "abort" | "not_found" | "expired" => "failed",
         "processing" | "running" | "active" | "generating" | "waiting" | "in_queue"
         | "in_progress" => "in_progress",
-        "submitted" | "pending" | "queueing" | "queued" => "pending",
+        "submitted" | "pending" | "queueing" | "queued" | "created" => "pending",
         _ => "unknown",
     }
 }
@@ -528,12 +587,10 @@ pub fn find_urls(v: &Value) -> Vec<String> {
         }
     }
 
-    // 2. 可灵旧协议: data.task_result.images/videos[].url
+    // 2. 可灵图片协议: data.task_result.images[].url
     for path in &[
         "/data/task_result/images",
-        "/data/task_result/videos",
         "/data/task/task_result/images",
-        "/data/task/task_result/videos",
     ] {
         if let Some(arr) = v.pointer(path).and_then(|a| a.as_array()) {
             for item in arr {
@@ -601,10 +658,21 @@ pub fn find_urls(v: &Value) -> Vec<String> {
         push_unique(&mut urls, u);
     }
     if let Some(u) = v
-        .pointer("/Response/ProcedureTask/MediaProcessResultSet/0/CoverBySnapshotTask/Output/CoverUrl")
+        .pointer(
+            "/Response/ProcedureTask/MediaProcessResultSet/0/CoverBySnapshotTask/Output/CoverUrl",
+        )
         .and_then(|u| u.as_str())
     {
         push_unique(&mut urls, u);
+    }
+
+    // 3b. Vidu 官方视频生成: creations[].url
+    if let Some(arr) = v.get("creations").and_then(|a| a.as_array()) {
+        for item in arr {
+            if let Some(u) = item.get("url").and_then(|u| u.as_str()) {
+                push_unique(&mut urls, u);
+            }
+        }
     }
 
     // 4. 阿里 DashScope: output.results[].url / output.video_url
@@ -674,21 +742,8 @@ pub fn find_urls(v: &Value) -> Vec<String> {
         for cand in candidates {
             if let Some(parts) = cand.pointer("/content/parts").and_then(|p| p.as_array()) {
                 for part in parts {
-                    let inline = part.get("inlineData").or_else(|| part.get("inline_data"));
-                    if let Some(inline) = inline {
-                        if let Some(data) = inline.get("data").and_then(|d| d.as_str()) {
-                            // TOS 替换后 data 值已是 URL，直接作为 URL 返回
-                            if data.starts_with("http://") || data.starts_with("https://") {
-                                push_unique(&mut urls, data);
-                            } else {
-                                let mime = inline
-                                    .get("mimeType")
-                                    .or_else(|| inline.get("mime_type"))
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("image/png");
-                                push_unique(&mut urls, &format!("data:{};base64,{}", mime, data));
-                            }
-                        }
+                    if let Some(inline) = part.get("inlineData").or_else(|| part.get("inline_data")) {
+                        push_inline_media(&mut urls, inline);
                     }
                     // 书虫格式/Gemini文本格式：text 中的 Markdown 图片 或嵌入的 HTTP URL
                     else if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
@@ -730,6 +785,23 @@ pub fn find_urls(v: &Value) -> Vec<String> {
         }
     }
 
+    // 6a. Google Gemini Interactions: steps[].content[] (type == "image")
+    if let Some(steps) = v.get("steps").and_then(|s| s.as_array()) {
+        for item in steps
+            .iter()
+            .filter_map(|s| s.get("content").and_then(|c| c.as_array()))
+            .flatten()
+        {
+            if item
+                .get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("image"))
+            {
+                push_inline_media(&mut urls, item);
+            }
+        }
+    }
+
     // 6b. 腾讯云 VOD FileInfos；MPS SignedUrl（跳过 last_frame_url 尾帧图）
     if let Some(resp) = v.get("Response") {
         if let Some(task) = usage_extractor::tencent_aigc_task(resp) {
@@ -756,6 +828,15 @@ pub fn find_urls(v: &Value) -> Vec<String> {
         }
     }
 
+    // 6c. 腾讯云 TokenHub 混元生图 3.5: choices[].delta.image.url
+    if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            if let Some(u) = choice.pointer("/delta/image/url").and_then(|u| u.as_str()) {
+                push_unique(&mut urls, u);
+            }
+        }
+    }
+
     // 7. 递归扫描兜底（捕获非标准位置的媒体 URL）
     if urls.is_empty() {
         scan_value_for_urls(v, &mut urls);
@@ -767,6 +848,23 @@ pub fn find_urls(v: &Value) -> Vec<String> {
 fn push_unique(urls: &mut Vec<String>, url: &str) {
     if !url.is_empty() && !urls.iter().any(|u| u == url) {
         urls.push(url.to_string());
+    }
+}
+
+fn push_inline_media(urls: &mut Vec<String>, node: &Value) {
+    if let Some(u) = node.get("uri").and_then(|u| u.as_str()).filter(|s| !s.is_empty()) {
+        push_unique(urls, u);
+    } else if let Some(data) = node.get("data").and_then(|d| d.as_str()).filter(|s| !s.is_empty()) {
+        if data.starts_with("http://") || data.starts_with("https://") {
+            push_unique(urls, data);
+        } else {
+            let mime = node
+                .get("mimeType")
+                .or_else(|| node.get("mime_type"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("image/png");
+            push_unique(urls, &format!("data:{};base64,{}", mime, data));
+        }
     }
 }
 
@@ -806,14 +904,13 @@ fn scan_value_for_urls(v: &Value, urls: &mut Vec<String>) {
             }
         }
         Value::Object(map) => {
+            let is_task_obj = map.contains_key("task_id") || map.contains_key("TaskId");
             for (k, val) in map {
                 // 排除请求输入相关字段，避免将用户提交的原始图片误识别为响应媒体
-                if k == "request"
-                    || k == "input"
-                    || k == "task_input"
-                    || k == "original_input"
-                    || k == "task_data"
-                    || k == "InputInfo"
+                if matches!(
+                    k.as_str(),
+                    "request" | "input" | "task_input" | "original_input" | "task_data" | "InputInfo"
+                ) || (is_task_obj && matches!(k.as_str(), "images" | "image" | "image_urls" | "sounds"))
                 {
                     continue;
                 }
@@ -838,6 +935,9 @@ fn find_ts(v: &Value, keys: &[&str]) -> i64 {
             if let Some(s) = t.as_str() {
                 if let Ok(n) = s.parse::<i64>() {
                     return n;
+                }
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                    return dt.timestamp();
                 }
             }
         }
@@ -864,7 +964,7 @@ fn to_json(v: &Value) -> String {
 // ══════════════════════════════════════════════════════════════════════
 
 fn openai_object(category: &str) -> &'static str {
-    if category.contains("视频") || category == "video" {
+    if category.contains("视频") || category == "封装" || category == "video" {
         "video.generation"
     } else {
         "image.generation"
@@ -1117,6 +1217,7 @@ pub fn extract_error_code_from_value(v: &Value) -> Option<String> {
         .or_else(|| v.pointer("/base_resp/status_code")) // MiniMax 图片/部分接口
         .or_else(|| v.pointer("/Response/Error/Code"))
         .or_else(|| v.pointer("/ResponseMetadata/Error/Code"))
+        .or_else(|| v.pointer("/output/code")) // 阿里百炼/DashScope 异步任务输出 code
         // 方舟/智算等扁平错误：{"ErrorCode":"PERMISSION_ERROR","ErrorMessage":"..."}
         .or_else(|| v.get("ErrorCode"))
         .or_else(|| v.get("code")) // APIMart/即梦根节点数字或字符串 code
@@ -1145,7 +1246,10 @@ pub fn find_last_frame_url(v: &Value) -> Option<&str> {
         .and_then(|a| a.as_array())?;
     for item in arr {
         if item.get("UsageType").and_then(|u| u.as_str()) == Some("last_frame_url") {
-            return item.get("FileUrl").and_then(|u| u.as_str()).filter(|s| !s.is_empty());
+            return item
+                .get("FileUrl")
+                .and_then(|u| u.as_str())
+                .filter(|s| !s.is_empty());
         }
     }
     None
@@ -1236,6 +1340,12 @@ pub fn is_upstream_error_response(v: &Value) -> bool {
     if fastapi_detail_message(v).is_some() {
         return true;
     }
+    // 9. 根级 status_code 且非 200/0
+    if let Some(sc) = v.get("status_code").and_then(|s| s.as_i64()) {
+        if sc != 0 && sc != 200 {
+            return true;
+        }
+    }
     false
 }
 
@@ -1298,21 +1408,25 @@ mod tests {
         let sys_id = "tsk_20260928_sys";
 
         // 1. 阿里百炼 / DashScope 原生：仅替换 output.task_id，根级保持纯净无多余 id
-        let mut ali = r#"{"request_id":"req-1","output":{"task_id":"ali-up-123","task_status":"SUCCEEDED"}}"#.to_string();
+        let mut ali =
+            r#"{"request_id":"req-1","output":{"task_id":"ali-up-123","task_status":"SUCCEEDED"}}"#
+                .to_string();
         force_json_task_id(&mut ali, sys_id);
         let ali_v: Value = serde_json::from_str(&ali).unwrap();
         assert_eq!(ali_v["output"]["task_id"], sys_id);
         assert!(ali_v.get("id").is_none());
 
         // 2. 可灵旧版原生：仅替换 data.task_id，根级无多余 id
-        let mut kling_v1 = r#"{"code":0,"data":{"task_id":"kling-up-456","task_status":"succeed"}}"#.to_string();
+        let mut kling_v1 =
+            r#"{"code":0,"data":{"task_id":"kling-up-456","task_status":"succeed"}}"#.to_string();
         force_json_task_id(&mut kling_v1, sys_id);
         let k1_v: Value = serde_json::from_str(&kling_v1).unwrap();
         assert_eq!(k1_v["data"]["task_id"], sys_id);
         assert!(k1_v.get("id").is_none());
 
         // 3. 可灵新版 v3 轮询原生：仅替换 data[0].id，根级无多余 id
-        let mut kling_v3 = r#"{"code":0,"data":[{"id":"kling-up-789","status":"succeeded"}]}"#.to_string();
+        let mut kling_v3 =
+            r#"{"code":0,"data":[{"id":"kling-up-789","status":"succeeded"}]}"#.to_string();
         force_json_task_id(&mut kling_v3, sys_id);
         let k3_v: Value = serde_json::from_str(&kling_v3).unwrap();
         assert_eq!(k3_v["data"][0]["id"], sys_id);
@@ -1325,18 +1439,306 @@ mod tests {
         assert_eq!(op_v["id"], sys_id);
 
         // 5. 验证 OpenAI 兼容出口流水线：原生百炼体经 apply_format 后，必然具备标准根级 id
-        let openai_out = apply_format(
-            "/v1/video/generations",
-            "视频",
-            &ali,
-            false,
-            Some(sys_id),
-        );
+        let openai_out = apply_format("/v1/video/generations", "视频", &ali, false, Some(sys_id));
         let openai_v: Value = serde_json::from_str(&openai_out).unwrap();
         assert_eq!(openai_v["id"], sys_id);
         assert_eq!(openai_v["status"], "pending");
+
+        // 6. 原生数字型任务 ID：精准替换为带双引号统一字符串任务 ID
+        let mut volc_num = r#"{"code":0,"data":{"task_id":182938491823912,"task_status":"succeed"}}"#.to_string();
+        force_json_task_id(&mut volc_num, sys_id);
+        let num_v: Value = serde_json::from_str(&volc_num).unwrap();
+        assert_eq!(num_v["data"]["task_id"], sys_id);
+        assert!(num_v.get("id").is_none());
+
+        // 7. 错误响应体：find_id 不误识别 request_id
+        let err_resp: Value = serde_json::from_str(r#"{"code":"InvalidApiKey","message":"error","request_id":"req-999"}"#).unwrap();
+        assert_eq!(find_id(&err_resp), "");
+
+        // 8. fal.ai 正常排队响应：find_id 正常识别 request_id 兜底
+        let fal_resp: Value = serde_json::from_str(r#"{"request_id":"fal-123","status":"IN_QUEUE"}"#).unwrap();
+        assert_eq!(find_id(&fal_resp), "fal-123");
+
+        // 9. 统一对外 cgt 任务 ID 规范测试：前缀为 cgt- 且长度为 30 (cgt-14位时间戳-5位随机)
+        let cgt_id = new_cgt_task_id();
+        assert!(cgt_id.starts_with("cgt-"));
+        assert_eq!(cgt_id.len(), 4 + 14 + 1 + 5);
+    }
+
+    #[test]
+    fn test_vidu_official_video_response_to_openai() {
+        // 1. Vidu 官方视频创建异步响应：包含 task_id、state: created、输入图片 images 回显
+        let vidu_raw = r#"{
+            "task_id": "1006087621681618944",
+            "type": "img2video",
+            "state": "created",
+            "model": "viduq4",
+            "style": "general",
+            "prompt": "让小狗跑起来",
+            "images": [
+                "https://tokensbyte-1251015623.cos.ap-guangzhou.myqcloud.com/uploads/p1009873912/91222949/images/1788513904_ff8a0aaf.jpeg"
+            ],
+            "duration": 3,
+            "seed": 532460788,
+            "aspect_ratio": "",
+            "resolution": "540p",
+            "movement_amplitude": "auto",
+            "created_at": "2026-10-09T10:24:56.366782159Z",
+            "credits": 27
+        }"#;
+
+        // POST 提交响应：必须转为标准 OpenAI 异步提交响应（带 id 与 status: pending，严禁被误识别为同步完成并返回输入图）
+        let out = apply_format("/v1/video/generations", "视频", vidu_raw, false, None);
+        let out_v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(out_v["id"], "1006087621681618944");
+        assert_eq!(out_v["object"], "video.generation");
+        assert_eq!(out_v["status"], "pending");
+        assert_eq!(out_v["created"], 1791541496);
+        assert!(out_v.get("data").is_none());
+
+        // 2. 轮询处理中（state: processing）：保持 OpenAI in_progress
+        let vidu_poll_proc = r#"{
+            "task_id": "1006087621681618944",
+            "state": "processing",
+            "created_at": "2026-10-09T10:24:56.366782159Z"
+        }"#;
+        let poll_out = apply_format("/v1/video/generations/1006087621681618944", "视频", vidu_poll_proc, true, Some("1006087621681618944"));
+        let poll_v: Value = serde_json::from_str(&poll_out).unwrap();
+        assert_eq!(poll_v["id"], "1006087621681618944");
+        assert_eq!(poll_v["status"], "in_progress");
+
+        // 3. 轮询成功（state: success）：提取 creations[0].url，且不被输入图 images 污染
+        let vidu_poll_succ = r#"{
+            "task_id": "1006087621681618944",
+            "state": "success",
+            "creations": [
+                {
+                    "url": "https://api.vidu.cn/video/final_output.mp4",
+                    "cover_url": "https://api.vidu.cn/cover.jpg"
+                }
+            ],
+            "images": [
+                "https://tokensbyte-1251015623.cos.ap-guangzhou.myqcloud.com/uploads/p1009873912/91222949/images/1788513904_ff8a0aaf.jpeg"
+            ],
+            "created_at": "2026-10-09T10:24:56.366782159Z"
+        }"#;
+        let succ_out = apply_format("/v1/video/generations/1006087621681618944", "视频", vidu_poll_succ, true, Some("1006087621681618944"));
+        let succ_v: Value = serde_json::from_str(&succ_out).unwrap();
+        assert_eq!(succ_v["id"], "1006087621681618944");
+        assert_eq!(succ_v["status"], "completed");
+        let data_arr = succ_v["data"].as_array().unwrap();
+        assert_eq!(data_arr.len(), 1);
+        assert_eq!(data_arr[0]["url"], "https://api.vidu.cn/video/final_output.mp4");
+    }
+
+    #[test]
+    fn test_is_openai_compatible_path_distinction() {
+        // OpenAI 路由（返回 true）
+        assert!(is_openai_compatible_path("/v1/video/generations"));
+        assert!(is_openai_compatible_path("/v1/videos"));
+        assert!(is_openai_compatible_path("/v1/videos/generations"));
+        assert!(is_openai_compatible_path("/v1/videos/task_abc123"));
+        assert!(is_openai_compatible_path("/v1/tasks/task_abc123"));
+        assert!(is_openai_compatible_path("/v1/chat/completions"));
+        assert!(is_openai_compatible_path("/v1/images/generations"));
+        assert!(is_openai_compatible_path("/compatible-mode/v1/embeddings"));
+        assert!(is_openai_compatible_path("/v1/video/generations?stream=true"));
+        assert!(is_openai_compatible_path("/v1/video/generations|/ent/v2/img2video"));
+
+        // 官方原生路由（必须返回 false）
+        assert!(!is_openai_compatible_path("/ent/v2/img2video"));
+        assert!(!is_openai_compatible_path("/ent/v2/text2video"));
+        assert!(!is_openai_compatible_path("/ent/v2/tasks/task_123/creations"));
+        assert!(!is_openai_compatible_path("/v2/video_generation"));
+        assert!(!is_openai_compatible_path("/v2/query/video_generation/task_123"));
+        assert!(!is_openai_compatible_path("/api/v3/contents/generations/tasks"));
+        assert!(!is_openai_compatible_path("/api/v3/chat/completions"));
+        assert!(!is_openai_compatible_path("/text-to-video/kling-v1"));
+        assert!(!is_openai_compatible_path("/image-to-video/kling-v1"));
+        assert!(!is_openai_compatible_path("/omni-video/kling-v1"));
+        assert!(!is_openai_compatible_path("/v1/images/omni-image"));
+        assert!(!is_openai_compatible_path("/v1/wand/hunyuan-image/v3-generation"));
+        assert!(!is_openai_compatible_path("/v1/wand/hunyuan-image/v35-generation"));
+        assert!(!is_openai_compatible_path("/ent/v2/img2video|/ent/v2/img2video"));
+        // 谷歌官方原生路由（/v1/models/ 与 /v1beta/models/ 必须返回 false）
+        assert!(!is_openai_compatible_path("/v1/models/gemini-3-pro-image:generateContent"));
+        assert!(!is_openai_compatible_path("/v1beta/models/gemini-2.5-flash:generateContent"));
+        assert!(!is_openai_compatible_path("/v1/models/gemini-2.0-flash:streamGenerateContent"));
+    }
+
+    #[test]
+    fn test_format_async_task_failed_route_awareness() {
+        let msg = "the parameter duration specified in the request must be greater than or equal to 2";
+
+        // 1. 官方原生路由：包装为官方标准失败响应，绝不生成 OpenAI 假体，且保证为合法 JSON
+        let off_res = format_async_task_failed(
+            "/api/v3/contents/generations/tasks/cgt-123",
+            "视频",
+            "cgt-123",
+            msg,
+        );
+        let off_v: Value = serde_json::from_str(&off_res).expect("官方路由必须返回合法 JSON 响应");
+        assert_eq!(off_v["id"], "cgt-123");
+        assert_eq!(off_v["status"], "failed");
+        assert_eq!(off_v["error"]["message"], msg);
+        assert!(!off_res.contains("\"object\":\"video.generation\""));
+
+        // 2. OpenAI 兼容路由：规范生成包含 id、status=failed、error 的 OpenAI 失败体
+        let oai_res = format_async_task_failed(
+            "/v1/video/generations/cgt-123",
+            "视频",
+            "cgt-123",
+            msg,
+        );
+        let v: Value = serde_json::from_str(&oai_res).unwrap();
+        assert_eq!(v["id"], "cgt-123");
+        assert_eq!(v["status"], "failed");
+        assert_eq!(v["error"]["message"], msg);
+        assert_eq!(v["error"]["type"], "api_error");
+    }
+
+    #[test]
+    fn test_is_upstream_error_response_coverage() {
+        let v_err: Value = serde_json::from_str(r#"{"error":"prompt content violates policy"}"#).unwrap();
+        assert!(is_upstream_error_response(&v_err));
+
+        let v_status_code_err: Value = serde_json::from_str(r#"{"status_code":400,"message":"bad request"}"#).unwrap();
+        assert!(is_upstream_error_response(&v_status_code_err));
+
+        let v_ok: Value = serde_json::from_str(r#"{"id":"task-123","status":"in_progress"}"#).unwrap();
+        assert!(!is_upstream_error_response(&v_ok));
+    }
+
+    #[test]
+    fn test_extract_finish_reason_and_interception() {
+        // 1. Google 官方格式
+        let google_safety: Value = serde_json::from_str(r#"{"candidates":[{"finishReason":"IMAGE_SAFETY"}]}"#).unwrap();
+        assert_eq!(extract_finish_reason(&google_safety), Some("IMAGE_SAFETY"));
+
+        // 2. Google 成功格式
+        let google_stop: Value = serde_json::from_str(r#"{"candidates":[{"finishReason":"STOP"}]}"#).unwrap();
+        assert_eq!(extract_finish_reason(&google_stop), Some("STOP"));
+
+        // 3. OpenAI Chat 格式
+        let oai_safety: Value = serde_json::from_str(r#"{"choices":[{"finish_reason":"content_filter"}]}"#).unwrap();
+        assert_eq!(extract_finish_reason(&oai_safety), Some("content_filter"));
+
+        let oai_stop: Value = serde_json::from_str(r#"{"choices":[{"finish_reason":"stop"}]}"#).unwrap();
+        assert_eq!(extract_finish_reason(&oai_stop), Some("stop"));
+
+        // 4. 顶层兼容格式
+        let top_level: Value = serde_json::from_str(r#"{"finish_reason":"SAFETY"}"#).unwrap();
+        assert_eq!(extract_finish_reason(&top_level), Some("SAFETY"));
+
+        // 5. 无 finish_reason 的空包
+        let empty: Value = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(extract_finish_reason(&empty), None);
+    }
+
+    #[test]
+    fn test_format_openai_intercepted_gemini_response() {
+        let raw = r#"{
+            "candidates": [
+                {
+                    "content": { "role": "model" },
+                    "finishReason": "IMAGE_SAFETY"
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 3979,
+                "totalTokenCount": 3979,
+                "trafficType": "ON_DEMAND",
+                "promptTokensDetails": [
+                    { "modality": "TEXT", "tokenCount": 619 },
+                    { "modality": "IMAGE", "tokenCount": 3360 }
+                ]
+            }
+        }"#;
+
+        let res = apply_format("/v1/images/generations", "图片", raw, false, None);
+        let val: Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(val["data"].as_array().unwrap().len(), 0);
+        assert_eq!(val["finish_reason"], "IMAGE_SAFETY");
+        assert!(val.get("error").is_none());
+        assert_eq!(val["usage"]["prompt_tokens"], 3979);
+        assert_eq!(val["usage"]["total_tokens"], 3979);
+    }
+
+    #[test]
+    fn test_format_openai_already_formed_intercepted_passthrough() {
+        let raw = r#"{
+            "created": 1791797375,
+            "data": [],
+            "finish_reason": "IMAGE_SAFETY",
+            "id": "tsk_01m4qq3xdd19e4agqe1cb81sth",
+            "usage": {
+                "completion_tokens": 253,
+                "completion_tokens_details": {
+                    "reasoning_tokens": 253
+                },
+                "image_tokens": 3360,
+                "prompt_tokens": 3979,
+                "prompt_tokens_details": {
+                    "image_tokens": 3360
+                },
+                "total_tokens": 4232
+            }
+        }"#;
+
+        let res = apply_format("/v1/images/generations", "图片", raw, false, None);
+        let val: Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(val["created"], 1791797375);
+        assert_eq!(val["data"].as_array().unwrap().len(), 0);
+        assert_eq!(val["finish_reason"], "IMAGE_SAFETY");
+        assert!(val.get("error").is_none());
+        assert_eq!(val["id"], "tsk_01m4qq3xdd19e4agqe1cb81sth");
+        assert_eq!(val["usage"]["prompt_tokens"], 3979);
+        assert_eq!(val["usage"]["completion_tokens"], 253);
+        assert_eq!(val["usage"]["total_tokens"], 4232);
+
+        // 验证用量解析器也能无损提取
+        let u = crate::relay::usage_extractor::parse_usage(raw);
+        assert_eq!(u.prompt, 3979);
+        assert_eq!(u.completion, 253);
+        assert_eq!(u.reasoning_tokens, 253);
+        assert_eq!(u.image_tokens, 3360);
+        assert_eq!(u.total, 4232);
+    }
+
+    #[test]
+    fn test_format_tokenhub_hunyuan_35_image_response() {
+        let raw = r#"{
+            "id": "1374200352-WandImage-085edfe2367d4a688f68e813af3665a5",
+            "object": "image.chat.completion.chunk",
+            "created": 1789720599,
+            "model": "HY-Image-3.5-preview-4090-Tob-v1.2",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "type": "image",
+                        "image": {
+                            "url": "https://aigc-output-image-file-1326893053.cos.ap-guangzhou.myqcloud.com/xxx/main.png",
+                            "width": 4096,
+                            "height": 4096
+                        }
+                    },
+                    "finish_reason": null
+                }
+            ],
+            "usage": { "total_tokens": 20000 },
+            "request_id": "a1c00d07-041b-4daa-bae0-b7eabf2bc33a"
+        }"#;
+
+        let res = apply_format("/v1/images/generations", "图片", raw, false, None);
+        let val: Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(val["created"], 1789720599);
+        let data = val["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(
+            data[0]["url"],
+            "https://aigc-output-image-file-1326893053.cos.ap-guangzhou.myqcloud.com/xxx/main.png"
+        );
     }
 }
-
-
 

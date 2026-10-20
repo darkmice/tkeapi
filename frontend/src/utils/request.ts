@@ -47,7 +47,7 @@ request.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     try {
-      // timedisplay：管理后台站点时区，用户端个人时区
+      // timedisplay：管理后台展示时区，用户端个人时区
       config.headers['x-timezone'] = resolveTimedisplay();
     } catch (e) {}
     return config;

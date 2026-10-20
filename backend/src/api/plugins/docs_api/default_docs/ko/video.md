@@ -31,7 +31,7 @@ curl -X POST https://{{domain}}/v1/video/generations \
   -H "Authorization: Bearer sk-your_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "kling-v3-omni",
+    "model": "doubao-seedance-2-5-260628",
     "prompt": "推开欧式古典大门，展现在眼前的是一片奇幻的云海城堡，航拍视角，4k 级细节",
     "resolution": "1080p",
     "duration": 5

@@ -24,6 +24,54 @@ pub fn is_global_storage_default(s: &str) -> bool {
     s.eq_ignore_ascii_case("global")
 }
 
+/// 上传文件名的扩展名：小写、仅字母数字且不超过 8 位，否则用 `fallback`
+pub fn upload_ext(file_name: &str, fallback: &str) -> String {
+    file_name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .filter(|e| !e.is_empty() && e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// 站点存储里插件文件的统一根：`{path_prefix}/plugins/{插件名}/`
+const PLUGINS_DIR: &str = "plugins";
+
+/// 站点存储里用户数据的统一根：`{path_prefix}/users/{uid}/{UserFolder}/`
+const USERS_DIR: &str = "users";
+
+/// 站点自身文件在 `{path_prefix}/` 下的固定目录
+#[derive(Debug, Clone, Copy)]
+pub enum SiteFolder {
+    /// 后台基础设置里的图片（站点 Logo 等）
+    Settings,
+    ChannelCache,
+}
+
+impl SiteFolder {
+    fn as_str(self) -> &'static str {
+        match self {
+            SiteFolder::Settings => "settings",
+            SiteFolder::ChannelCache => "channel_cache",
+        }
+    }
+}
+
+/// 单个用户名下的数据分类（`users/{uid}/` 下一级）
+#[derive(Debug, Clone, Copy)]
+pub enum UserFolder {
+    Kyc,
+    Avatar,
+}
+
+impl UserFolder {
+    fn as_str(self) -> &'static str {
+        match self {
+            UserFolder::Kyc => "kyc",
+            UserFolder::Avatar => "avatar",
+        }
+    }
+}
+
 impl StoreKind {
     pub const ALL: [Self; 2] = [Self::Tos, Self::Cos];
 
@@ -123,6 +171,42 @@ impl ObjectStore {
         }
     }
 
+    pub fn site_key(&self, folder: SiteFolder, relative: &str) -> String {
+        self.full_key(&format!(
+            "{}/{}",
+            folder.as_str(),
+            relative.trim_start_matches('/')
+        ))
+    }
+
+    pub fn user_key(&self, uid: &str, folder: UserFolder, relative: &str) -> String {
+        self.full_key(&format!(
+            "{USERS_DIR}/{}/{}/{}",
+            uid.trim(),
+            folder.as_str(),
+            relative.trim_start_matches('/')
+        ))
+    }
+
+    /// 站点存储交给插件用时，前缀下沉到 `plugins/{插件名}`；插件独立配置的存储不走这里。
+    pub fn scoped_to_plugin(mut self, plugin_name: &str) -> Self {
+        let name: String = plugin_name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .collect();
+        let prefix = match &mut self {
+            ObjectStore::Tos(c) => &mut c.path_prefix,
+            ObjectStore::Cos(c) => &mut c.path_prefix,
+        };
+        let base = prefix.trim().trim_matches('/');
+        *prefix = if base.is_empty() {
+            format!("{PLUGINS_DIR}/{name}")
+        } else {
+            format!("{base}/{PLUGINS_DIR}/{name}")
+        };
+        self
+    }
+
     pub fn file_url(&self, object_key: &str) -> String {
         match self {
             ObjectStore::Tos(c) => c.file_url(object_key),
@@ -187,6 +271,28 @@ impl ObjectStore {
             ObjectStore::Tos(c) => tos::list_folder(c, folder_prefix).await,
             ObjectStore::Cos(c) => cos::list_folder(c, folder_prefix).await,
         }
+    }
+
+    /// 删除 `users/{uid}/{folder}/` 下除 `keep` 以外的全部对象；单个对象删除失败只记日志
+    pub async fn prune_user_folder(
+        &self,
+        uid: &str,
+        folder: UserFolder,
+        keep: Option<&str>,
+    ) -> Result<(), String> {
+        let prefix = format!("{USERS_DIR}/{}/{}", uid.trim(), folder.as_str());
+        let (objects, _) = self.list_folder(&prefix).await?;
+        let keep = keep.map(|k| k.trim().trim_start_matches('/'));
+        for obj in objects {
+            let key = obj.key.trim().trim_start_matches('/');
+            if key.is_empty() || Some(key) == keep {
+                continue;
+            }
+            if let Err(e) = self.delete_file(key).await {
+                tracing::warn!("用户目录对象删除失败 {}: {}", key, e);
+            }
+        }
+        Ok(())
     }
 
     pub fn collect_object_keys(
@@ -327,4 +433,73 @@ fn tos_from_settings(s: &StorageSettings) -> Option<TosConfig> {
         path_prefix: s.tos_path_prefix.trim().to_string(),
         custom_domain: s.tos_custom_domain.trim().to_string(),
     })
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct ListBucketsQuery {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub tos_access_key: Option<String>,
+    #[serde(default)]
+    pub tos_secret_key: Option<String>,
+    #[serde(default)]
+    pub tos_endpoint: Option<String>,
+    #[serde(default)]
+    pub cos_secret_id: Option<String>,
+    #[serde(default)]
+    pub cos_secret_key: Option<String>,
+    #[serde(default)]
+    pub cos_endpoint: Option<String>,
+}
+
+fn resolve_cred(input: Option<&str>, saved: Option<&str>, is_secret: bool) -> String {
+    let mut val = input.unwrap_or_default().trim();
+    if val.is_empty() || (is_secret && val.contains("****")) {
+        if let Some(s) = saved {
+            val = s.trim();
+        }
+    }
+    val.to_string()
+}
+
+/// 统一调用 TOS 或 COS 的 ListBuckets 接口，自动补齐历史已保存的脱敏凭据并做入参校验
+pub async fn list_buckets_auto(
+    req: &ListBucketsQuery,
+    saved_tos: Option<(&str, &str)>,
+    saved_cos: Option<(&str, &str)>,
+) -> Result<Vec<crate::services::tos::TosListedBucket>, String> {
+    let provider = req
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_else(|| {
+            if req.cos_secret_id.is_some() && req.tos_access_key.is_none() {
+                "cos"
+            } else {
+                "tos"
+            }
+        });
+
+    if provider.eq_ignore_ascii_case("cos") {
+        let saved_id = saved_cos.map(|(id, _)| id);
+        let saved_key = saved_cos.map(|(_, key)| key);
+        let id = resolve_cred(req.cos_secret_id.as_deref(), saved_id, false);
+        let key = resolve_cred(req.cos_secret_key.as_deref(), saved_key, true);
+        if id.is_empty() || key.is_empty() {
+            return Err("请先填写 SecretId 和 SecretKey".to_string());
+        }
+        let prefer = req.cos_endpoint.as_deref().unwrap_or_default();
+        crate::services::cos::list_buckets(&id, &key, prefer).await
+    } else {
+        let saved_ak = saved_tos.map(|(ak, _)| ak);
+        let saved_sk = saved_tos.map(|(_, sk)| sk);
+        let ak = resolve_cred(req.tos_access_key.as_deref(), saved_ak, false);
+        let sk = resolve_cred(req.tos_secret_key.as_deref(), saved_sk, true);
+        if ak.is_empty() || sk.is_empty() {
+            return Err("请先填写 Access Key 和 Secret Key".to_string());
+        }
+        let prefer = req.tos_endpoint.as_deref().unwrap_or_default();
+        crate::services::tos::list_buckets(&ak, &sk, prefer).await
+    }
 }

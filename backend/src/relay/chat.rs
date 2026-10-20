@@ -8,14 +8,15 @@
 // ── 聊天 & Responses API 处理 ──────────────────────────────────
 // 统一管理 Chat Completions 和 Responses API 的请求处理逻辑
 
-use super::{forward, proxy, router, stream, upstream_headers, usage_extractor};
+use super::{
+    forward, proxy, response_formatter, router, stream, upstream_headers, usage_extractor,
+};
 use crate::error::{AppError, AppResult};
 use crate::models::ApiToken;
 use crate::AppState;
 use axum::{
     extract::{Extension, OriginalUri, State},
     response::{IntoResponse, Response},
-    Json,
 };
 use std::sync::Arc;
 
@@ -25,10 +26,9 @@ pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     Extension(token): Extension<ApiToken>,
     OriginalUri(uri): OriginalUri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    request: axum::http::Request<axum::body::Body>,
 ) -> AppResult<Response> {
-    relay_chat(state, token, uri, headers, body, false).await
+    relay_chat(state, token, uri, request, false).await
 }
 
 // ── Responses API (/v1/responses, /api/v3/responses) ─────────
@@ -37,10 +37,9 @@ pub async fn responses_create(
     State(state): State<Arc<AppState>>,
     Extension(token): Extension<ApiToken>,
     OriginalUri(uri): OriginalUri,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    request: axum::http::Request<axum::body::Body>,
 ) -> AppResult<Response> {
-    relay_chat(state, token, uri, headers, body, true).await
+    relay_chat(state, token, uri, request, true).await
 }
 
 /// 统一 Chat Completions / Responses 中继：共用渠道选择与重试逻辑；`is_responses` 区分格式转换、流式处理与日志前缀。
@@ -48,12 +47,27 @@ async fn relay_chat(
     state: Arc<AppState>,
     token: ApiToken,
     uri: axum::http::Uri,
-    client_headers: axum::http::HeaderMap,
-    body: serde_json::Value,
+    request: axum::http::Request<axum::body::Body>,
     is_responses: bool,
 ) -> AppResult<Response> {
+    let req_start = std::time::Instant::now();
+    let (parts, body_stream) = request.into_parts();
+    let client_headers = parts.headers;
+    let raw_from_ext = parts
+        .extensions
+        .get::<super::RawRequestContent>()
+        .map(|r| r.0.clone());
+
+    let bytes = axum::body::to_bytes(body_stream, 50 * 1024 * 1024)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Failed to read request body: {}", e)))?;
+
     let raw_path = uri.path();
-    let request_content_str = serde_json::to_string(&body).unwrap_or_default();
+    let request_content_str = raw_from_ext
+        .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned());
+    let body: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
+
     let model = body["model"]
         .as_str()
         .ok_or_else(|| AppError::BadRequest("Missing required parameter: model".to_string()))?;
@@ -64,12 +78,12 @@ async fn relay_chat(
     proxy::check_model_permission(&state, &token, model, raw_path, Some("聊天")).await?;
 
     // 【一条日志原则】HA 重试复用同一条 pending，避免产生多条
-    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability).await;
+    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability, req_start).await;
     let mut billing_rule_cache = None;
     let mut access_cache = None;
 
     while ha.cont() {
-        let start_time = std::time::Instant::now();
+        let attempt_start = std::time::Instant::now();
 
         // 1. 选择渠道
         let mut ha_pool = None;
@@ -186,16 +200,24 @@ async fn relay_chat(
             &channel.api_key,
         );
         let auth_headers = forward::build_auth_headers(&resolved, &channel.api_key, true);
-        let mut resolved_upstream_path = resolved.upstream_path.replace("${model}", &resolved_model);
+        let mut resolved_upstream_path =
+            resolved.upstream_path.replace("${model}", &resolved_model);
 
         let target_type = resolved.target_type.clone();
-        let log_tag = if is_responses { "[Responses]" } else { "[Chat]" };
+        let log_tag = if is_responses {
+            "[Responses]"
+        } else {
+            "[Chat]"
+        };
         // Completions：转发规则含 streamGenerateContent 时上游始终 SSE
-        let is_stream =
-            is_stream || (!is_responses && resolved.upstream_path.contains("streamGenerateContent"));
+        let is_stream = is_stream
+            || (!is_responses && resolved.upstream_path.contains("streamGenerateContent"));
 
-        // Gemini Completions 流式走 URL :streamGenerateContent?alt=sse，body 不带 stream
-        let gemini_stream = is_stream && !is_responses && target_type == "gemini";
+        // Gemini Completions 流式走 URL :streamGenerateContent?alt=sse，body 不带 stream（Interactions 路由除外）
+        let gemini_stream = is_stream
+            && !is_responses
+            && target_type == "gemini"
+            && !forward::is_google_interactions_path(&resolved_upstream_path);
         if is_stream && !gemini_stream {
             upstream_body["stream"] = serde_json::json!(true);
         }
@@ -266,14 +288,20 @@ async fn relay_chat(
         // 【连接保护】打上游 → 预扣 → 记账；拼响应体在 task 外
         let result_rx = super::spawn_protected({
             let (state, token, ctx) = (state.clone(), token.clone(), ctx.clone());
-            let (channel, url, ep, db_model) = (channel.clone(), url.clone(), ep.clone(), db_model.clone());
-            let (model, raw_path, target_type) = (model.to_string(), raw_path.to_string(), target_type.clone());
-            let (body, client_headers, log_id) = (body.clone(), client_headers.clone(), log_id.clone());
+            let (channel, url, ep, db_model) =
+                (channel.clone(), url.clone(), ep.clone(), db_model.clone());
+            let (model, raw_path, target_type) =
+                (model.to_string(), raw_path.to_string(), target_type.clone());
+            let (body, client_headers, log_id) =
+                (body.clone(), client_headers.clone(), log_id.clone());
             let request_content_str = request_content_str.clone();
             async move {
                 // 客户端安全头 → 渠道鉴权 → Content-Type（后写覆盖，禁止 sk 泄漏）
-                let builder =
-                    upstream_headers::apply_client_request_headers(state.http_client.post(&url), &client_headers, &log_id);
+                let builder = upstream_headers::apply_client_request_headers(
+                    state.http_client.post(&url),
+                    &client_headers,
+                    &log_id,
+                );
                 let builder = auth_headers
                     .into_iter()
                     .fold(builder, |b, (k, v)| b.header(k, v));
@@ -283,12 +311,15 @@ async fn relay_chat(
                     !is_stream,
                     timeout_ctx.resolve(),
                 );
-                let resp = match timeout_ctx.send(builder.json(&upstream_body), is_stream).await {
+                let resp = match timeout_ctx
+                    .send(builder.json(&upstream_body), is_stream)
+                    .await
+                {
                     Ok(r) => r,
                     Err(err_msg) => {
                         crate::relay_debug!("{} 连接错误: {}", log_tag, err_msg);
                         let bill = crate::relay::ha::FailBill::transport(
-                            start_time.elapsed().as_millis() as u32,
+                            attempt_start.elapsed().as_millis() as u32,
                             err_msg.clone(),
                             &request_content_str,
                             upstream_body.to_string(),
@@ -307,7 +338,7 @@ async fn relay_chat(
                     let display_err = proxy::upstream_error_text(status, &err);
                     crate::relay_debug!("{} 上游错误 {}: {}", log_tag, status, display_err);
                     let bill = crate::relay::ha::FailBill::http(
-                        start_time.elapsed().as_millis() as u32,
+                        attempt_start.elapsed().as_millis() as u32,
                         status,
                         err.clone(),
                         &request_content_str,
@@ -334,7 +365,7 @@ async fn relay_chat(
                         &model,
                         pre_deduction,
                         &ep,
-                        start_time,
+                        req_start,
                         1,
                         &request_content_str,
                         &upstream_body.to_string(),
@@ -354,7 +385,7 @@ async fn relay_chat(
                             ctx,
                             prompt_tokens,
                             request_content_str,
-                            start_time,
+                            req_start,
                             target_type,
                             stream_log_path,
                             Some(upstream_body.to_string()),
@@ -384,7 +415,7 @@ async fn relay_chat(
                     let err_text = proxy::extract_error_message(&body_str);
                     crate::relay_debug!("{} 上游响应体错误: {}", log_tag, err_text);
                     let bill = crate::relay::ha::FailBill::biz(
-                        start_time.elapsed().as_millis() as u32,
+                        attempt_start.elapsed().as_millis() as u32,
                         body_str.clone(),
                         err_text,
                         &request_content_str,
@@ -399,11 +430,8 @@ async fn relay_chat(
                 }
 
                 let usage_tokens = usage_extractor::parse_usage(&body_str);
-                let mut features = usage_extractor::features_from_values(
-                    Some(&body),
-                    None,
-                    Some(&body_str),
-                );
+                let mut features =
+                    usage_extractor::features_from_values(Some(&body), None, Some(&body_str));
                 let pre_deduct_gift = proxy::pre_deduct_or_intercept(
                     &state,
                     &token,
@@ -411,7 +439,7 @@ async fn relay_chat(
                     &model,
                     pre_deduction,
                     &ep,
-                    start_time,
+                    req_start,
                     0,
                     &request_content_str,
                     &upstream_body.to_string(),
@@ -444,7 +472,7 @@ async fn relay_chat(
                     cost: quota_used,
                     pre_deducted: pre_deduction,
                     pre_deduct_gift,
-                    latency_ms: start_time.elapsed().as_millis() as u32,
+                    latency_ms: req_start.elapsed().as_millis() as u32,
                     is_stream: 0,
                     status_code: 200,
                     error_msg: None,
@@ -455,7 +483,8 @@ async fn relay_chat(
                     features: Some(features),
                     time_multiplier: db_rule.as_ref().map(|r| r.applied_multiplier),
                     plugin_tag: None,
-                    upstream_request_id: crate::relay::upstream_headers::extract_upstream_request_id(&headers),
+                    upstream_request_id:
+                        crate::relay::upstream_headers::extract_upstream_request_id(&headers),
                 })
                 .await;
                 Ok(super::ProtectOut::Raw(super::UpstreamRaw::new(
@@ -466,9 +495,12 @@ async fn relay_chat(
 
         match super::join_protected(&mut ha, result_rx, &bill_ctx, &channel, Some(&url)).await {
             super::ProtectJoin::Ok(super::ProtectOut::Raw(raw)) => {
-                let ms = start_time.elapsed().as_millis() as u32;
+                let ms = attempt_start.elapsed().as_millis() as u32;
                 ha.ok(&state, &channel, &url, ms).await;
-                let final_body = if is_responses || forward::is_anthropic_messages_path(raw_path) {
+                let final_body = if is_responses
+                    || forward::is_anthropic_messages_path(raw_path)
+                    || forward::is_google_native_path(raw_path)
+                {
                     raw.body
                 } else {
                     transform_chat_response(&raw.body, &target_type, model)
@@ -477,7 +509,7 @@ async fn relay_chat(
                 return Ok(upstream_headers::with_request_id(resp, &log_id));
             }
             super::ProtectJoin::Ok(super::ProtectOut::Live(resp)) => {
-                let ms = start_time.elapsed().as_millis() as u32;
+                let ms = attempt_start.elapsed().as_millis() as u32;
                 ha.ok(&state, &channel, &url, ms).await;
                 return Ok(upstream_headers::with_request_id(resp, &log_id));
             }
@@ -496,30 +528,47 @@ async fn relay_chat(
 
 // ── 公共辅助函数 ──────────────────────────────────────────────
 
-/// 粗略估算 prompt tokens（兼容 Chat 的 messages 和 Responses 的 input）
+fn count_content_chars(val: &serde_json::Value) -> usize {
+    if let Some(s) = val.as_str() {
+        return s.len();
+    }
+    if let Some(arr) = val.as_array() {
+        return arr
+            .iter()
+            .map(|item| {
+                if let Some(s) = item.as_str() {
+                    s.len()
+                } else if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
+                    t.len()
+                } else if let Some(c) = item.get("content") {
+                    count_content_chars(c)
+                } else {
+                    0
+                }
+            })
+            .sum();
+    }
+    0
+}
+
+/// 粗略估算 prompt tokens（兼容 Chat 的 messages、Anthropic 的 system 和 Responses 的 input）
 pub fn estimate_prompt_tokens(body: &serde_json::Value) -> i32 {
     let mut total_chars = 0;
-    // Chat Completions: messages 数组
+    // Chat Completions / Anthropic Messages: messages 数组（支持 string 与多模态 array content）
     if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
         for msg in messages {
-            if let Some(s) = msg.get("content").and_then(|c| c.as_str()) {
-                total_chars += s.len();
+            if let Some(c) = msg.get("content") {
+                total_chars += count_content_chars(c);
             }
         }
     }
+    // Anthropic 顶层 system 字段（string 或 content block array）
+    if let Some(sys) = body.get("system") {
+        total_chars += count_content_chars(sys);
+    }
     // Responses API: input 字段（string 或 array）
     if let Some(input) = body.get("input") {
-        if let Some(s) = input.as_str() {
-            total_chars += s.len();
-        } else if let Some(arr) = input.as_array() {
-            for item in arr {
-                if let Some(s) = item.get("text").and_then(|t| t.as_str()) {
-                    total_chars += s.len();
-                } else if let Some(s) = item.get("content").and_then(|c| c.as_str()) {
-                    total_chars += s.len();
-                }
-            }
-        }
+        total_chars += count_content_chars(input);
     }
     // instructions 字段
     if let Some(s) = body.get("instructions").and_then(|i| i.as_str()) {
@@ -570,21 +619,28 @@ fn transform_chat_response(response: &str, target_type: &str, model: &str) -> St
         }
         "gemini" | "gemini_image" => {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(response) {
-                let content = v
-                    .get("candidates")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("content"))
-                    .and_then(|c| c.get("parts"))
-                    .and_then(|p| p.get(0))
-                    .and_then(|p| p.get("text"))
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("");
-                let finish = v
-                    .get("candidates")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("finishReason"))
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("stop");
+                let mut parts_out = Vec::new();
+                if let Some(parts) = v
+                    .pointer("/candidates/0/content/parts")
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()).filter(|s| !s.is_empty()) {
+                            parts_out.push(text.to_string());
+                        } else if let Some(inline) = part.get("inlineData").or_else(|| part.get("inline_data")) {
+                            if let Some(data) = inline.get("data").and_then(|d| d.as_str()).filter(|s| !s.is_empty()) {
+                                let mime = inline
+                                    .get("mimeType")
+                                    .or_else(|| inline.get("mime_type"))
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("image/png");
+                                parts_out.push(format!("![image](data:{};base64,{})", mime, data));
+                            }
+                        }
+                    }
+                }
+                let content = parts_out.join("\n\n");
+                let finish = response_formatter::extract_finish_reason(&v).unwrap_or("stop");
                 let usage = usage_extractor::gemini_usage_metadata_to_openai(
                     v.get("usageMetadata").unwrap_or(&serde_json::Value::Null),
                 );
@@ -610,5 +666,3 @@ fn transform_chat_response(response: &str, target_type: &str, model: &str) -> St
         }
     }
 }
-
-

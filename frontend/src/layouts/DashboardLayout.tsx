@@ -5,7 +5,7 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { getAnnouncementLabel, getAnnouncementDisplayTime } from '../utils/announcement';
 import {
   parseNotificationPreferences,
@@ -14,8 +14,10 @@ import {
 } from '../utils/notificationPrefs';
 import { Sidebar as SidebarIcon, Terminal } from 'lucide-react';
 import { fetchConsoleBootstrap } from '../utils/consoleBootstrap';
+import { peekActivePlugins } from '../utils/activePlugins';
 import {
   fetchAdminPlugins,
+  peekAdminPlugins,
   subscribeAdminPluginsChange,
   selectAdminSidebarPlugins,
   adminSidebarPluginLabel,
@@ -25,7 +27,7 @@ import { persistUserLanguagePreference, LANG_NAME_MAP, toDisplayLocale } from '.
 import useSettingsStore from '../store/settings';
 import { hasAdminChildMenuPermission } from '../constants/adminMenuPermissions';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { Layout, Menu, Button, Space, Typography, ConfigProvider, theme, Grid } from 'antd';
+import { Layout, Menu, Button, Typography, ConfigProvider, theme, Grid } from 'antd';
 import {
   DashboardOutlined,
   ControlOutlined,
@@ -59,9 +61,12 @@ import {
   RightOutlined,
   SoundOutlined,
   FileTextOutlined,
+  ShoppingOutlined,
 } from '@ant-design/icons';
 
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
+import request from '../utils/request';
+import { couponCampaignPath, offerReturnState } from '../pages/Credits/storefront/path';
 import { useTranslation } from 'react-i18next';
 import { Dropdown, Modal, message, Popover, Avatar, Divider, Drawer, List, Badge, Tooltip, Checkbox } from 'antd';
 import type { MenuProps } from 'antd';
@@ -81,6 +86,55 @@ const { useBreakpoint } = Grid;
 interface DashboardLayoutProps {
   isUserEnd?: boolean;
 }
+
+/** 只比较会改变侧栏可见性的字段，避免 bootstrap 回包后整表重绘 */
+function userPluginMenuSignature(list: any[]): string {
+  return list
+    .map((p) => `${p?.name}\0${p?.allowed_levels}\0${p?.user_asset_menu_enabled ? 1 : 0}`)
+    .sort()
+    .join('\n');
+}
+
+function adminPluginMenuSignature(list: Plugin[]): string {
+  return list
+    .map((p) => `${p.name}\0${p.is_enabled}\0${p.show_in_admin_menu ?? ''}\0${p.admin_menu_sort ?? ''}\0${p.admin_menu_title ?? ''}\0${p.admin_menu_default_tab ?? ''}`)
+    .sort()
+    .join('\n');
+}
+
+/** 用户端个人中心/用户设置「我的钱包」定制菜单图标 */
+const WalletMenuIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+  <span
+    role="img"
+    aria-label="wallet"
+    className="anticon anticon-wallet"
+    style={{ fontSize: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', ...style }}
+  >
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 7.5V5.2A1.7 1.7 0 0 1 6.7 3.5h10.6A1.7 1.7 0 0 1 19 5.2v2.3" strokeWidth="1.6" />
+      <rect x="2.5" y="7.5" width="19" height="13" rx="2.5" />
+      <path d="M15 11.2h4.5a2 2 0 0 1 2 2v1.6a2 2 0 0 1-2 2H15a1.2 1.2 0 0 1-1.2-1.2v-3.2a1.2 1.2 0 0 1 1.2-1.2z" fill="currentColor" fillOpacity="0.16" />
+      <circle cx="17.6" cy="14" r="1.15" fill="currentColor" />
+    </svg>
+  </span>
+);
+
+/** 用户端个人中心/用户设置「卡券订阅」定制菜单图标 */
+const CouponSubscriptionMenuIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+  <span
+    role="img"
+    aria-label="coupon-subscription"
+    className="anticon anticon-coupon-subscription"
+    style={{ fontSize: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', ...style }}
+  >
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 8A2.5 2.5 0 0 1 5 5.5h2.5a1.5 1.5 0 0 0 3 0h8.5A2.5 2.5 0 0 1 21.5 8v8A2.5 2.5 0 0 1 19 18.5h-8.5a1.5 1.5 0 0 0-3 0H5A2.5 2.5 0 0 1 2.5 16Z" />
+      <path d="M9 7.5v9" strokeDasharray="1.8 1.8" strokeWidth="1.5" />
+      <path d="M6.8 10l-1.8 4M4.8 10.2h.01M6.8 13.8h.01" strokeWidth="1.5" />
+      <path d="M15.5 8.5c0 1.9-1.3 3.5-3.5 3.5 2.2 0 3.5 1.6 3.5 3.5 0-1.9 1.3-3.5 3.5-3.5-2.2 0-3.5-1.6-3.5-3.5z" fill="currentColor" fillOpacity="0.2" strokeWidth="1.2" />
+    </svg>
+  </span>
+);
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) => {
   const { t, i18n } = useTranslation();
@@ -117,7 +171,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
   const { themeMode, toggleTheme } = useThemeStore();
   // 复用 App.tsx 中已拉取的 settings store，不再独立调 /settings 接口
   const { settings } = useSettingsStore();
-  const adminPath = settings?.site?.admin_path || 'admin1688';
+  const adminPath = settings?.site?.admin_path || localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
   const site = settings?.site;
   const siteName = site?.name || 'Tkeapi';
   const siteLogo = site?.logo || '';
@@ -152,8 +206,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
     notifyConsolePageReady,
   }), [announcements, notifyConsolePageReady]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [activePlugins, setActivePlugins] = useState<any[]>([]);
-  const [adminPlugins, setAdminPlugins] = useState<Plugin[]>([]);
+  const [ticketUnread, setTicketUnread] = useState(0);
+  const [activePlugins, setActivePlugins] = useState<any[]>(() => peekActivePlugins() ?? []);
+  const [userPluginsReady, setUserPluginsReady] = useState(
+    () => !isUserEnd || peekActivePlugins() !== null,
+  );
+  const [adminPlugins, setAdminPlugins] = useState<Plugin[]>(() => peekAdminPlugins() ?? []);
+  const [adminPluginsReady, setAdminPluginsReady] = useState(
+    () => isUserEnd || import.meta.env.VITE_ENABLE_PLUGINS !== 'true' || peekAdminPlugins() !== null,
+  );
+  const [bootstrapDone, setBootstrapDone] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -173,11 +235,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
           setAnnouncements(data.announcements);
         }
         if (Array.isArray(data.active_plugins)) {
-          setActivePlugins(data.active_plugins);
+          const next = data.active_plugins;
+          setActivePlugins((prev) =>
+            userPluginMenuSignature(prev) === userPluginMenuSignature(next) ? prev : next,
+          );
         }
       })
       .catch((error) => {
         console.error('Failed to fetch console bootstrap', error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setUserPluginsReady(true);
+          setBootstrapDone(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -192,10 +263,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
       fetchAdminPlugins()
         .then((data) => {
           if (cancelled) return;
-          if (Array.isArray(data?.plugins)) setAdminPlugins(data.plugins);
+          const next = Array.isArray(data?.plugins) ? data.plugins : [];
+          setAdminPlugins((prev) =>
+            adminPluginMenuSignature(prev) === adminPluginMenuSignature(next) ? prev : next,
+          );
         })
         .catch((error) => {
           console.error('Failed to fetch admin plugins', error);
+        })
+        .finally(() => {
+          if (!cancelled) setAdminPluginsReady(true);
         });
     };
     load();
@@ -261,7 +338,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
       const seenKey = `notif_push_seen_${first.id}`;
       if (!sessionStorage.getItem(seenKey)) {
         sessionStorage.setItem(seenKey, '1');
-        const title = getAnnouncementLabel(first.title || '') || (i18n.language.startsWith('zh') ? '新通知' : 'New notification');
+        const title = getAnnouncementLabel(first.title || '') || t('header.notifications', '通知');
         const body = getAnnouncementLabel(first.content || '').replace(/<[^>]+>/g, '').slice(0, 120);
         maybeShowBrowserPush(title, body, prefs, settings?.notification);
       }
@@ -309,13 +386,65 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
     return allowed.includes(userGroup) || (levelId !== '' && allowed.includes(levelId));
   };
 
+  const [couponCampaign, setCouponCampaign] = useState<{ id: number; template_key?: string } | null>(null);
+  useEffect(() => {
+    if (!isUserEnd || !isLoggedIn || !isPluginVisibleForUser('marketing_membership')) {
+      setCouponCampaign(null);
+      return;
+    }
+    let dead = false;
+    request
+      .get('/plugins/marketing_membership/placements/console_nav_coupon', { skipErrorHandler: true } as any)
+      .then((res: any) => {
+        if (dead) return;
+        const listed = Array.isArray(res?.campaigns) ? res.campaigns : [];
+        const first = listed.find((row: any) => row?.id && (row?.plans || []).length > 0);
+        setCouponCampaign(first?.id ? { id: first.id, template_key: first.template_key } : null);
+      })
+      .catch(() => {
+        if (!dead) setCouponCampaign(null);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [isUserEnd, isLoggedIn, activePlugins, user?.user_group, user?.level_id]);
+  const showTicketButton = isUserEnd && isLoggedIn && isPluginVisibleForUser('support_tickets');
+  useEffect(() => {
+    if (!showTicketButton) {
+      setTicketUnread(0);
+      return undefined;
+    }
+    let dead = false;
+    const load = () => {
+      request
+        .get('/plugins/support_tickets/unread', { skipErrorHandler: true } as any)
+        .then((res: any) => {
+          if (!dead) setTicketUnread(Number(res?.count) || 0);
+        })
+        .catch(() => {});
+    };
+    load();
+    const timer = window.setInterval(load, 30000);
+    const onFocus = () => load();
+    const onRead = () => load();
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('support-tickets-read', onRead);
+    return () => {
+      dead = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('support-tickets-read', onRead);
+    };
+  }, [showTicketButton, location.pathname]);
+
   const menuItems: MenuProps['items'] = [];
   const isSuperAdmin = !isUserEnd && user?.role === 'admin' && !user.admin_group_id;
 
   const getMenuLabel = (item: any) => {
     if (!item) return '';
     const lang = (i18n.language || 'zh').toLowerCase();
-    if (lang.startsWith('zh')) {
+    const isSimplifiedZh = lang === 'zh' || lang === 'zh-cn' || lang === 'zh-hans' || lang === 'zh-sg';
+    if (isSimplifiedZh) {
       if (item.label_zh && item.label_zh.trim()) {
         return item.label_zh;
       }
@@ -330,7 +459,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
         return item.label_zh;
       }
     } else {
-      // 其它语种（如 ja, ko, vi 等）优先尝试国际化翻译字典，未匹配再降级到英文/中文
+      // 其它语种（如 zh-TW, ja, ko, vi 等）优先尝试国际化翻译字典，未匹配再降级到中文/英文
       if (item.key === '/playground' && i18n.exists('playground:title')) {
         return t('playground:title');
       }
@@ -340,6 +469,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
       const i18nKey = `menu.${item.key.substring(1).replace(/-/g, '_')}`;
       if (i18n.exists(i18nKey)) {
         return t(i18nKey);
+      }
+      if (lang.startsWith('zh')) {
+        return item.label_zh || item.label_en || item.key;
       }
       return item.label_en || item.label_zh || item.key;
     }
@@ -398,8 +530,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
         { key: '/tokens', label_zh: '令牌管理', label_en: 'Tokens', icon: 'KeyOutlined', enabled: true, sort_order: 4, allowed_levels: 'all' },
         { key: '/logs', label_zh: '日志记录', label_en: 'Logs', icon: 'HistoryOutlined', enabled: true, sort_order: 5, allowed_levels: 'all' },
         { key: '/task-logs', label_zh: '任务列表', label_en: 'Task Logs', icon: 'ScheduleOutlined', enabled: true, sort_order: 6, allowed_levels: 'all' },
-        { key: '/assets', label_zh: '资产素材', label_en: 'Assets', icon: 'PictureOutlined', enabled: true, sort_order: 7, allowed_levels: 'all' },
-        { key: '/assets-intl', label_zh: '资产管理', label_en: 'Assets Intl', icon: 'FolderOpenOutlined', enabled: true, sort_order: 8, allowed_levels: 'all' },
         { key: '/advanced-marketing', label_zh: '高级推广', label_en: 'Advanced Marketing', icon: 'TeamOutlined', enabled: true, sort_order: 10, allowed_levels: 'all' },
 
         { key: '/wallet', label_zh: '我的钱包', label_en: 'Wallet', icon: 'WalletOutlined', enabled: true, sort_order: 11, allowed_levels: 'all' },
@@ -427,15 +557,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
         if (!isMenuAllowedForUser(item)) return;
         if (item.key === '/relay-api' || item.key === '/docs') return; // Completely hide API tutorial from left menu
 
-        if (item.key === '/moderation-query') return;
+        if (item.key === '/moderation-query' || item.key === '/assets' || item.key === '/assets-intl') return;
         if (item.key === '/playground' && !isPluginVisibleForUser('playground')) return;
         if (item.key === '/playground-2026' && !isPluginVisibleForUser('playground_2026')) return;
-        if (item.key === '/assets') {
-          if (!isPluginVisibleForUser('asset_manager')) return;
-          const assetPlugin = activePlugins.find((p: any) => p.name === 'asset_manager');
-          if (assetPlugin?.user_asset_menu_enabled !== true) return;
-        }
-        if (item.key === '/assets-intl' && !isPluginVisibleForUser('asset_manager_intl')) return;
         if (item.key === '/advanced-marketing' && !isPluginVisibleForUser('team_marketing')) return;
 
         if (item.key === '/ark-video-monitor' && !isPluginVisibleForUser('volcengine_ark_monitor')) return;
@@ -445,7 +569,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
         if (item.key === '/wallet' || item.key === '/profile') {
           userSettingsChildren.push({
             key: item.key,
-            icon: getMenuIcon(item.icon),
+            icon: item.key === '/wallet' ? <WalletMenuIcon /> : getMenuIcon(item.icon),
             label: labelNode,
           });
           if (item.key === '/wallet') {
@@ -470,6 +594,21 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
           });
         }
 
+        userSettingsChildren.push({
+          key: '/orders',
+          icon: <ShoppingOutlined style={{ fontSize: '18px' }} />,
+          label: <Link to="/orders">{t('menu.my_orders', '订单管理')}</Link>,
+        });
+        const membershipEnabled = activePlugins.some((p: any) => p.name === 'marketing_membership');
+        const redemptionEnabled = !!settings?.marketing?.enable_redemption;
+        if (membershipEnabled || redemptionEnabled) {
+          userSettingsChildren.push({
+            key: '/credits/records',
+            icon: <CouponSubscriptionMenuIcon />,
+            label: <Link to="/credits/records">{t('menu.coupon_records', '卡券订阅')}</Link>,
+          });
+        }
+
         const isInvoiceEnabled = user?.invoice_enabled === 1 || user?.role === 'admin';
         if (isInvoiceEnabled) {
           userSettingsChildren.push({
@@ -483,8 +622,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
           const rank = (key: string) => {
             if (key === '/profile') return 0;
             if (key === '/wallet') return 1;
-            if (key === '/invoices') return 2;
-            return 3;
+            if (key === '/credits/records') return 3;
+            if (key === '/orders') return 4;
+            if (key === '/invoices') return 5;
+            return 6;
           };
           return rank(a.key) - rank(b.key);
         });
@@ -714,6 +855,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
           label: <Link to="/admin0755/finance/orders">{t('menu.finance_orders')}</Link>,
         });
       }
+      if (hasChildMenu('finance', 'finance.purchase_orders')) {
+        financeChildren.push({
+          key: '/admin0755/finance/purchase-orders',
+          label: <Link to="/admin0755/finance/purchase-orders">{t('menu.finance_purchase_orders', '订单明细')}</Link>,
+        });
+      }
       if (hasChildMenu('finance', 'finance.gifts')) {
         financeChildren.push({
           key: '/admin0755/finance/gifts',
@@ -815,7 +962,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
             key: `/admin0755/plugins/${plugin.name}/config`,
             label: (
               <Link to={adminSidebarPluginHref(plugin)}>
-                {adminSidebarPluginLabel(plugin, (name, title) => t(`plugin_titles.${name}`, title))}
+                {(() => {
+                  const lang = (i18n.language || 'zh').toLowerCase();
+                  const isSimplifiedZh = lang === 'zh' || lang === 'zh-cn' || lang === 'zh-hans' || lang === 'zh-sg';
+                  if (!isSimplifiedZh && i18n.exists(`plugin_titles.${plugin.name}`)) {
+                    return t(`plugin_titles.${plugin.name}`, plugin.title);
+                  }
+                  return adminSidebarPluginLabel(plugin, (name, title) => t(`plugin_titles.${name}`, title));
+                })()}
               </Link>
             ),
           })),
@@ -967,11 +1121,33 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
     return keys;
   };
 
-  useEffect(() => {
-    if (!collapsed) {
-      setOpenKeys(getActiveOpenKeys());
+  const adminPermsKnown =
+    isUserEnd ||
+    !user?.admin_group_id ||
+    Array.isArray(user?.permissions) ||
+    bootstrapDone;
+  const menuReady = isUserEnd
+    ? !!settings && userPluginsReady
+    : adminPluginsReady && adminPermsKnown;
+
+  useLayoutEffect(() => {
+    if (!collapsed && menuReady) {
+      const activeKeys = getActiveOpenKeys();
+      // 站点控制台：切到其他菜单时保留已展开分组，只补当前页所在分组。收起仍由再次点击该分组完成。
+      if (!isUserEnd) {
+        setOpenKeys((prev) => {
+          const merged = prev.slice();
+          for (const key of activeKeys) {
+            if (!merged.includes(key)) merged.push(key);
+          }
+          if (merged.length === prev.length) return prev;
+          return merged;
+        });
+        return;
+      }
+      setOpenKeys(activeKeys);
     }
-  }, [collapsed, location.pathname, location.search, activePlugins.length, adminPlugins]);
+  }, [collapsed, location.pathname, location.search, activePlugins.length, adminPlugins, menuReady, settings, isUserEnd]);
 
   pageName = findName(processedMenuItems) || findName(processedMenuItems, true) || '';
   if (!pageName) {
@@ -979,6 +1155,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
     else if (location.pathname === '/wallet' || location.pathname === '/affiliate') pageName = t('menu.wallet', '我的钱包') as string;
     else if (location.pathname === '/assets') pageName = t('menu.assets', '资产素材') as string;
     else if (location.pathname === '/assets-intl') pageName = t('menu.assets_intl', '资产管理') as string;
+    else if (location.pathname === '/advanced-marketing/model-usage') pageName = t('menu.referral_model_usage', '推广用户模型消费') as string;
     else if (location.pathname === '/advanced-marketing') pageName = t('menu.advanced_marketing', '团队营销管理') as string;
     else if (location.pathname.includes('/admin-groups')) pageName = t('menu.user_levels') as string;
 
@@ -1291,6 +1468,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                   }
                 }}
               >
+                {menuReady && (
                 <Menu
                   theme={themeMode}
                   mode="inline"
@@ -1314,6 +1492,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     if (screens.xs) setCollapsed(true);
                   }}
                 />
+                )}
               </ConfigProvider>
             </div>
             {!isUserEnd && (
@@ -1422,7 +1601,104 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
               )}
             </div>
 
-            <Space size={screens.xs ? 2 : 8} align="center" style={{ flexShrink: 0 }}>
+            <div
+              className="header-nav-actions"
+              style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: screens.xs ? 2 : 6, flexShrink: 0, lineHeight: 1 }}
+              ref={(container) => {
+                if (!container) return;
+                requestAnimationFrame(() => {
+                  if (!container.isConnected) return;
+                  const pill = container.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                  if (!pill) return;
+                  const pt = (window as any).__tkeHeaderPointer as { x: number; y: number } | undefined;
+                  const hovered = (
+                    (pt ? document.elementFromPoint(pt.x, pt.y)?.closest('.ant-btn') : null) ||
+                    container.querySelector('.ant-btn:hover')
+                  ) as HTMLElement | null;
+                  if (hovered && container.contains(hovered)) {
+                    const cRect = container.getBoundingClientRect();
+                    const bRect = hovered.getBoundingClientRect();
+                    if (bRect.width > 0 && bRect.height > 0) {
+                      const x = bRect.left - cRect.left;
+                      const y = bRect.top - cRect.top;
+                      const isCircle = hovered.classList.contains('ant-btn-circle');
+                      const radius = isCircle ? `${bRect.height / 2}px` : '10px';
+                      const baseTransform = `translate3d(${x}px, ${y}px, 0)`;
+                      pill.dataset.lastTransform = baseTransform;
+                      if (pill.dataset.visible !== '1') {
+                        pill.style.transition = 'none';
+                      }
+                      pill.style.width = `${bRect.width}px`;
+                      pill.style.height = `${bRect.height}px`;
+                      pill.style.borderRadius = radius;
+                      pill.style.transform = `${baseTransform} scale(1)`;
+                      pill.style.opacity = '1';
+                      pill.dataset.visible = '1';
+                    }
+                  }
+                });
+              }}
+              onMouseDown={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+              }}
+              onMouseMove={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+              }}
+              onMouseOver={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+                const container = e.currentTarget;
+                const pill = container.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                if (!pill) return;
+                const btn = (e.target as HTMLElement).closest('.ant-btn') as HTMLElement | null;
+                if (!btn || !container.contains(btn)) {
+                  if ((e.target as HTMLElement).closest('.header-avatar-wrap')) {
+                    pill.dataset.visible = '0';
+                    pill.style.opacity = '0';
+                    if (pill.dataset.lastTransform) {
+                      pill.style.transform = `${pill.dataset.lastTransform} scale(0.92)`;
+                    }
+                  }
+                  return;
+                }
+                const cRect = container.getBoundingClientRect();
+                const bRect = btn.getBoundingClientRect();
+                const x = bRect.left - cRect.left;
+                const y = bRect.top - cRect.top;
+                const isCircle = btn.classList.contains('ant-btn-circle');
+                const radius = isCircle ? `${bRect.height / 2}px` : '10px';
+                const baseTransform = `translate3d(${x}px, ${y}px, 0)`;
+                pill.dataset.lastTransform = baseTransform;
+                if (pill.dataset.visible !== '1') {
+                  pill.style.transition = 'none';
+                  pill.style.width = `${bRect.width}px`;
+                  pill.style.height = `${bRect.height}px`;
+                  pill.style.borderRadius = radius;
+                  pill.style.transform = `${baseTransform} scale(0.92)`;
+                  void pill.offsetWidth;
+                  pill.style.transition = 'transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease';
+                  pill.style.transform = `${baseTransform} scale(1)`;
+                  pill.style.opacity = '1';
+                  pill.dataset.visible = '1';
+                } else {
+                  pill.style.transition = 'transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease';
+                  pill.style.width = `${bRect.width}px`;
+                  pill.style.height = `${bRect.height}px`;
+                  pill.style.borderRadius = radius;
+                  pill.style.transform = `${baseTransform} scale(1)`;
+                  pill.style.opacity = '1';
+                }
+              }}
+              onMouseLeave={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+                const pill = e.currentTarget.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                if (!pill) return;
+                pill.dataset.visible = '0';
+                pill.style.opacity = '0';
+                if (pill.dataset.lastTransform) {
+                  pill.style.transform = `${pill.dataset.lastTransform} scale(0.92)`;
+                }
+              }}
+            >
               <style>{`
                 .header-badge.ant-badge {
                   display: flex !important;
@@ -1430,9 +1706,100 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                   justify-content: center;
                   height: 40px;
                 }
+                .header-nav-hover-pill {
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  opacity: 0;
+                  pointer-events: none;
+                  z-index: 0;
+                  will-change: transform, width, height, border-radius, opacity;
+                  background: ${
+                    themeMode === 'light'
+                      ? 'rgba(0, 0, 0, 0.075)'
+                      : 'rgba(255, 255, 255, 0.085)'
+                  };
+                  backdrop-filter: blur(10px) saturate(150%);
+                  -webkit-backdrop-filter: blur(10px) saturate(150%);
+                }
+                .header-nav-actions .ant-btn {
+                  position: relative;
+                  z-index: 1;
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                  line-height: 1 !important;
+                  background: transparent !important;
+                  transition: color 0.22s ease, transform 0.22s ease !important;
+                }
+                .header-nav-actions .ant-btn:hover,
+                .header-nav-actions .ant-btn:focus,
+                .header-nav-actions .ant-btn:active {
+                  background: transparent !important;
+                }
+                .header-nav-actions .ant-btn .ant-btn-icon {
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                  line-height: 1 !important;
+                  margin-inline-end: 0 !important;
+                }
+                .header-nav-actions .ant-btn > span:not(.ant-btn-icon) {
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  line-height: 1 !important;
+                  margin-inline-start: 0 !important;
+                }
+                .header-nav-actions .ant-btn svg {
+                  display: block;
+                  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                .header-nav-actions .ant-btn:hover svg {
+                  transform: scale(1.06);
+                }
+                .header-nav-actions .ant-btn:active svg {
+                  transform: scale(0.95);
+                }
               `}</style>
-              {isPluginVisibleForUser('model_marketplace') && (
-                <Tooltip title={t('menu.model_marketplace', '模型广场')} placement="bottom">
+              <div className="header-nav-hover-pill" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {isUserEnd && couponCampaign && (
+                  <Button
+                    type="text"
+                    icon={
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path d="M3 7.5C3 6.11929 4.11929 5 5.5 5H18.5C19.8807 5 21 6.11929 21 7.5V8.6H3V7.5Z" fill={themeMode === 'light' ? '#9e9e9e' : '#7a7a7a'} />
+                        <path d="M3 8.6H21V11.1H3V8.6Z" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
+                        <path d="M3 11.1H21V16.5C21 17.8807 19.8807 19 18.5 19H5.5C4.11929 19 3 17.8807 3 16.5V11.1Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                        <rect x="5.5" y="13.3" width="4.2" height="3" rx="0.8" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
+                        <path d="M12.2 14.8H18" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="1.6" strokeLinecap="round" />
+                      </svg>
+                    }
+                    style={{
+                      color: themeMode === 'light' ? '#1f2937' : '#fff',
+                      gap: 4,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      height: screens.xs ? 34 : 40,
+                      width: screens.xs ? 34 : undefined,
+                      padding: screens.xs ? 0 : '0 10px 0 7px',
+                    }}
+                    onClick={() => navigate(couponCampaignPath(couponCampaign.template_key, couponCampaign.id), {
+                      state: offerReturnState(`${location.pathname}${location.search}${location.hash}`),
+                    })}
+                  >
+                    {!screens.xs && (
+                      <span>{t('menu.coupon_records', '卡券订阅')}</span>
+                    )}
+                  </Button>
+                )}
+                {isPluginVisibleForUser('model_marketplace') && (
                   <Button
                     type="text"
                     href="/home/models"
@@ -1443,24 +1810,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                         viewBox="0 0 24 24"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
-                        style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
                       >
-                        <path d="M12 2L19.5 6.2L12 10.5L4.5 6.2Z" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
-                        <path d="M3.5 7.8L11 12V21L3.5 16.8Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
-                        <path d="M13 12L20.5 7.8V16.8L13 21Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                        <path d="M12 2.5L19.5 6.5L12 10.5L4.5 6.5Z" fill={themeMode === 'light' ? '#e0e0e0' : '#424242'} />
+                        <path d="M3.5 8L11 12V20.5L3.5 16.5Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
+                        <path d="M13 12L20.5 8V16.5L13 20.5Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
                       </svg>
                     }
                     style={{
                       color: themeMode === 'light' ? '#1f2937' : '#fff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
+                      gap: 4,
                       fontSize: 14,
                       fontWeight: 500,
                       height: screens.xs ? 34 : 40,
                       width: screens.xs ? 34 : undefined,
-                      padding: screens.xs ? 0 : '0 12px',
+                      padding: screens.xs ? 0 : '0 10px 0 7px',
                     }}
                     onClick={(e) => {
                       if (!e.metaKey && !e.ctrlKey) {
@@ -1470,14 +1833,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     }}
                   >
                     {!screens.xs && (
-                      <span style={{ display: 'inline-block', transform: 'translateY(1.5px)' }}>{t('menu.model_marketplace', 'Models')}</span>
+                      <span>{t('menu.model_marketplace', 'Models')}</span>
                     )}
                   </Button>
-                </Tooltip>
-              )}
+                )}
 
-              {isPluginVisibleForUser('docs_api') && (
-                <Tooltip title={t('menu.relay_api', 'API教程')} placement="bottom">
+                {isPluginVisibleForUser('docs_api') && (
                   <Button
                     type="text"
                     href="/docs"
@@ -1488,7 +1849,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                         viewBox="0 0 24 24"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
-                        style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
                       >
                         <rect x="8" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
                         <rect x="13.4" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
@@ -1501,15 +1861,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     }
                     style={{
                       color: themeMode === 'light' ? '#1f2937' : '#fff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
+                      gap: 4,
                       fontSize: 14,
                       fontWeight: 500,
                       height: screens.xs ? 34 : 40,
                       width: screens.xs ? 34 : undefined,
-                      padding: screens.xs ? 0 : '0 12px',
+                      padding: screens.xs ? 0 : '0 10px 0 7px',
                     }}
                     onClick={(e) => {
                       if (!e.metaKey && !e.ctrlKey) {
@@ -1519,11 +1876,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     }}
                   >
                     {!screens.xs && (
-                      <span style={{ display: 'inline-block', transform: 'translateY(1.5px)' }}>{t('menu.relay_api', 'API教程')}</span>
+                      <span>{t('menu.relay_api', 'API教程')}</span>
                     )}
                   </Button>
-                </Tooltip>
-              )}
+                )}
+              </div>
 
               {(enableThemeToggle || !isUserEnd) && (
                 <Tooltip title={themeMode === 'light' ? t('header.switch_dark_mode', '切换暗色模式') : t('header.switch_light_mode', '切换亮色模式')} placement="bottom" color={themeMode === 'light' ? '#fff' : '#2b2b2b'} styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}>
@@ -1534,18 +1891,18 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     icon={
                       themeMode === 'light'
                         ? (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79Z" fill="#757575" />
                           </svg>
                         )
                         : (
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <circle cx="12" cy="12" r="6" fill="#555555" />
                             <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41" stroke="#9e9e9e" strokeWidth="2.2" strokeLinecap="round" />
                           </svg>
                         )
                     }
-                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
+                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
                   />
                 </Tooltip>
               )}
@@ -1556,15 +1913,35 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                     type="text"
                     shape="circle"
                     icon={
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <circle cx="12" cy="12" r="8.5" stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="2" />
                         <path d="M3.5 12h17" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" strokeLinecap="round" />
                         <ellipse cx="12" cy="12" rx="3.5" ry="8.5" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" />
                       </svg>
                     }
-                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
+                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
                   />
                 </Dropdown>
+              )}
+
+              {showTicketButton && (
+                <Tooltip title={t('header.tickets', '工单')} placement="bottom" color={themeMode === 'light' ? '#fff' : '#2b2b2b'} styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}>
+                  <Badge count={ticketUnread} overflowCount={99} offset={[-4, 4]} className="header-badge">
+                    <Button
+                      type="text"
+                      shape="circle"
+                      aria-label={t('header.tickets', '工单')}
+                      icon={
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M4 7.5A2.5 2.5 0 016.5 5h11A2.5 2.5 0 0120 7.5v2a1.6 1.6 0 000 3.2v3.8A2.5 2.5 0 0117.5 19h-11A2.5 2.5 0 014 16.5v-3.8a1.6 1.6 0 000-3.2v-2z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                          <path d="M9 9.2h6M9 12h6M9 14.8h3.5" stroke={themeMode === 'light' ? '#fff' : '#2e2e2e'} strokeWidth="1.4" strokeLinecap="round" />
+                        </svg>
+                      }
+                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
+                      onClick={() => navigate('/tickets')}
+                    />
+                  </Badge>
+                </Tooltip>
               )}
 
               <Popover
@@ -1590,13 +1967,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                           viewBox="0 0 24 24"
                           fill="none"
                           xmlns="http://www.w3.org/2000/svg"
-                          style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
                         >
-                          <path d="M19 16.5v-6.5a7 7 0 00-14 0v6.5l-2 2h18l-2-2z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="1.5" strokeLinejoin="round" />
-                          <path d="M10 19.5a2 2 0 004 0" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2.5" strokeLinecap="round" />
+                          <path d="M19 16v-6a7 7 0 00-14 0v6l-2 2h18l-2-2z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="1.5" strokeLinejoin="round" />
+                          <path d="M10 19a2 2 0 004 0" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2.5" strokeLinecap="round" />
                         </svg>
                       }
-                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
+                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
                       onClick={() => {
                         setUnreadCount(0);
                       }}
@@ -1605,8 +1981,10 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ isUserEnd = false }) 
                 </Tooltip>
               </Popover>
 
-              <UserAvatarMenu isUserEnd={isUserEnd} agreement={agreement} />
-            </Space>
+              <div className="header-avatar-wrap" style={{ display: 'flex', alignItems: 'center' }}>
+                <UserAvatarMenu isUserEnd={isUserEnd} agreement={agreement} />
+              </div>
+            </div>
 
           </Header>
           <Content

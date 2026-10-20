@@ -9,7 +9,7 @@
  * 活跃插件列表：全站共用一次请求合并，避免刷新时 PluginRoute / Layout / 页面多处重复打 /plugins/active
  */
 import request from './request';
-import { coalesceAsync, invalidateCoalesce, primeCoalesce } from './coalesceAsync';
+import { coalesceAsync, invalidateCoalesce, peekCoalesce, primeCoalesce } from './coalesceAsync';
 
 export type ActivePluginsResponse = {
   active_plugins?: any[];
@@ -39,4 +39,11 @@ export function invalidateActivePluginsCache(): void {
 /** 控制台 bootstrap 已带回插件列表时预热，避免 PluginRoute 再打一次 */
 export function primeActivePluginsCache(response: ActivePluginsResponse): void {
   primeCoalesce(CACHE_KEY, response);
+}
+
+/** 登录落地已经拉过活跃插件时，侧栏首屏直接用这份列表，避免先画一版再换 */
+export function peekActivePlugins(): any[] | null {
+  const cached = peekCoalesce<ActivePluginsResponse>(CACHE_KEY);
+  if (!cached || !Array.isArray(cached.active_plugins)) return null;
+  return cached.active_plugins;
 }

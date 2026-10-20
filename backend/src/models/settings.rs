@@ -43,9 +43,12 @@ pub struct SiteSettings {
     /// 站点默认语言
     #[serde(default = "default_language")]
     pub default_language: String,
-    /// 站点默认时区
+    /// 站点运营时区：计费时段、额度刷新、仪表盘/财务自然日等业务切日
     #[serde(default = "default_site_timezone")]
     pub default_timezone: String,
+    /// 管理后台展示时区；空则回退站点运营时区
+    #[serde(default)]
+    pub admin_display_timezone: String,
     /// 是否在前端显示时区后缀
     #[serde(default = "default_show_timezone")]
     pub show_timezone: bool,
@@ -126,8 +129,18 @@ fn default_language() -> String {
 }
 
 fn default_site_timezone() -> String {
-    // timedisplay 默认 UTC+8；不可用 iana_time_zone：进程已锁定 TZ=UTC，会把站点默认误判成 UTC。
+    // timedisplay 默认 UTC+8；不可用 iana_time_zone：进程已锁定 TZ=UTC，会把站点运营时区误判成 UTC。
     crate::time_system::DEFAULT_TIMEDISPLAY.to_string()
+}
+
+impl SiteSettings {
+    /// 管理后台展示时区；未配置或非法时回退站点运营时区。
+    pub fn resolved_admin_display_timezone(&self) -> String {
+        crate::time_system::resolve_admin_display_name(
+            &self.admin_display_timezone,
+            &self.default_timezone,
+        )
+    }
 }
 
 fn default_show_timezone() -> bool {
@@ -369,6 +382,81 @@ pub struct AuxiliaryCurrency {
     pub enabled: bool,
 }
 
+/// 单币种汇率配置。汇率口径：1 默认货币 = 该币种的汇率
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct FxCurrencyConfig {
+    #[serde(default)]
+    pub code: String,
+    /// 单币种手动：开启后该币种固定使用 manual_rate，不跟随自动汇率。
+    /// `adjust = "manual"` 时与此同时为 true；旧数据只有该字段。
+    #[serde(default)]
+    pub manual: bool,
+    #[serde(default)]
+    pub manual_rate: f64,
+    /// 空：跟随实时汇率（旧的整站 `markup_percent` 仍加在收款汇率上）。
+    /// `percent`：实时汇率 × adjust_value%。100 为在线汇率，110 为 1.1 倍，50 为一半。
+    /// `amount`：实时汇率 + adjust_value。
+    /// `manual`：使用 manual_rate，不再叠加整站加价。
+    #[serde(default)]
+    pub adjust: String,
+    #[serde(default)]
+    pub adjust_value: f64,
+    /// 是否作为辅助货币在模型广场、模型列表等页面展示
+    #[serde(default = "default_true")]
+    pub display: bool,
+}
+
+/// 汇率设置：auto 按免费汇率源定时刷新；manual 全部使用手动汇率。
+/// `live_enabled` 默认关闭：国内单币种不请求外部汇率，只按默认货币收款。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FxSettings {
+    /// 实时汇率总开关。关闭后不拉取汇率，跨币种渠道不可收款。
+    #[serde(default)]
+    pub live_enabled: bool,
+    #[serde(default = "default_fx_mode")]
+    pub mode: String,
+    #[serde(default = "default_fx_refresh_interval_minutes")]
+    pub refresh_interval_minutes: u32,
+    /// 旧版整站加价。币种未单独配置 `adjust` 时仍加在收款汇率上；
+    /// 新配置把加价写进各币种后此处为 0。
+    #[serde(default)]
+    pub markup_percent: f64,
+    /// 自动汇率超过该小时数未更新时停止跨币种收款
+    #[serde(default = "default_fx_max_stale_hours")]
+    pub max_stale_hours: u32,
+    /// 手动汇率保存时的默认货币；与当前默认货币不一致时手动汇率作废
+    #[serde(default)]
+    pub manual_base: String,
+    #[serde(default)]
+    pub currencies: Vec<FxCurrencyConfig>,
+}
+
+fn default_fx_mode() -> String {
+    "auto".to_string()
+}
+
+fn default_fx_refresh_interval_minutes() -> u32 {
+    60
+}
+
+fn default_fx_max_stale_hours() -> u32 {
+    48
+}
+
+impl Default for FxSettings {
+    fn default() -> Self {
+        Self {
+            live_enabled: false,
+            mode: default_fx_mode(),
+            refresh_interval_minutes: default_fx_refresh_interval_minutes(),
+            markup_percent: 0.0,
+            max_stale_hours: default_fx_max_stale_hours(),
+            manual_base: String::new(),
+            currencies: Vec::new(),
+        }
+    }
+}
+
 /// 货币设置
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CurrencySettings {
@@ -380,8 +468,11 @@ pub struct CurrencySettings {
     pub currency_unit: String,
     #[serde(default)]
     pub token_ratio: f64,
+    /// 对外由 `fx` 与实时汇率推导；库内仅残留旧版手填值，读取时作为汇率初始值
     #[serde(default)]
     pub auxiliary_currencies: Vec<AuxiliaryCurrency>,
+    #[serde(default)]
+    pub fx: FxSettings,
     #[serde(default = "default_quick_amounts")]
     pub quick_amounts: Vec<f64>,
     #[serde(default = "default_min_recharge_amount")]
@@ -422,6 +513,9 @@ pub struct LoginSettings {
 pub struct RegistrationSettings {
     #[serde(default)]
     pub enable_username_registration: bool,
+    /// 用户名直接注册的独立 IP 每日限制（默认 3；清空为 None 或 <=0 时遵循站点安全 IP 防刷规则）
+    #[serde(default = "default_username_ip_daily_limit")]
+    pub username_ip_daily_limit: Option<i64>,
     #[serde(default)]
     pub enable_email_registration: bool,
     #[serde(default)]
@@ -433,7 +527,7 @@ pub struct RegistrationSettings {
     pub ip_rate_limit_enabled: bool,
     /// 同 IP 每日最多注册数
     #[serde(default = "default_ip_daily_limit")]
-    pub ip_daily_limit: i32,
+    pub ip_daily_limit: i64,
     /// 邮箱防刷：开启后 @ 前仅允许数字+字母+"_"，长度≤25
     #[serde(default)]
     pub email_validation_strict: bool,
@@ -449,7 +543,8 @@ pub struct RegistrationSettings {
     /// 是否要求绑定邮箱（纳入绑定策略）
     #[serde(default)]
     pub require_bind_email: bool,
-    /// 绑定执行方式：all=全部都要 / any=满足其一 / prompt_only=仅弹窗提示
+    /// 绑定执行方式：all=弹窗必须绑定全部 / any=弹窗必须绑定其一 / prompt_all=仅弹窗提示绑定全部 / prompt_any=仅弹窗提示绑定其一
+    /// prompt_only 为旧值，等同 prompt_all
     #[serde(default = "default_bind_enforcement")]
     pub bind_enforcement: String,
     /// 是否开启站点用户实名认证（KYC）
@@ -457,17 +552,27 @@ pub struct RegistrationSettings {
     pub enable_user_kyc: bool,
     /// 同一真实邮箱最多绑定的用户数，默认 5
     #[serde(default = "default_max_accounts_per_contact")]
-    pub max_accounts_per_email: i32,
+    pub max_accounts_per_email: i64,
     /// 同一手机号最多绑定的用户数，默认 5
     #[serde(default = "default_max_accounts_per_contact")]
-    pub max_accounts_per_mobile: i32,
+    pub max_accounts_per_mobile: i64,
+    /// 同一微信最多绑定的用户数，默认 5
+    #[serde(default = "default_max_accounts_per_contact")]
+    pub max_accounts_per_wechat: i64,
+    /// 允许国际手机号（E.164）收短信验证码；关闭时只接受中国大陆 11 位号码
+    #[serde(default)]
+    pub allow_international_mobile: bool,
+}
+
+fn default_username_ip_daily_limit() -> Option<i64> {
+    Some(3)
 }
 
 fn default_bind_enforcement() -> String {
     "all".to_string()
 }
 
-fn default_max_accounts_per_contact() -> i32 {
+fn default_max_accounts_per_contact() -> i64 {
     5
 }
 
@@ -486,7 +591,20 @@ impl RegistrationSettings {
         !email.is_empty() && !email.ends_with("@tokensbyte.local")
     }
 
-    /// 用户当前绑定是否满足策略（与执行方式无关；prompt_only 也用此判断是否弹窗）
+    /// 只弹窗，不拦截创建令牌。prompt_only 为旧值，等同 prompt_all
+    pub fn is_prompt_enforcement(&self) -> bool {
+        matches!(
+            self.bind_enforcement.as_str(),
+            "prompt_only" | "prompt_all" | "prompt_any"
+        )
+    }
+
+    /// 勾选项目里绑定一项即满足
+    fn requires_any_bind(&self) -> bool {
+        matches!(self.bind_enforcement.as_str(), "any" | "prompt_any")
+    }
+
+    /// 用户当前绑定是否满足策略（弹窗是否关闭、硬拦截是否放行都用此判断）
     pub fn is_bind_satisfied(&self, email: &str, mobile: Option<&str>) -> bool {
         if !self.bind_policy_active() {
             return true;
@@ -495,10 +613,9 @@ impl RegistrationSettings {
         let has_email = Self::has_valid_email(email);
         match (self.require_bind_mobile, self.require_bind_email) {
             (true, true) => {
-                if self.bind_enforcement == "any" {
+                if self.requires_any_bind() {
                     has_mobile || has_email
                 } else {
-                    // all / prompt_only：双开时按「都要」判断是否已满足
                     has_mobile && has_email
                 }
             }
@@ -511,14 +628,14 @@ impl RegistrationSettings {
     /// 创建令牌等敏感操作是否应硬拦截
     pub fn should_block_token_create(&self, email: &str, mobile: Option<&str>) -> bool {
         self.bind_policy_active()
-            && self.bind_enforcement != "prompt_only"
+            && !self.is_prompt_enforcement()
             && !self.is_bind_satisfied(email, mobile)
     }
 
     /// 生成创建令牌失败时的提示文案
     pub fn token_bind_block_message(&self) -> String {
         match (self.require_bind_mobile, self.require_bind_email) {
-            (true, true) if self.bind_enforcement == "any" => {
+            (true, true) if self.requires_any_bind() => {
                 "创建 API 令牌前请先绑定手机号或邮箱".to_string()
             }
             (true, true) => "创建 API 令牌前请先绑定手机号和邮箱".to_string(),
@@ -533,7 +650,7 @@ fn default_true() -> bool {
     true
 }
 
-fn default_ip_daily_limit() -> i32 {
+fn default_ip_daily_limit() -> i64 {
     6
 }
 
@@ -827,7 +944,7 @@ pub struct PaymentChannelUiItem {
     pub id: String,
     /// 排序权重，数字越大越靠前
     #[serde(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     #[serde(default)]
     pub enabled: bool,
     /// 用户端中文显示名称；空则使用系统默认
@@ -851,13 +968,25 @@ pub struct PaymentChannelUiItem {
     /// 通联子渠道：支付宝（仅 id=allinpay 有效）
     #[serde(default = "default_true")]
     pub allinpay_alipay_enabled: bool,
+    /// 渠道收款币种（按顺序优先）；空则使用渠道默认能力，见 `services::fx_rates`
+    #[serde(default)]
+    pub currencies: Option<Vec<String>>,
+    /// 开启后，该渠道的钱包充值使用下面的最小/最大金额，不再使用全局通用充值设置
+    #[serde(default)]
+    pub recharge_limit_enabled: bool,
+    /// 渠道最小充值（站点默认货币）。仅 `recharge_limit_enabled` 时生效；0 表示不限制
+    #[serde(default)]
+    pub min_recharge_amount: f64,
+    /// 渠道最大充值（站点默认货币）。仅 `recharge_limit_enabled` 时生效；0 表示不限制
+    #[serde(default)]
+    pub max_recharge_amount: f64,
 }
 
 /// 公开支付渠道（不含密钥）
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct PublicPaymentChannel {
     pub id: String,
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
@@ -872,10 +1001,31 @@ pub struct PublicPaymentChannel {
     /// 通联已开启的子渠道 payment_method 列表（如 allinpay_wechat）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allinpay_methods: Vec<String>,
+    /// 渠道可收款币种
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub currencies: Vec<String>,
+    /// 按站点默认货币下单时，该渠道实际收款币种
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pay_currency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pay_currency_symbol: Option<String>,
+    /// 1 默认货币 = pay_rate 收款币种（跨币种时已含加价；同币种为 1）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pay_rate: Option<f64>,
+    /// 收款币种最小单位小数位
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pay_decimals: Option<u32>,
+    /// 是否启用渠道单独充值限额；关闭时前端沿用全局最小/最大充值
+    #[serde(default)]
+    pub recharge_limit_enabled: bool,
+    #[serde(default)]
+    pub min_recharge_amount: f64,
+    #[serde(default)]
+    pub max_recharge_amount: f64,
 }
 
 /// 系统内置支付渠道 ID 与默认排序（越大越靠前）
-pub fn payment_channel_catalog() -> &'static [(&'static str, i32)] {
+pub fn payment_channel_catalog() -> &'static [(&'static str, i64)] {
     &[
         ("alipay", 70),
         ("wechat", 60),
@@ -979,6 +1129,10 @@ pub fn merge_payment_channels_ui(
                 logo_url: logo,
                 allinpay_wechat_enabled: lw.map(|c| c.enabled).unwrap_or(gateway.allinpay),
                 allinpay_alipay_enabled: la.map(|c| c.enabled).unwrap_or(gateway.allinpay),
+                currencies: None,
+                recharge_limit_enabled: false,
+                min_recharge_amount: 0.0,
+                max_recharge_amount: 0.0,
             },
         );
     }
@@ -1012,6 +1166,10 @@ pub fn merge_payment_channels_ui(
                 logo_url: None,
                 allinpay_wechat_enabled: true,
                 allinpay_alipay_enabled: true,
+                currencies: None,
+                recharge_limit_enabled: false,
+                min_recharge_amount: 0.0,
+                max_recharge_amount: 0.0,
             });
         }
     }
@@ -1079,6 +1237,10 @@ pub fn build_public_payment_channels(
                 } else {
                     Vec::new()
                 },
+                recharge_limit_enabled: c.recharge_limit_enabled,
+                min_recharge_amount: c.min_recharge_amount,
+                max_recharge_amount: c.max_recharge_amount,
+                ..Default::default()
             }
         })
         .collect();
@@ -1133,6 +1295,61 @@ pub fn is_payment_channel_ui_enabled(ui: &PaymentChannelsUiSettings, channel_id:
         .unwrap_or(true)
 }
 
+fn recharge_limit_or_zero(v: f64) -> f64 {
+    if v.is_finite() && v > 0.0 {
+        v
+    } else {
+        0.0
+    }
+}
+
+/// 钱包充值生效的最小/最大金额（站点默认货币）。
+///
+/// 渠道 `recharge_limit_enabled` 时用该渠道的一对数值，否则用全局通用充值设置。
+/// 通联子渠道 `allinpay_wechat` / `allinpay_alipay` 共用 `allinpay`。
+/// 返回值中 0 表示该侧不限制。
+pub fn effective_recharge_amount_limits(
+    ui: &PaymentChannelsUiSettings,
+    payment_method: &str,
+    global_min: f64,
+    global_max: f64,
+) -> (f64, f64) {
+    let ui_id = if payment_method.starts_with("allinpay_") {
+        "allinpay"
+    } else {
+        payment_method
+    };
+    let (min, max) = ui
+        .channels
+        .iter()
+        .find(|c| c.id == ui_id)
+        .filter(|c| c.recharge_limit_enabled)
+        .map(|c| (c.min_recharge_amount, c.max_recharge_amount))
+        .unwrap_or((global_min, global_max));
+    (recharge_limit_or_zero(min), recharge_limit_or_zero(max))
+}
+
+/// 单独限额开启时，两侧都大于 0 则最小不能大于最大
+pub fn validate_channel_recharge_limits(channels: &[PaymentChannelUiItem]) -> Result<(), String> {
+    for c in channels {
+        if !c.recharge_limit_enabled {
+            continue;
+        }
+        let min = c.min_recharge_amount;
+        let max = c.max_recharge_amount;
+        if !min.is_finite() || !max.is_finite() || min < 0.0 || max < 0.0 {
+            return Err("充值金额限制不能为负数".to_string());
+        }
+        if min > 0.0 && max > 0.0 && min > max {
+            return Err(format!(
+                "渠道 {} 的最小充值金额不能大于最大充值金额",
+                c.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 谷歌 OAuth 2.0 设置
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GoogleOAuthSettings {
@@ -1153,6 +1370,9 @@ pub struct WechatOAuthSettings {
     /// 网站应用密钥 AppSecret
     #[serde(default)]
     pub app_secret: String,
+    /// 微信开放平台审核绑定的授权回调域名（如 old.com 或 https://old.com），用于多域名免审中继；留空则跟随当前域名
+    #[serde(default)]
+    pub callback_domain: String,
 }
 
 /// 低余额在途档位：可用额低于 max_available 时限制未完成任务路数；max_available=None 表示其余
@@ -1201,12 +1421,13 @@ impl InflightCategoryLimit {
         if self.tiers.is_empty() {
             self.tiers = default_inflight_tiers();
         }
-        self.tiers.sort_by(|a, b| match (a.max_available, b.max_available) {
-            (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
+        self.tiers
+            .sort_by(|a, b| match (a.max_available, b.max_available) {
+                (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            });
         self
     }
 
@@ -1225,7 +1446,7 @@ impl InflightCategoryLimit {
 }
 
 /// 在途限制类别（配置与 SQL 条件同一映射）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InflightCat {
     Video,
     Image,
@@ -1237,8 +1458,8 @@ impl InflightCat {
     #[inline]
     pub fn of(action_type: &str) -> Self {
         match action_type {
-            "视频" | "视频增强" | "画质增强" => Self::Video,
-            "图片" | "图像增强" => Self::Image,
+            "视频" | "封装" => Self::Video,
+            "图片" => Self::Image,
             "聊天" => Self::Chat,
             _ => Self::Other,
         }
@@ -1247,11 +1468,11 @@ impl InflightCat {
     #[inline]
     pub fn count_sql(self) -> &'static str {
         match self {
-            Self::Video => "AND action_type = ANY(ARRAY['视频','视频增强','画质增强'])",
-            Self::Image => "AND action_type = ANY(ARRAY['图片','图像增强'])",
+            Self::Video => "AND action_type = ANY(ARRAY['视频','封装'])",
+            Self::Image => "AND action_type = '图片'",
             Self::Chat => "AND action_type = '聊天'",
             Self::Other => {
-                "AND COALESCE(action_type, '') NOT IN ('视频','视频增强','画质增强','图片','图像增强','聊天')"
+                "AND COALESCE(action_type, '') NOT IN ('视频','封装','图片','聊天')"
             }
         }
     }
@@ -1427,13 +1648,13 @@ fn default_storage_provider() -> String {
 pub struct LogCleanupSettings {
     /// 使用日志详情保留天数，超期自动清理请求/响应内容，0=永不清理
     #[serde(default = "default_log_retention_days")]
-    pub log_retention_days: i32,
+    pub log_retention_days: i64,
     /// 使用日志行保留天数：超期行迁入 logs_archive 并从热表删除；0=永不归档（默认）
     #[serde(default = "default_log_row_retention_days")]
-    pub log_row_retention_days: i32,
+    pub log_row_retention_days: i64,
     /// 错误日志保留天数：非 200 状态码错误记录；0=永不清理（默认）
     #[serde(default = "default_error_log_retention_days")]
-    pub error_log_retention_days: i32,
+    pub error_log_retention_days: i64,
 
     // ===== 5 项重型/核心定时任务错峰执行时间配置（时:分）=====
     /// 1. 每日用量增量统计触发时间（时 0~23，默认 1）
@@ -1506,13 +1727,13 @@ impl LogCleanupSettings {
     pub fn from_legacy_storage_json(v: &serde_json::Value) -> Self {
         let mut s = Self::default();
         if let Some(n) = v.get("log_retention_days").and_then(|x| x.as_i64()) {
-            s.log_retention_days = n as i32;
+            s.log_retention_days = n;
         }
         if let Some(n) = v.get("log_row_retention_days").and_then(|x| x.as_i64()) {
-            s.log_row_retention_days = n as i32;
+            s.log_row_retention_days = n;
         }
         if let Some(n) = v.get("error_log_retention_days").and_then(|x| x.as_i64()) {
-            s.error_log_retention_days = n as i32;
+            s.error_log_retention_days = n;
         }
         s
     }
@@ -1543,15 +1764,15 @@ impl LogCleanupSettings {
     }
 }
 
-fn default_log_retention_days() -> i32 {
+fn default_log_retention_days() -> i64 {
     30
 }
 
-fn default_log_row_retention_days() -> i32 {
+fn default_log_row_retention_days() -> i64 {
     0
 }
 
-fn default_error_log_retention_days() -> i32 {
+fn default_error_log_retention_days() -> i64 {
     0
 }
 
@@ -1604,7 +1825,7 @@ pub struct MenuItemConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     #[serde(default = "default_all_levels")]
     pub allowed_levels: String,
 }
@@ -1868,10 +2089,26 @@ impl InvoiceSettings {
                 id: "default_seller".to_string(),
                 company_name: self.invoice_company_name.clone(),
                 tax_id: self.invoice_tax_id.clone(),
-                contact_email: if self.invoice_contact_email.is_empty() { None } else { Some(self.invoice_contact_email.clone()) },
-                company_address: if self.invoice_company_address.is_empty() { None } else { Some(self.invoice_company_address.clone()) },
-                company_phone: if self.invoice_company_phone.is_empty() { None } else { Some(self.invoice_company_phone.clone()) },
-                company_website: if self.invoice_company_website.is_empty() { None } else { Some(self.invoice_company_website.clone()) },
+                contact_email: if self.invoice_contact_email.is_empty() {
+                    None
+                } else {
+                    Some(self.invoice_contact_email.clone())
+                },
+                company_address: if self.invoice_company_address.is_empty() {
+                    None
+                } else {
+                    Some(self.invoice_company_address.clone())
+                },
+                company_phone: if self.invoice_company_phone.is_empty() {
+                    None
+                } else {
+                    Some(self.invoice_company_phone.clone())
+                },
+                company_website: if self.invoice_company_website.is_empty() {
+                    None
+                } else {
+                    Some(self.invoice_company_website.clone())
+                },
                 bank_name: None,
                 bank_account: None,
                 support_normal: true,
@@ -2167,6 +2404,10 @@ pub struct PublicSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub wechat_oauth_app_id: Option<String>,
+    /// 微信 OAuth 授权回调主域名源（带 scheme，如 https://old.com），用于多域名免审中继
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub wechat_oauth_callback_domain: Option<String>,
     /// Google OAuth client_id（前端 OAuth 跳转需要），不含 client_secret
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
@@ -2180,5 +2421,3 @@ pub struct PublicSettings {
     #[serde(default)]
     pub invoices: Option<InvoiceSettings>,
 }
-
-

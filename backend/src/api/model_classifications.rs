@@ -24,6 +24,7 @@ async fn is_volcengine_enhance_active(state: &AppState) -> bool {
     }
     #[cfg(not(feature = "plugin_volcengine_enhance"))]
     {
+        let _ = state;
         false
     }
 }
@@ -133,7 +134,7 @@ pub async fn delete_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let is_sys: i32 = sqlx::query_scalar(
+    let is_sys: i64 = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM model_providers WHERE id = ?"),
@@ -265,7 +266,7 @@ pub async fn delete_api_provider(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let is_sys: i32 = sqlx::query_scalar(
+    let is_sys: i64 = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM model_api_providers WHERE id = ?"),
@@ -308,7 +309,7 @@ pub async fn list_types(State(state): State<Arc<AppState>>) -> AppResult<Json<Ve
     let where_clause = if volc_active {
         ""
     } else {
-        "WHERE t.name NOT IN ('画质增强', '视频增强', '图像增强')"
+        "WHERE t.name <> '封装'"
     };
 
     let query_str = format!(
@@ -416,7 +417,7 @@ pub async fn delete_type(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let is_sys: i32 = sqlx::query_scalar(
+    let is_sys: i64 = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM model_types WHERE id = ?"),
@@ -633,7 +634,7 @@ pub async fn get_classifications_stats(
     let type_where = if volc_active {
         " WHERE t.is_active = 1 GROUP BY t.id, t.name, t.name_en, t.logo, t.is_system ORDER BY t.sort_order DESC, t.id ASC"
     } else {
-        " WHERE t.is_active = 1 AND t.name NOT IN ('画质增强', '视频增强', '图像增强') GROUP BY t.id, t.name, t.name_en, t.logo, t.is_system ORDER BY t.sort_order DESC, t.id ASC"
+        " WHERE t.is_active = 1 AND t.name <> '封装' GROUP BY t.id, t.name, t.name_en, t.logo, t.is_system ORDER BY t.sort_order DESC, t.id ASC"
     };
     t_sql.push_str(type_where);
 

@@ -19,7 +19,7 @@ interface ClassificationItem {
   name: string;
   name_en?: string;
   sort_order: number;
-  is_active: boolean;
+  is_active: number | boolean;
   is_system?: number;
   logo?: string;
   model_count?: number;
@@ -138,8 +138,7 @@ const ClassificationManager: React.FC<ClassificationManagerProps> = ({
 
   const renderSystemIcon = (name: string) => {
     const lowerName = name.toLowerCase();
-    if (lowerName.includes('画质增强') || lowerName.includes('quality enhancement') || lowerName.includes('视频增强') || lowerName.includes('videoenhance') || lowerName.includes('video-enhance') || lowerName.includes('video_enhance')) return <Sparkles size={18} />;
-    if (lowerName.includes('图像增强') || lowerName.includes('image enhancement') || lowerName.includes('image-enhance') || lowerName.includes('imageenhance') || lowerName.includes('image_enhance')) return <Sparkles size={18} />;
+    if (lowerName.includes('封装') || lowerName.includes('encapsulation')) return <Sparkles size={18} />;
     if (lowerName.includes('图片') || lowerName.includes('image')) return <ImageIcon size={18} />;
     if (lowerName.includes('视频') || lowerName.includes('video')) return <Video size={18} />;
     if (lowerName.includes('音频') || lowerName.includes('audio')) return <AudioLines size={18} />;

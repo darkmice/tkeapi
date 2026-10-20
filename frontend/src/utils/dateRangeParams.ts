@@ -8,7 +8,8 @@
 import dayjs, { type Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-import { resolveTimedisplay } from './timedisplay';
+import useAuthStore from '../store/auth';
+import { resolveSiteTimedisplay, resolveTimedisplay } from './timedisplay';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -52,9 +53,17 @@ function isDayEnd(w: ReturnType<typeof pickerWall>): boolean {
   return w.h === 23 && w.m === 59 && w.s === 59;
 }
 
-/** 当前时刻的 timedisplay 墙钟（管理后台站点时区，用户端个人时区） */
+/** 当前时刻的展示墙钟（管理后台展示时区，用户端个人时区） */
 export function timedisplayNow(): Dayjs {
   return dayjs().tz(resolveTimedisplay());
+}
+
+/** 仪表盘/财务日统计「今天」：管理端走站点运营时区，用户端走个人展示时区 */
+export function statsCalendarNow(): Dayjs {
+  const tz = useAuthStore.getState().user?.role === 'admin'
+    ? resolveSiteTimedisplay()
+    : resolveTimedisplay();
+  return dayjs().tz(tz);
 }
 
 /** 日志/任务列表默认「今日」范围 */
@@ -63,7 +72,7 @@ export function defaultLogDayRange(): [Dayjs, Dayjs] {
   return [now.startOf('day'), now.endOf('day')];
 }
 
-/** 财务明细默认「本月」范围（站点 timedisplay 自然月） */
+/** 财务明细默认「本月」范围（展示时区自然月） */
 export function defaultMonthRange(): [Dayjs, Dayjs] {
   const now = timedisplayNow();
   return [now.startOf('month'), now.endOf('month')];

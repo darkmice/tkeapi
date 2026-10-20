@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Card, Form, Input, Button, message, Typography, Tabs, Switch, Alert, Divider,
   InputNumber, Table, Space, Image, Row, Col, Tag, Radio, Badge, Popconfirm, Tooltip,
-  Modal, Checkbox,
+  Modal, Checkbox, Select,
 } from 'antd';
 import {
   WechatOutlined, AlipayCircleOutlined, LinkOutlined, SafetyCertificateOutlined,
@@ -30,12 +30,22 @@ import {
   resolveChannelSubtitle,
   type PaymentChannelUiItem,
 } from '../../constants/paymentChannels';
+import CurrencySettingsTab, { type FxOverview } from './CurrencySettingsTab';
 
 const { Text } = Typography;
 
+function formatChannelRechargeLimit(record: PaymentChannelUiItem): string {
+  const min = Number(record.min_recharge_amount) || 0;
+  const max = Number(record.max_recharge_amount) || 0;
+  if (min > 0 && max > 0) return `${min} – ${max}`;
+  if (min > 0) return `≥ ${min}`;
+  if (max > 0) return `≤ ${max}`;
+  return '不限制';
+}
+
 const PaymentSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { settings, updateStoreSettings } = useSettingsStore();
+  const { updateStoreSettings } = useSettingsStore();
   const { themeMode } = useThemeStore();
   const isLight = themeMode === 'light';
 
@@ -54,8 +64,8 @@ const PaymentSettings: React.FC = () => {
     setSearchParams({ tab: key }, { replace: true });
   };
 
-  const [formCurrency] = Form.useForm();
   const [formDisplay] = Form.useForm();
+  const rechargeLimitOn = !!Form.useWatch('recharge_limit_enabled', formDisplay);
   const [formGateway] = Form.useForm();
   const [formInvoices] = Form.useForm();
   const [formSeller] = Form.useForm();
@@ -74,7 +84,7 @@ const PaymentSettings: React.FC = () => {
   const [sellerSubjects, setSellerSubjects] = useState<SellerInvoiceSubject[]>([]);
   const [savingSellerModal, setSavingSellerModal] = useState(false);
 
-  const [loadingCurrency, setLoadingCurrency] = useState(false);
+  const [fxOverview, setFxOverview] = useState<FxOverview | null>(null);
   const [loadingChannels, setLoadingChannels] = useState(false);
   const [savingInvoices, setSavingInvoices] = useState(false);
   const [userLevels, setUserLevels] = useState<any[]>([]);
@@ -117,21 +127,21 @@ const PaymentSettings: React.FC = () => {
     }
   };
 
+  const fetchFxOverview = async () => {
+    try {
+      setFxOverview(await (request.get('/settings/currency/fx') as any));
+    } catch (e) {
+      console.error('Failed to fetch fx overview:', e);
+    }
+  };
+
   const fetchSettings = async () => {
     setLoadingChannels(true);
     try {
       fetchUserLevels();
+      fetchFxOverview();
       const response = await (request.get('/settings/full') as any);
       setFullSettings(response);
-      if (response?.currency) {
-        const amountsStr = (response.currency.quick_amounts || [20, 50, 100, 500, 1000, 5000]).join(', ');
-        formCurrency.setFieldsValue({
-          ...response.currency,
-          quick_amounts: amountsStr,
-          min_recharge_amount: response.currency.min_recharge_amount ?? 5,
-          max_recharge_amount: response.currency.max_recharge_amount ?? 10000,
-        });
-      }
       if (response?.invoices) {
         formInvoices.setFieldsValue({
           ...response.invoices,
@@ -298,6 +308,10 @@ const PaymentSettings: React.FC = () => {
       logo_url: item.logo_url || '',
       allinpay_wechat_enabled: item.allinpay_wechat_enabled !== false,
       allinpay_alipay_enabled: item.allinpay_alipay_enabled !== false,
+      currencies: item.currencies || [],
+      recharge_limit_enabled: !!item.recharge_limit_enabled,
+      min_recharge_amount: Number(item.min_recharge_amount) || 0,
+      max_recharge_amount: Number(item.max_recharge_amount) || 0,
     });
     const gw = fullSettings?.[meta.gatewayKey] || {};
     formGateway.setFieldsValue({ ...gw });
@@ -339,10 +353,17 @@ const PaymentSettings: React.FC = () => {
           subtitle_en: (displayValues.subtitle_en || '').trim() || null,
           logo_url: (displayValues.logo_url || '').trim() || null,
         };
+        if (editingId === 'stripe') {
+          const picked: string[] = displayValues.currencies || [];
+          updated.currencies = picked.length > 0 ? picked : null;
+        }
         if (editingId === 'allinpay') {
           updated.allinpay_wechat_enabled = !!displayValues.allinpay_wechat_enabled;
           updated.allinpay_alipay_enabled = !!displayValues.allinpay_alipay_enabled;
         }
+        updated.recharge_limit_enabled = !!displayValues.recharge_limit_enabled;
+        updated.min_recharge_amount = Number(displayValues.min_recharge_amount) || 0;
+        updated.max_recharge_amount = Number(displayValues.max_recharge_amount) || 0;
         return updated;
       });
 
@@ -420,36 +441,10 @@ const PaymentSettings: React.FC = () => {
     }
   };
 
-  const onFinishCurrency = async (values: any) => {
-    setLoadingCurrency(true);
-    try {
-      const quick_amounts = (String(values.quick_amounts || ''))
-        .split(',')
-        .map((x: string) => parseFloat(x.trim()))
-        .filter((x: number) => !isNaN(x) && x > 0);
-
-      const payload = {
-        currency: {
-          ...settings?.currency,
-          default_currency: values.default_currency,
-          currency_symbol: values.currency_symbol,
-          currency_unit: values.currency_unit,
-          token_ratio: values.token_ratio,
-          auxiliary_currencies: values.auxiliary_currencies || [],
-          quick_amounts,
-          min_recharge_amount: values.min_recharge_amount != null ? parseFloat(values.min_recharge_amount) : 5.0,
-          max_recharge_amount: values.max_recharge_amount != null ? parseFloat(values.max_recharge_amount) : 10000.0,
-        },
-      };
-      const updatedSettings = await (request.post('/settings', payload) as any);
-      message.destroy();
-      message.success(t('settings.save_success', '货币设置保存成功'));
-      updateStoreSettings(updatedSettings);
-    } catch (error) {
-      console.error('Save currency error:', error);
-    } finally {
-      setLoadingCurrency(false);
-    }
+  const onCurrencySaved = (updatedSettings: any) => {
+    updateStoreSettings(updatedSettings);
+    setFullSettings((prev: any) => ({ ...(prev || {}), ...(updatedSettings || {}) }));
+    fetchFxOverview();
   };
 
   const notifyUrlBlock = (url: string, label: string) => (
@@ -488,6 +483,7 @@ const PaymentSettings: React.FC = () => {
   );
 
   const editingMeta = editingId ? getChannelMeta(editingId) : undefined;
+  const editingFx = fxOverview?.channels.find((c) => c.id === editingId);
 
   const renderGatewayFields = () => {
     if (!editingMeta) return null;
@@ -496,7 +492,7 @@ const PaymentSettings: React.FC = () => {
     if (key === 'payment_wechat') {
       return (
         <>
-          <Alert type="info" showIcon icon={<SafetyCertificateOutlined />} style={{ marginBottom: 16, borderRadius: 8 }}
+          <Alert type="info" showIcon icon={<SafetyCertificateOutlined />} style={{ borderRadius: 8 }}
             message="微信支付 API v3 接入指引"
             description={<div style={{ fontSize: 13, lineHeight: 1.8 }}>
               <div>1. 登录 <a href="https://pay.weixin.qq.com" target="_blank" rel="noreferrer">微信支付商户平台</a> 获取商户号 / API v3 密钥 / 证书</div>
@@ -526,7 +522,7 @@ const PaymentSettings: React.FC = () => {
     if (key === 'payment_alipay') {
       return (
         <>
-          <Alert type="info" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+          <Alert type="info" showIcon style={{ borderRadius: 8 }}
             message="支付宝电脑网站支付接入指引"
             description={<div style={{ fontSize: 13, lineHeight: 1.8 }}>
               <div>1. 登录 <a href="https://open.alipay.com" target="_blank" rel="noreferrer">支付宝开放平台</a> 创建应用并获取 App ID</div>
@@ -550,7 +546,7 @@ const PaymentSettings: React.FC = () => {
     if (key === 'payment_stripe') {
       return (
         <>
-          <Alert type="info" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+          <Alert type="info" showIcon style={{ borderRadius: 8 }}
             message="Stripe Checkout 接入指引"
             description={<div style={{ fontSize: 13, lineHeight: 1.8 }}>
               <div>1. 在 Stripe Dashboard 获取 Secret Key / Publishable Key</div>
@@ -574,7 +570,7 @@ const PaymentSettings: React.FC = () => {
     if (key === 'payment_hyperbc') {
       return (
         <>
-          <Alert type="info" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+          <Alert type="info" showIcon style={{ borderRadius: 8 }}
             message="HyperBC 接入指引"
             description={<div style={{ fontSize: 13, lineHeight: 1.8 }}>在 HyperBC 商户后台获取 APP_ID 与密钥，并配置回调地址</div>}
           />
@@ -601,7 +597,7 @@ const PaymentSettings: React.FC = () => {
     if (key === 'payment_allinpay') {
       return (
         <>
-          <Alert type="info" showIcon style={{ marginBottom: 16, borderRadius: 8 }}
+          <Alert type="info" showIcon style={{ borderRadius: 8 }}
             message="通联收银宝接入指引"
             description={<div style={{ fontSize: 13, lineHeight: 1.8 }}>
               <div>通联支付为单一通道，可在上方分别开启微信 / 支付宝子渠道；用户端默认看到「通联支付」。</div>
@@ -648,6 +644,7 @@ const PaymentSettings: React.FC = () => {
     {
       title: '中文配置',
       key: 'zh_config',
+      width: 220,
       render: (_: unknown, record: PaymentChannelUiItem) => {
         const meta = getChannelMeta(record.id);
         const nameZh = resolveChannelName(record, 'zh');
@@ -661,7 +658,7 @@ const PaymentSettings: React.FC = () => {
         const subZhDisplay = record.subtitle || meta?.defaultSubtitle || '无';
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180, maxWidth: 300 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>{nameZh}</div>
             {isEditing ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -680,7 +677,7 @@ const PaymentSettings: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') setEditingSubtitleField(null);
                   }}
-                  style={{ width: 140 }}
+                  style={{ width: 130 }}
                 />
                 <Button
                   size="small"
@@ -706,7 +703,7 @@ const PaymentSettings: React.FC = () => {
                   type="secondary"
                   style={{
                     fontSize: 13,
-                    maxWidth: 200,
+                    maxWidth: 160,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -732,6 +729,11 @@ const PaymentSettings: React.FC = () => {
                 子渠道：{subHint}
               </Text>
             ) : null}
+            {record.recharge_limit_enabled ? (
+              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+                单独限额：{formatChannelRechargeLimit(record)}
+              </Text>
+            ) : null}
           </div>
         );
       },
@@ -739,6 +741,7 @@ const PaymentSettings: React.FC = () => {
     {
       title: '英文配置',
       key: 'en_config',
+      width: 220,
       render: (_: unknown, record: PaymentChannelUiItem) => {
         const meta = getChannelMeta(record.id);
         const nameEn = resolveChannelName(record, 'en');
@@ -746,7 +749,7 @@ const PaymentSettings: React.FC = () => {
         const subEnDisplay = record.subtitle_en || meta?.defaultSubtitleEn || 'None';
 
         return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180, maxWidth: 300 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ fontWeight: 600, fontSize: 14 }}>{nameEn}</div>
             {isEditing ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -765,7 +768,7 @@ const PaymentSettings: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') setEditingSubtitleField(null);
                   }}
-                  style={{ width: 140 }}
+                  style={{ width: 130 }}
                 />
                 <Button
                   size="small"
@@ -791,7 +794,7 @@ const PaymentSettings: React.FC = () => {
                   type="secondary"
                   style={{
                     fontSize: 13,
-                    maxWidth: 200,
+                    maxWidth: 160,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -813,6 +816,41 @@ const PaymentSettings: React.FC = () => {
               </div>
             )}
           </div>
+        );
+      },
+    },
+    {
+      title: (
+        <Tooltip title="渠道可收款币种，蓝色为按默认货币下单时的实际收款币种；渠道不收默认货币时按实时汇率换算收款">
+          <span>支持货币</span>
+        </Tooltip>
+      ),
+      key: 'currencies',
+      render: (_: unknown, record: PaymentChannelUiItem) => {
+        const row = fxOverview?.channels.find((c) => c.id === record.id);
+        if (!row) return <Text type="secondary">—</Text>;
+        const shown = row.currencies.slice(0, 4);
+        const rest = row.currencies.slice(4);
+        return (
+          <Space size={[4, 4]} wrap>
+            {shown.map((code) => (
+              <Tag key={code} color={code === row.pay_currency ? 'blue' : undefined} style={{ marginInlineEnd: 0 }}>{code}</Tag>
+            ))}
+            {rest.length > 0 && (
+              <Tooltip title={rest.join(', ')}><Tag style={{ marginInlineEnd: 0 }}>+{rest.length}</Tag></Tooltip>
+            )}
+            {row.needs_conversion && (row.pay_rate
+              ? (
+                <Tooltip title={`按 1 ${fxOverview?.default_currency} = ${row.pay_rate} ${row.pay_currency} 换算收款（含加价）`}>
+                  <Tag color="orange" style={{ marginInlineEnd: 0 }}>换算收款</Tag>
+                </Tooltip>
+              )
+              : (
+                <Tooltip title="实时汇率未开启，或没有可用汇率。用户端暂不展示该渠道">
+                  <Tag color="error" style={{ marginInlineEnd: 0 }}>缺汇率</Tag>
+                </Tooltip>
+              ))}
+          </Space>
         );
       },
     },
@@ -1156,9 +1194,20 @@ const PaymentSettings: React.FC = () => {
       title: '专属折扣',
       dataIndex: 'discount',
       key: 'discount',
-      render: (val: number, record: any) => (
-        <span>{val}{record.discount_type === 1 ? '%' : '折'}</span>
-      ),
+      render: (val: number, record: any) => {
+        const dt = record.discount_type ?? 0;
+        const mask = dt >= 16 ? (dt & 15) : (dt === 1 ? 6 : dt === 2 ? 3 : 15);
+        const hasLevelDisc = (mask & 1) !== 0;
+        const num = Number(val ?? 1);
+        return hasLevelDisc ? (
+          <span style={{ fontFamily: 'monospace' }}>{num.toFixed(2)}x</span>
+        ) : (
+          <span style={{ fontFamily: 'monospace', color: '#94a3b8' }} title="未勾选用户等级折扣，此等级倍率未启用">
+            <span style={{ textDecoration: 'line-through' }}>{num.toFixed(2)}x</span>
+            <span style={{ fontSize: 11, marginLeft: 4 }}>(未启用)</span>
+          </span>
+        );
+      },
     },
     {
       title: '发票开具权限状态',
@@ -1217,94 +1266,13 @@ const PaymentSettings: React.FC = () => {
       key: 'currency',
       label: t('menu.currency_settings', '货币设置'),
       children: (
-        <div style={{ maxWidth: 640 }}>
-          <Form form={formCurrency} layout="vertical" onFinish={onFinishCurrency} autoComplete="off">
-            <Form.Item label={t('settings.default_currency', '默认货币代码')} name="default_currency" rules={[{ required: true }]}><Input placeholder="CNY" /></Form.Item>
-            <Form.Item label={t('settings.currency_symbol', '货币符号')} name="currency_symbol" rules={[{ required: true }]}><Input placeholder="¥" /></Form.Item>
-            <Form.Item label={t('settings.currency_unit', '货币单位')} name="currency_unit" rules={[{ required: true }]}><Input placeholder="元" /></Form.Item>
-            <Form.Item noStyle dependencies={['default_currency', 'token_ratio']}>
-              {({ getFieldValue }) => {
-                const c = getFieldValue('default_currency') || 'USD';
-                const ratio = getFieldValue('token_ratio');
-                const ratioStr = (ratio !== undefined && ratio !== null) ? ratio : 'N';
-                return (
-                  <Form.Item label={t('settings.token_ratio', '兑换比例')} name="token_ratio" rules={[{ required: true }]} extra={<Text type="secondary">{`1 ${c} = ${ratioStr} Tokens`}</Text>}>
-                    <InputNumber style={{ width: '100%' }} min={0} step={0.0001} />
-                  </Form.Item>
-                );
-              }}
-            </Form.Item>
-
-            <Divider>辅助货币显示设置</Divider>
-            <Form.List name="auxiliary_currencies">
-              {(fields, { add, remove }) => (
-                <>
-                  {fields.map(({ key, name, ...restField }) => (
-                    <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
-                      <Form.Item {...restField} name={[name, 'code']} rules={[{ required: true, message: '代码' }]} style={{ margin: 0, flex: 1 }}>
-                        <Input placeholder="货币代码 (如 USD)" />
-                      </Form.Item>
-                      <Form.Item {...restField} name={[name, 'symbol']} rules={[{ required: true, message: '符号' }]} style={{ margin: 0, flex: 1 }}>
-                        <Input placeholder="货币符号 (如 $)" />
-                      </Form.Item>
-                      <Form.Item {...restField} name={[name, 'exchange_rate']} rules={[{ required: true, message: '汇率' }]} style={{ margin: 0, flex: 1 }}>
-                        <InputNumber style={{ width: '100%' }} min={0.0001} step={0.0001} placeholder="1主货币=?此货币汇率" />
-                      </Form.Item>
-                      <Form.Item {...restField} name={[name, 'enabled']} valuePropName="checked" style={{ margin: 0 }}>
-                        <Switch />
-                      </Form.Item>
-                      <Button danger onClick={() => remove(name)} type="text" icon={<DeleteOutlined />} />
-                    </div>
-                  ))}
-                  <Form.Item>
-                    <Button type="dashed" onClick={() => add({ enabled: true, exchange_rate: 1.0 })} block icon={<PlusOutlined />}>
-                      添加辅助货币
-                    </Button>
-                    <div style={{ marginTop: 8, fontSize: 12, color: isLight ? 'rgba(0, 0, 0, 0.45)' : 'rgba(255, 255, 255, 0.45)' }}>
-                      设置后，在模型广场和后台模型列表中可切换显示不同货币价格作为参考。<br />
-                      所有的计价都是以站点默认货币为基准（默认货币的基准就是 1，不需要再填写添加）。<br />
-                      汇率说明：填写 1 主货币(如 CNY) 对应的此货币(如 USD) 数量，比如 1 CNY = 0.14 USD，则填写 0.14。
-                    </div>
-                  </Form.Item>
-                </>
-              )}
-            </Form.List>
-
-            <Divider>通用充值设置</Divider>
-            <Form.Item
-              label="快捷支付金额"
-              name="quick_amounts"
-              rules={[{ required: true, message: '请输入快捷支付金额' }]}
-              extra="多个金额请用英文逗号分隔，例如：20, 50, 100, 500, 1000, 5000"
-            >
-              <Input placeholder="20, 50, 100, 500, 1000, 5000" />
-            </Form.Item>
-
-            <Form.Item
-              label="最小充值金额限制"
-              name="min_recharge_amount"
-              rules={[{ required: true, message: '请输入最小充值金额' }]}
-              extra="设置用户单次最小的充值金额。设置为 0 代表无限制，默认值为 5"
-            >
-              <InputNumber style={{ width: '100%' }} min={0} step={1} />
-            </Form.Item>
-
-            <Form.Item
-              label="最大充值金额限制"
-              name="max_recharge_amount"
-              rules={[{ required: true, message: '请输入最大充值金额' }]}
-              extra="设置用户单次最大的充值金额。设置为 0 代表无限制，默认值为 10000"
-            >
-              <InputNumber style={{ width: '100%' }} min={0} step={1} />
-            </Form.Item>
-
-            <Form.Item style={{ marginTop: 16 }}>
-              <Button type="primary" htmlType="submit" loading={loadingCurrency}>
-                {t('common.save', '保存设置')}
-              </Button>
-            </Form.Item>
-          </Form>
-        </div>
+        <CurrencySettingsTab
+          currency={fullSettings?.currency}
+          supportedLanguages={fullSettings?.site?.supported_languages || []}
+          overview={fxOverview}
+          onOverviewChange={setFxOverview}
+          onSaved={onCurrencySaved}
+        />
       ),
     },
     {
@@ -1971,7 +1939,12 @@ const PaymentSettings: React.FC = () => {
   };
 
   return (
-    <Card bordered={false} title={getPageTitle()} style={{ borderRadius: 12 }}>
+    <Card
+      bordered={false}
+      title={getPageTitle()}
+      style={{ borderRadius: 12 }}
+      styles={editingId ? { body: { padding: '4px 20px 8px' } } : undefined}
+    >
       <style>{`
         .settings-compact-form .ant-form-item {
           margin-bottom: 12px;
@@ -1994,23 +1967,32 @@ const PaymentSettings: React.FC = () => {
         .settings-compact-form .ant-tabs-nav {
           margin-bottom: 14px;
         }
+        .channel-edit-compact .ant-form-item {
+          margin-bottom: 8px;
+        }
+        .channel-edit-compact .ant-divider-horizontal {
+          margin: 8px 0;
+        }
+        .channel-edit-compact .ant-alert {
+          margin-bottom: 8px;
+        }
       `}</style>
       {!editingId ? (
         <div className="settings-compact-form">
           <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} />
         </div>
       ) : (
-        <div style={{ animation: 'fadeIn 0.3s' }} className="settings-compact-form">
+        <div style={{ animation: 'fadeIn 0.3s' }} className="settings-compact-form channel-edit-compact">
           <div style={{ maxWidth: 760, width: '100%' }}>
             <Form form={formDisplay} layout="vertical" autoComplete="off">
-              <Divider plain style={{ margin: '8px 0 16px' }}>用户端展示</Divider>
+              <Divider plain>用户端展示</Divider>
 
               <div style={{
                 display: 'flex',
                 flexWrap: 'wrap',
                 alignItems: 'center',
-                gap: 24,
-                marginBottom: 16,
+                gap: 16,
+                marginBottom: 8,
               }}>
                 <Form.Item label="启用该渠道" name="enabled" valuePropName="checked" style={{ marginBottom: 0 }}>
                   <Switch />
@@ -2055,7 +2037,6 @@ const PaymentSettings: React.FC = () => {
                     }
                     name="subtitle"
                     extra={`留空使用默认：${editingMeta?.defaultSubtitle || '无'}`}
-                    style={{ marginBottom: 16 }}
                   >
                     <Input placeholder={editingMeta?.defaultSubtitle} allowClear maxLength={32} />
                   </Form.Item>
@@ -2070,16 +2051,82 @@ const PaymentSettings: React.FC = () => {
                     }
                     name="subtitle_en"
                     extra={`留空使用默认：${editingMeta?.defaultSubtitleEn || 'None'}`}
-                    style={{ marginBottom: 16 }}
                   >
                     <Input placeholder={editingMeta?.defaultSubtitleEn} allowClear maxLength={32} />
                   </Form.Item>
                 </Col>
               </Row>
 
-              <Form.Item label="Logo 图片 URL" name="logo_url" extra="留空则使用系统默认图标" style={{ marginBottom: 16 }}>
+              <Form.Item label="Logo 图片 URL" name="logo_url" extra="留空则使用系统默认图标">
                 <Input placeholder="https://..." allowClear />
               </Form.Item>
+
+              <Form.Item
+                label="收款币种"
+                name="currencies"
+                extra={editingId === 'stripe'
+                  ? '按顺序优先：包含站点默认货币时直接按默认货币收款，否则需在货币设置中开启实时汇率后按第一个币种换算。留空表示支持全部。'
+                  : `该渠道固定按 ${(editingFx?.capable || []).join(' / ') || '—'} 收款。与默认货币不同时，需在货币设置中开启实时汇率后才换算。`}
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  disabled={editingId !== 'stripe'}
+                  placeholder={editingId === 'stripe' ? '全部币种' : (editingFx?.capable || []).join(' / ')}
+                  options={(editingFx?.capable || []).map((code) => ({ value: code, label: code }))}
+                />
+              </Form.Item>
+
+              <Divider plain>充值金额限制</Divider>
+              <Form.Item
+                label="单独限制充值金额"
+                name="recharge_limit_enabled"
+                valuePropName="checked"
+                extra={editingId === 'allinpay'
+                  ? '关闭时使用「通用充值设置」的最小/最大金额。开启后，通联微信和支付宝都按下面的金额校验钱包充值。0 表示这一侧不限制。'
+                  : '关闭时使用「通用充值设置」的最小/最大金额。开启后，只按下面的金额校验该渠道的钱包充值。0 表示这一侧不限制。'}
+              >
+                <Switch />
+              </Form.Item>
+              <Row gutter={16} style={{ display: rechargeLimitOn ? undefined : 'none' }}>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label="最小充值金额"
+                    name="min_recharge_amount"
+                    rules={[{
+                      validator: async (_, value) => {
+                        if (!formDisplay.getFieldValue('recharge_limit_enabled')) return;
+                        if (value === undefined || value === null || value === '') {
+                          throw new Error('请输入最小充值金额');
+                        }
+                      },
+                    }]}
+                  >
+                    <InputNumber style={{ width: '100%' }} min={0} step={1} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item
+                    label="最大充值金额"
+                    name="max_recharge_amount"
+                    rules={[{
+                      validator: async (_, value) => {
+                        if (!formDisplay.getFieldValue('recharge_limit_enabled')) return;
+                        if (value === undefined || value === null || value === '') {
+                          throw new Error('请输入最大充值金额');
+                        }
+                        const min = Number(formDisplay.getFieldValue('min_recharge_amount')) || 0;
+                        const max = Number(value) || 0;
+                        if (min > 0 && max > 0 && min > max) {
+                          throw new Error('最小充值金额不能大于最大充值金额');
+                        }
+                      },
+                    }]}
+                  >
+                    <InputNumber style={{ width: '100%' }} min={0} step={1} />
+                  </Form.Item>
+                </Col>
+              </Row>
             </Form>
 
             <Form form={formGateway} layout="vertical" autoComplete="off">
@@ -2087,7 +2134,7 @@ const PaymentSettings: React.FC = () => {
               {renderGatewayFields()}
             </Form>
 
-            <Space style={{ marginTop: 16, marginBottom: 16 }}>
+            <Space style={{ marginTop: 8, marginBottom: 8 }}>
               <Button type="primary" loading={savingDrawer} onClick={onSaveDrawer}>
                 {t('common.save', '保存配置')}
               </Button>

@@ -7,7 +7,7 @@
 
 import React, { useState } from 'react';
 import { Button, Card, Input, Space, Tabs, Typography, Grid } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, CheckSquareOutlined } from '@ant-design/icons';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import useAuthStore from '../../store/auth';
@@ -27,6 +27,7 @@ const UserLevelCenter: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [userKeyword, setUserKeyword] = useState('');
   const [adminKeyword, setAdminKeyword] = useState('');
+  const [isBatchEditMode, setIsBatchEditMode] = useState(false);
   const { settings } = useSettingsStore();
   const adminPath = settings?.site?.admin_path || 'admin1688';
   const user = useAuthStore((s) => s.user);
@@ -52,20 +53,34 @@ const UserLevelCenter: React.FC = () => {
     items.push({
       key: 'users',
       label: t('user_levels.users_tab', '普通用户等级配置'),
-      children: activeKey === 'users' ? <UserLevels embedded keyword={userKeyword} /> : null,
+      children: activeKey === 'users' ? (
+        <UserLevels
+          embedded
+          keyword={userKeyword}
+          isBatchEditMode={isBatchEditMode}
+          onBatchEditModeChange={setIsBatchEditMode}
+        />
+      ) : null,
     });
   }
   if (canAdmins) {
     items.push({
       key: 'admins',
       label: t('user_levels.admins_tab', '管理员等级配置'),
-      children: activeKey === 'admins' ? <AdminGroups embedded keyword={adminKeyword} /> : null,
+      children: activeKey === 'admins' ? (
+        <AdminGroups
+          embedded
+          keyword={adminKeyword}
+          isBatchEditMode={isBatchEditMode}
+          onBatchEditModeChange={setIsBatchEditMode}
+        />
+      ) : null,
     });
   }
 
   return (
     <Card bordered={false}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <Title level={screens.xs ? 4 : 2} style={{ margin: 0 }}>
           {t('user_levels.title')}
         </Title>
@@ -80,6 +95,14 @@ const UserLevelCenter: React.FC = () => {
               style={{ width: screens.xs ? '100%' : 220 }}
             />
             <Button
+              icon={<CheckSquareOutlined />}
+              type={isBatchEditMode ? 'primary' : 'default'}
+              danger={isBatchEditMode}
+              onClick={() => setIsBatchEditMode(!isBatchEditMode)}
+            >
+              {isBatchEditMode ? '退出选择' : '选择编辑'}
+            </Button>
+            <Button
               type="primary"
               icon={<PlusOutlined />}
               onClick={() => navigate(isAdminTab ? `/${adminPath}/admin-groups/new` : `/${adminPath}/user-levels/new`)}
@@ -92,6 +115,7 @@ const UserLevelCenter: React.FC = () => {
       <Tabs
         activeKey={items.some((item) => item.key === activeKey) ? activeKey : items[0]?.key}
         onChange={(key) => {
+          setIsBatchEditMode(false);
           if (key === 'admins') setSearchParams({ tab: 'admins' });
           else setSearchParams({});
         }}

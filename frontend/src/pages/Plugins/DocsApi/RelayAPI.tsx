@@ -16,7 +16,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  Popover, List, Badge, message, Spin, Empty, Dropdown, Button, Space, Tooltip, Drawer,
+  Popover, List, Badge, message, Spin, Empty, Dropdown, Button, Tooltip, Drawer,
   Layout, Grid
 } from 'antd';
 const { Header, Sider, Content } = Layout;
@@ -65,7 +65,41 @@ interface DocTreeNode {
   is_active: boolean;
   slug?: string;
   category_id?: number | null;
+  default_expanded?: boolean;
   children: DocTreeNode[];
+}
+
+function treeHasExpandFlag(nodes: DocTreeNode[]): boolean {
+  for (const node of nodes) {
+    if (typeof node.default_expanded === 'boolean') return true;
+    if (node.children?.length && treeHasExpandFlag(node.children)) return true;
+  }
+  return false;
+}
+
+function isQuickstartDir(node: DocTreeNode): boolean {
+  const slug = (node.slug || '').toLowerCase();
+  if (slug === 'quickstart') return true;
+  const title = node.title.toLowerCase();
+  return title.includes('快速开始') || title.includes('quick start') || title.includes('quickstart');
+}
+
+/** 用户端侧栏默认展开的目录。有配置时按配置；旧接口没有该字段时只展开快速开始。 */
+function sidebarDefaultOpenKeys(nodes: DocTreeNode[]): string[] {
+  const keys: string[] = [];
+  const useFlag = treeHasExpandFlag(nodes);
+  const walk = (list: DocTreeNode[], ancestors: string[]) => {
+    for (const node of list) {
+      if (!node.is_dir) continue;
+      const key = `dir-${node.id}`;
+      const chain = [...ancestors, key];
+      const open = useFlag ? !!node.default_expanded : isQuickstartDir(node);
+      if (open) keys.push(...chain);
+      if (node.children?.length) walk(node.children, chain);
+    }
+  };
+  walk(nodes, []);
+  return Array.from(new Set(keys));
 }
 
 // ----------------------------------------------------
@@ -261,7 +295,7 @@ const DOCS_API_PREFIX = '/plugins/docs-api';
 const SITE_PORTAL_PRO_PREFIX = '/plugins/site-portal-pro';
 
 export interface RelayAPIProps {
-  /** 未传时固定走 docs_api；/home-pro/docs 由路由显式传入 site_portal_pro */
+  /** 未传时固定走 docs_api 的 /docs；门户文档走 /home-pro/devdocs */
   apiPrefix?: string;
   baseRoute?: string;
 }
@@ -513,8 +547,7 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
         if (res && res.tree) {
           const cleanedTree = cleanTreeTitles(res.tree);
           setTreeData(cleanedTree);
-          // 默认展开一级目录
-          setExpandedMenuKeys(cleanedTree.filter((n: any) => n.is_dir).map((n: any) => `dir-${n.id}`));
+          setExpandedMenuKeys(sidebarDefaultOpenKeys(cleanedTree));
         }
 
         if (isSitePortalPro) {
@@ -1500,7 +1533,7 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
                   style={{
                     color: isLight ? '#1f2937' : '#fff',
                     margin: 0,
-                    fontSize: siteName.length > 12 ? 14 : siteName.length > 8 ? 16 : 18,
+                    fontSize: siteName.length > 14 ? 12 : siteName.length > 10 ? 13 : siteName.length > 6 ? 14 : 16,
                     fontWeight: 700,
                     lineHeight: 1.2,
                     whiteSpace: 'nowrap',
@@ -1643,7 +1676,9 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
                     style={{
                       color: themeMode === 'light' ? '#1f2937' : '#fff',
                       margin: 0,
-                      fontSize: 14,
+                      fontSize: screens.xs
+                        ? (siteName.length > 14 ? 11 : siteName.length > 10 ? 12 : 13)
+                        : (siteName.length > 14 ? 12 : siteName.length > 10 ? 13 : siteName.length > 6 ? 14 : 16),
                       fontWeight: 600,
                       whiteSpace: 'nowrap',
                       lineHeight: 1.2,
@@ -1681,7 +1716,104 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
               )}
             </div>
 
-            <div className="flex items-center flex-shrink-0">
+            <div
+              className="header-nav-actions flex items-center flex-shrink-0"
+              style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: screens.xs ? 2 : 6, flexShrink: 0, lineHeight: 1 }}
+              ref={(container) => {
+                if (!container) return;
+                requestAnimationFrame(() => {
+                  if (!container.isConnected) return;
+                  const pill = container.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                  if (!pill) return;
+                  const pt = (window as any).__tkeHeaderPointer as { x: number; y: number } | undefined;
+                  const hovered = (
+                    (pt ? document.elementFromPoint(pt.x, pt.y)?.closest('.ant-btn') : null) ||
+                    container.querySelector('.ant-btn:hover')
+                  ) as HTMLElement | null;
+                  if (hovered && container.contains(hovered)) {
+                    const cRect = container.getBoundingClientRect();
+                    const bRect = hovered.getBoundingClientRect();
+                    if (bRect.width > 0 && bRect.height > 0) {
+                      const x = bRect.left - cRect.left;
+                      const y = bRect.top - cRect.top;
+                      const isCircle = hovered.classList.contains('ant-btn-circle');
+                      const radius = isCircle ? `${bRect.height / 2}px` : '10px';
+                      const baseTransform = `translate3d(${x}px, ${y}px, 0)`;
+                      pill.dataset.lastTransform = baseTransform;
+                      if (pill.dataset.visible !== '1') {
+                        pill.style.transition = 'none';
+                      }
+                      pill.style.width = `${bRect.width}px`;
+                      pill.style.height = `${bRect.height}px`;
+                      pill.style.borderRadius = radius;
+                      pill.style.transform = `${baseTransform} scale(1)`;
+                      pill.style.opacity = '1';
+                      pill.dataset.visible = '1';
+                    }
+                  }
+                });
+              }}
+              onMouseDown={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+              }}
+              onMouseMove={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+              }}
+              onMouseOver={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+                const container = e.currentTarget;
+                const pill = container.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                if (!pill) return;
+                const btn = (e.target as HTMLElement).closest('.ant-btn') as HTMLElement | null;
+                if (!btn || !container.contains(btn)) {
+                  if ((e.target as HTMLElement).closest('.header-avatar-wrap')) {
+                    pill.dataset.visible = '0';
+                    pill.style.opacity = '0';
+                    if (pill.dataset.lastTransform) {
+                      pill.style.transform = `${pill.dataset.lastTransform} scale(0.92)`;
+                    }
+                  }
+                  return;
+                }
+                const cRect = container.getBoundingClientRect();
+                const bRect = btn.getBoundingClientRect();
+                const x = bRect.left - cRect.left;
+                const y = bRect.top - cRect.top;
+                const isCircle = btn.classList.contains('ant-btn-circle');
+                const radius = isCircle ? `${bRect.height / 2}px` : '10px';
+                const baseTransform = `translate3d(${x}px, ${y}px, 0)`;
+                pill.dataset.lastTransform = baseTransform;
+                if (pill.dataset.visible !== '1') {
+                  pill.style.transition = 'none';
+                  pill.style.width = `${bRect.width}px`;
+                  pill.style.height = `${bRect.height}px`;
+                  pill.style.borderRadius = radius;
+                  pill.style.transform = `${baseTransform} scale(0.92)`;
+                  void pill.offsetWidth;
+                  pill.style.transition = 'transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease';
+                  pill.style.transform = `${baseTransform} scale(1)`;
+                  pill.style.opacity = '1';
+                  pill.dataset.visible = '1';
+                } else {
+                  pill.style.transition = 'transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s cubic-bezier(0.22, 1, 0.36, 1), height 0.32s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease';
+                  pill.style.width = `${bRect.width}px`;
+                  pill.style.height = `${bRect.height}px`;
+                  pill.style.borderRadius = radius;
+                  pill.style.transform = `${baseTransform} scale(1)`;
+                  pill.style.opacity = '1';
+                }
+              }}
+              onMouseLeave={(e) => {
+                (window as any).__tkeHeaderPointer = { x: e.clientX, y: e.clientY };
+                const pill = e.currentTarget.querySelector('.header-nav-hover-pill') as HTMLElement | null;
+                if (!pill) return;
+                pill.dataset.visible = '0';
+                pill.style.opacity = '0';
+                if (pill.dataset.lastTransform) {
+                  pill.style.transform = `${pill.dataset.lastTransform} scale(0.92)`;
+                }
+              }}
+            >
               <style>{`
                 .docs-api-system .header-badge.ant-badge {
                   display: flex !important;
@@ -1689,57 +1821,67 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
                   justify-content: center;
                   height: 40px;
                 }
+                .docs-api-system .header-nav-hover-pill {
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  opacity: 0;
+                  pointer-events: none;
+                  z-index: 0;
+                  will-change: transform, width, height, border-radius, opacity;
+                  background: ${
+                    themeMode === 'light'
+                      ? 'rgba(0, 0, 0, 0.075)'
+                      : 'rgba(255, 255, 255, 0.085)'
+                  };
+                  backdrop-filter: blur(10px) saturate(150%);
+                  -webkit-backdrop-filter: blur(10px) saturate(150%);
+                }
+                .docs-api-system .header-nav-actions .ant-btn {
+                  position: relative;
+                  z-index: 1;
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                  line-height: 1 !important;
+                  background: transparent !important;
+                  transition: color 0.22s ease, transform 0.22s ease !important;
+                }
+                .docs-api-system .header-nav-actions .ant-btn:hover,
+                .docs-api-system .header-nav-actions .ant-btn:focus,
+                .docs-api-system .header-nav-actions .ant-btn:active {
+                  background: transparent !important;
+                }
+                .docs-api-system .header-nav-actions .ant-btn .ant-btn-icon {
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  justify-content: center !important;
+                  line-height: 1 !important;
+                  margin-inline-end: 0 !important;
+                }
+                .docs-api-system .header-nav-actions .ant-btn > span:not(.ant-btn-icon) {
+                  display: inline-flex !important;
+                  align-items: center !important;
+                  line-height: 1 !important;
+                  margin-inline-start: 0 !important;
+                }
+                .docs-api-system .header-nav-actions .ant-btn svg {
+                  display: block;
+                  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+                }
+                .docs-api-system .header-nav-actions .ant-btn:hover svg {
+                  transform: scale(1.06);
+                }
+                .docs-api-system .header-nav-actions .ant-btn:active svg {
+                  transform: scale(0.95);
+                }
               `}</style>
-              <Space size={screens.xs ? 2 : 6} align="center" style={{ flexShrink: 0 }}>
+              <div className="header-nav-hover-pill" />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 {isPluginVisibleForUser('model_marketplace') && (
-                  <Tooltip title={_t('menu.model_marketplace', '模型广场')} placement="bottom">
-                    <Button
-                      type="text"
-                      href="/home/models"
-                      icon={
-                        <svg
-                          width="20"
-                          height="20"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
-                          style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
-                        >
-                          <path d="M12 2L19.5 6.2L12 10.5L4.5 6.2Z" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
-                          <path d="M3.5 7.8L11 12V21L3.5 16.8Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
-                          <path d="M13 12L20.5 7.8V16.8L13 21Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
-                        </svg>
-                      }
-                      style={{
-                        color: themeMode === 'light' ? '#1f2937' : '#fff',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        height: screens.xs ? 34 : 40,
-                        width: (screens.xs || !screens.md) ? (screens.xs ? 34 : 40) : undefined,
-                        padding: (screens.xs || !screens.md) ? 0 : '0 12px',
-                      }}
-                      onClick={(e) => {
-                        if (!e.metaKey && !e.ctrlKey) {
-                          e.preventDefault();
-                          navigate('/home/models');
-                        }
-                      }}
-                    >
-                      {!screens.xs && screens.md && (
-                        <span style={{ display: 'inline-block', transform: 'translateY(1.5px)' }}>{_t('menu.model_marketplace', 'Models')}</span>
-                      )}
-                    </Button>
-                  </Tooltip>
-                )}
-
-                <Tooltip title={_t('menu.relay_api', 'API教程')} placement="bottom">
                   <Button
                     type="text"
-                    href="/docs"
+                    href="/home/models"
                     icon={
                       <svg
                         width="20"
@@ -1747,136 +1889,170 @@ const RelayAPI: React.FC<RelayAPIProps> = ({ apiPrefix, baseRoute }) => {
                         viewBox="0 0 24 24"
                         fill="none"
                         xmlns="http://www.w3.org/2000/svg"
-                        style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
                       >
-                        <rect x="8" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
-                        <rect x="13.4" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
-                        <path d="M4.5 7.5H19.5V10H4.5V7.5Z" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
-                        <path d="M5 10H12V21C7.8 21 5 18.6 5 15.2V10Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
-                        <path d="M12 10H19V15.2C19 18.6 16.2 21 12 21V10Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
-                        <path d="M8.5 12.2V16.8" stroke={themeMode === 'light' ? '#757575' : '#2e2e2e'} strokeWidth="1.4" strokeLinecap="round" />
-                        <path d="M15.5 12.2V16.8" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="1.4" strokeLinecap="round" />
+                        <path d="M12 2.5L19.5 6.5L12 10.5L4.5 6.5Z" fill={themeMode === 'light' ? '#e0e0e0' : '#424242'} />
+                        <path d="M3.5 8L11 12V20.5L3.5 16.5Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
+                        <path d="M13 12L20.5 8V16.5L13 20.5Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
                       </svg>
                     }
                     style={{
                       color: themeMode === 'light' ? '#1f2937' : '#fff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
+                      gap: 4,
                       fontSize: 14,
                       fontWeight: 500,
                       height: screens.xs ? 34 : 40,
                       width: (screens.xs || !screens.md) ? (screens.xs ? 34 : 40) : undefined,
-                      padding: (screens.xs || !screens.md) ? 0 : '0 12px',
+                      padding: (screens.xs || !screens.md) ? 0 : '0 10px 0 7px',
                     }}
                     onClick={(e) => {
                       if (!e.metaKey && !e.ctrlKey) {
                         e.preventDefault();
-                        navigate('/docs');
+                        navigate('/home/models');
                       }
                     }}
                   >
                     {!screens.xs && screens.md && (
-                      <span style={{ display: 'inline-block', transform: 'translateY(1.5px)' }}>{_t('menu.relay_api', 'API教程')}</span>
+                      <span>{_t('menu.model_marketplace', 'Models')}</span>
                     )}
                   </Button>
-                </Tooltip>
-
-                {enableThemeToggle && (
-                  <Tooltip
-                    title={themeMode === 'light' ? _t('header.switch_dark_mode', '切换暗色模式') : _t('header.switch_light_mode', '切换亮色模式')}
-                    placement="bottom"
-                    color={themeMode === 'light' ? '#fff' : '#2b2b2b'}
-                    styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}
-                  >
-                    <Button
-                      type="text"
-                      shape="circle"
-                      onClick={toggleTheme}
-                      icon={
-                        themeMode === 'light'
-                          ? (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
-                              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79Z" fill="#757575" />
-                            </svg>
-                          )
-                          : (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
-                              <circle cx="12" cy="12" r="6" fill="#555555" />
-                              <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41" stroke="#9e9e9e" strokeWidth="2.2" strokeLinecap="round" />
-                            </svg>
-                          )
-                      }
-                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
-                    />
-                  </Tooltip>
                 )}
 
-                {enableMultilingual && (
-                  <Dropdown menu={{ items: langItems }} placement="bottomRight">
+                <Button
+                  type="text"
+                  href="/docs"
+                  icon={
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <rect x="8" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                      <rect x="13.4" y="2.5" width="2.6" height="5.8" rx="1.2" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                      <path d="M4.5 7.5H19.5V10H4.5V7.5Z" fill={themeMode === 'light' ? '#e0e0e0' : '#2e2e2e'} />
+                      <path d="M5 10H12V21C7.8 21 5 18.6 5 15.2V10Z" fill={themeMode === 'light' ? '#b0b0b0' : '#555555'} />
+                      <path d="M12 10H19V15.2C19 18.6 16.2 21 12 21V10Z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} />
+                      <path d="M8.5 12.2V16.8" stroke={themeMode === 'light' ? '#757575' : '#2e2e2e'} strokeWidth="1.4" strokeLinecap="round" />
+                      <path d="M15.5 12.2V16.8" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="1.4" strokeLinecap="round" />
+                    </svg>
+                  }
+                  style={{
+                    color: themeMode === 'light' ? '#1f2937' : '#fff',
+                    gap: 4,
+                    fontSize: 14,
+                    fontWeight: 500,
+                    height: screens.xs ? 34 : 40,
+                    width: (screens.xs || !screens.md) ? (screens.xs ? 34 : 40) : undefined,
+                    padding: (screens.xs || !screens.md) ? 0 : '0 10px 0 7px',
+                  }}
+                  onClick={(e) => {
+                    if (!e.metaKey && !e.ctrlKey) {
+                      e.preventDefault();
+                      navigate('/docs');
+                    }
+                  }}
+                >
+                  {!screens.xs && screens.md && (
+                    <span>{_t('menu.relay_api', 'API教程')}</span>
+                  )}
+                </Button>
+              </div>
+
+              {enableThemeToggle && (
+                <Tooltip
+                  title={themeMode === 'light' ? _t('header.switch_dark_mode', '切换暗色模式') : _t('header.switch_light_mode', '切换亮色模式')}
+                  placement="bottom"
+                  color={themeMode === 'light' ? '#fff' : '#2b2b2b'}
+                  styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}
+                >
+                  <Button
+                    type="text"
+                    shape="circle"
+                    onClick={toggleTheme}
+                    icon={
+                      themeMode === 'light'
+                        ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79Z" fill="#757575" />
+                          </svg>
+                        )
+                        : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="6" fill="#555555" />
+                            <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41" stroke="#9e9e9e" strokeWidth="2.2" strokeLinecap="round" />
+                          </svg>
+                        )
+                    }
+                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
+                  />
+                </Tooltip>
+              )}
+
+              {enableMultilingual && (
+                <Dropdown menu={{ items: langItems }} placement="bottomRight">
+                  <Button
+                    type="text"
+                    shape="circle"
+                    icon={
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="8.5" stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="2" />
+                        <path d="M3.5 12h17" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" strokeLinecap="round" />
+                        <ellipse cx="12" cy="12" rx="3.5" ry="8.5" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" />
+                      </svg>
+                    }
+                    style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
+                  />
+                </Dropdown>
+              )}
+
+              <Popover
+                content={announcementContent}
+                trigger="click"
+                placement="bottomRight"
+                overlayClassName="custom-premium-popover"
+                open={announcementsDrawerVisible}
+                onOpenChange={setAnnouncementsDrawerVisible}
+                styles={{ container: { padding: 0, background: 'transparent', boxShadow: 'none' } }}
+                motion={{ motionName: '' }}
+                arrow={false}
+              >
+                <Tooltip
+                  title={_t('header.notifications', '通知')}
+                  placement="bottom"
+                  color={themeMode === 'light' ? '#fff' : '#2b2b2b'}
+                  styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}
+                >
+                  <Badge count={unreadCount} overflowCount={99} offset={[-4, 4]} className="header-badge">
                     <Button
                       type="text"
                       shape="circle"
                       icon={
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}>
-                          <circle cx="12" cy="12" r="8.5" stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="2" />
-                          <path d="M3.5 12h17" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" strokeLinecap="round" />
-                          <ellipse cx="12" cy="12" rx="3.5" ry="8.5" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2" />
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          <path d="M19 16v-6a7 7 0 00-14 0v6l-2 2h18l-2-2z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="1.5" strokeLinejoin="round" />
+                          <path d="M10 19a2 2 0 004 0" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2.5" strokeLinecap="round" />
                         </svg>
                       }
-                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
+                      style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40, padding: 0 }}
+                      onClick={() => {
+                        setUnreadCount(0);
+                      }}
                     />
-                  </Dropdown>
-                )}
+                  </Badge>
+                </Tooltip>
+              </Popover>
 
-                <Popover
-                  content={announcementContent}
-                  trigger="click"
-                  placement="bottomRight"
-                  overlayClassName="custom-premium-popover"
-                  open={announcementsDrawerVisible}
-                  onOpenChange={setAnnouncementsDrawerVisible}
-                  styles={{ container: { padding: 0, background: 'transparent', boxShadow: 'none' } }}
-                  motion={{ motionName: '' }}
-                  arrow={false}
-                >
-                  <Tooltip
-                    title={_t('header.notifications', '通知')}
-                    placement="bottom"
-                    color={themeMode === 'light' ? '#fff' : '#2b2b2b'}
-                    styles={{ container: { color: themeMode === 'light' ? '#1f2937' : '#fff' } }}
-                  >
-                    <Badge count={unreadCount} overflowCount={99} offset={[-4, 4]} className="header-badge">
-                      <Button
-                        type="text"
-                        shape="circle"
-                        icon={
-                          <svg
-                            width="20"
-                            height="20"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            style={{ verticalAlign: 'middle', transform: 'translateY(1.5px)' }}
-                          >
-                            <path d="M19 16.5v-6.5a7 7 0 00-14 0v6.5l-2 2h18l-2-2z" fill={themeMode === 'light' ? '#757575' : '#9e9e9e'} stroke={themeMode === 'light' ? '#757575' : '#9e9e9e'} strokeWidth="1.5" strokeLinejoin="round" />
-                            <path d="M10 19.5a2 2 0 004 0" stroke={themeMode === 'light' ? '#b0b0b0' : '#555555'} strokeWidth="2.5" strokeLinecap="round" />
-                          </svg>
-                        }
-                        style={{ color: themeMode === 'light' ? '#1f2937' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', width: screens.xs ? 34 : 40, height: screens.xs ? 34 : 40 }}
-                        onClick={() => {
-                          setUnreadCount(0);
-                        }}
-                      />
-                    </Badge>
-                  </Tooltip>
-                </Popover>
-
-                {user && (
+              {user && (
+                <div className="header-avatar-wrap" style={{ display: 'flex', alignItems: 'center' }}>
                   <UserAvatarMenu isUserEnd={true} agreement={agreement} />
-                )}
-              </Space>
+                </div>
+              )}
             </div>
           </Header>
 

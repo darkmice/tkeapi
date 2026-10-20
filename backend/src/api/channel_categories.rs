@@ -118,7 +118,7 @@ pub async fn delete_category(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let is_sys: i32 = sqlx::query_scalar(
+    let is_sys: i64 = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM channel_categories WHERE id = ?"),
@@ -143,6 +143,36 @@ pub async fn delete_category(
     .execute(&state.db.pool)
     .await?;
 
+    if let Ok(cfg_rows) = sqlx::query_as::<_, (i64, Option<i64>, String)>(
+        &state
+            .db
+            .format_query("SELECT id, category_id, category_ids FROM channel_configs WHERE category_id = ? OR category_ids <> '[]'"),
+    )
+    .bind(id)
+    .fetch_all(&state.db.pool)
+    .await
+    {
+        for (cfg_id, primary_id, cids_str) in cfg_rows {
+            let mut ids: Vec<i64> = serde_json::from_str(&cids_str).unwrap_or_default();
+            let before = ids.len();
+            ids.retain(|&cid| cid != id);
+            if primary_id == Some(id) || ids.len() != before {
+                let next_primary = ids.first().copied();
+                let next_json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+                let _ = sqlx::query(
+                    &state
+                        .db
+                        .format_query("UPDATE channel_configs SET category_id = ?, category_ids = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
+                )
+                .bind(next_primary)
+                .bind(next_json)
+                .bind(cfg_id)
+                .execute(&state.db.pool)
+                .await;
+            }
+        }
+    }
+
     sqlx::query(
         &state
             .db
@@ -151,6 +181,9 @@ pub async fn delete_category(
     .bind(id)
     .execute(&state.db.pool)
     .await?;
+
+    crate::relay::router::invalidate_channel_cache();
+    crate::relay::router::invalidate_channel_configs_cache();
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

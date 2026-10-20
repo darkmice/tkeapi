@@ -234,9 +234,10 @@ pub fn saved_io_is_legacy_multimodal_only(saved: &Value) -> bool {
 /// 覆写列表中的 seedance2.0；若不存在则追加
 pub fn seed_seedance2_scheme(schemes: &mut Vec<Value>) {
     let next = seedance2_scheme();
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(SEEDANCE2_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(SEEDANCE2_SCHEME_ID))
+    {
         schemes[pos] = next;
     } else {
         schemes.push(next);
@@ -322,4 +323,3 @@ fn ensure_edit_extend_feature_toggles(saved: &mut Value) {
         inputs.push(feature_extend_port());
     }
 }
-

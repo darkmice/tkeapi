@@ -10,7 +10,7 @@
 //! 兼容 OpenAI 标准格式和各厂商原生格式（可灵、火山方舟、阿里百炼、Gemini 等）。
 //! 供 image.rs、video.rs、task.rs 共同调用。
 
-use crate::services::object_store::{ObjectStore, StoreKind};
+use crate::services::object_store::{ObjectStore, SiteFolder, StoreKind};
 use crate::time_system::DbTs;
 use crate::AppState;
 use sha2::Digest;
@@ -41,7 +41,9 @@ pub async fn load_system_object_store(state: &AppState) -> Option<ObjectStore> {
     load_object_store(state, None).await
 }
 
-pub(crate) async fn load_storage_settings(state: &AppState) -> Option<crate::models::StorageSettings> {
+pub(crate) async fn load_storage_settings(
+    state: &AppState,
+) -> Option<crate::models::StorageSettings> {
     let val: String = sqlx::query_scalar(
         &state
             .db
@@ -63,19 +65,26 @@ pub(crate) fn response_format_from_request(request_content: &str) -> Option<Stri
 }
 
 /// 渠道已开启转存时上传媒体并替换 URL；未开启则原样返回。
+/// 若用户请求显式指定 response_format（如 "url" 或 "b64_json"），优先遵循用户意图。
 pub async fn persist_for_channel(
     state: &AppState,
     channel: &crate::models::Channel,
     response_str: &str,
     category: &str,
+    user_response_format: Option<&str>,
 ) -> String {
     let Some((channel_id, days, provider)) = channel.storage_persist() else {
         return response_str.to_string();
     };
-    let kind = if category.contains("视频") {
+    let kind = if category.contains("视频") || category == "封装" {
         "video"
     } else {
         "image"
+    };
+    let persist_b64 = match user_response_format.map(str::trim) {
+        Some(rf) if rf.eq_ignore_ascii_case("url") => true,
+        Some(rf) if rf.eq_ignore_ascii_case("b64_json") => false,
+        _ => channel.tos_storage_b64(),
     };
     persist_response_resources(
         state,
@@ -84,7 +93,7 @@ pub async fn persist_for_channel(
         days,
         Some(kind),
         provider.as_deref(),
-        channel.tos_storage_b64(),
+        persist_b64,
     )
     .await
 }
@@ -93,7 +102,7 @@ pub async fn persist_for_channel(
 pub async fn persist_url_for_storage(
     state: &AppState,
     url: &str,
-    (channel_id, days, provider): (i64, i32, Option<String>),
+    (channel_id, days, provider): (i64, i64, Option<String>),
     media_kind: &str,
 ) -> Option<String> {
     let mini = serde_json::json!({ "data": [{ "url": url }] }).to_string();
@@ -124,7 +133,7 @@ pub(crate) async fn persist_response_resources(
     state: &AppState,
     response_str: &str,
     channel_id: i64,
-    storage_days: i32,
+    storage_days: i64,
     fallback_type: Option<&str>,
     storage_provider: Option<&str>,
     persist_b64: bool,
@@ -290,7 +299,7 @@ async fn persist_openai_item(
     store: &ObjectStore,
     item: &mut serde_json::Value,
     channel_id: i64,
-    storage_days: i32,
+    storage_days: i64,
     fallback_type: Option<&str>,
     persist_b64: bool,
 ) -> bool {
@@ -375,14 +384,16 @@ async fn upload_and_record(
     file_data: &[u8],
     ext: &str,
     channel_id: i64,
-    storage_days: i32,
+    storage_days: i64,
     source_url: Option<&str>,
 ) -> Option<String> {
     let hash = &format!("{:x}", sha2::Sha256::digest(file_data))[..8];
     let timestamp = chrono::Utc::now().timestamp();
     let filename = format!("{}_{}.{}", timestamp, hash, ext);
-    let relative_path = format!("_channel_cache/{}/{}", channel_id, filename);
-    let object_key = store.full_key(&relative_path);
+    let object_key = store.site_key(
+        SiteFolder::ChannelCache,
+        &format!("{}/{}", channel_id, filename),
+    );
     let content_type = ext_to_mime(ext);
 
     let tos_url = match store
@@ -398,7 +409,7 @@ async fn upload_and_record(
 
     if storage_days > 0 {
         let expire_at =
-            DbTs::from_utc(chrono::Utc::now() + chrono::Duration::days(storage_days as i64));
+            DbTs::from_utc(chrono::Utc::now() + chrono::Duration::days(storage_days));
         let _ = sqlx::query(
             "INSERT INTO tos_temp_files (object_key, channel_id, source, expire_at, storage_provider) VALUES ($1, $2, 'channel', $3, $4)"
         )
@@ -473,11 +484,7 @@ pub async fn cleanup_expired_files(state: &AppState) {
                 StoreKind::Cos => cos_store.as_ref(),
             };
             let Some(store) = store else {
-                tracing::warn!(
-                    "[TosCleanup] {} 未配置，跳过 key={}",
-                    provider,
-                    object_key
-                );
+                tracing::warn!("[TosCleanup] {} 未配置，跳过 key={}", provider, object_key);
                 total_failed += 1;
                 continue;
             };
@@ -626,4 +633,3 @@ fn guess_ext(url: &str, fallback_type: &str) -> String {
         _ => "png".to_string(),
     }
 }
-

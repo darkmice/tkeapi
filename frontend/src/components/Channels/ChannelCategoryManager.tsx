@@ -16,15 +16,19 @@ interface ChannelCategoryManagerProps {
   visible: boolean;
   onClose: () => void;
   onUpdate: () => void;
+  mode?: 'category' | 'provider';
 }
 
 const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
   visible,
   onClose,
   onUpdate,
+  mode = 'category',
 }) => {
   const { t, i18n } = useTranslation();
   const isEn = i18n.language === 'en';
+  const isProvider = mode === 'provider';
+  const apiBase = isProvider ? '/channel-configs/providers' : '/channel-categories';
   const [items, setItems] = useState<ChannelCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
@@ -34,8 +38,8 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
   const fetchItems = async () => {
     setLoading(true);
     try {
-      const resp = await (request.get('/channel-categories') as any);
-      setItems(Array.isArray(resp) ? resp : []);
+      const resp = await (request.get(apiBase) as any);
+      setItems(Array.isArray(resp) ? resp : (resp?.data || []));
     } catch (e) {
       console.error(e);
     } finally {
@@ -47,7 +51,7 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
     if (visible) {
       fetchItems();
     }
-  }, [visible]);
+  }, [visible, apiBase]);
 
   const handleAdd = () => {
     setEditingItem(null);
@@ -66,7 +70,7 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
 
   const handleDelete = async (id: number) => {
     try {
-      await request.delete(`/channel-categories/${id}`);
+      await request.delete(`${apiBase}/${id}`);
       message.success(t('common.success'));
       await fetchItems();
       onUpdate();
@@ -82,9 +86,9 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
         is_active: values.is_active ? 1 : 0,
       };
       if (editingItem) {
-        await request.put(`/channel-categories/${editingItem.id}`, payload);
+        await request.put(`${apiBase}/${editingItem.id}`, payload);
       } else {
-        await request.post('/channel-categories', payload);
+        await request.post(apiBase, payload);
       }
       message.success(t('common.success'));
       setIsEditModalVisible(false);
@@ -134,9 +138,9 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
           <Popconfirm
             title={t('common.confirm_delete')}
             onConfirm={() => handleDelete(record.id)}
-            disabled={record.is_system === 1}
+            disabled={!isProvider && record.is_system === 1}
           >
-            <Button icon={<DeleteOutlined />} danger size="small" disabled={record.is_system === 1} />
+            <Button icon={<DeleteOutlined />} danger size="small" disabled={!isProvider && record.is_system === 1} />
           </Popconfirm>
         </Space>
       ),
@@ -147,7 +151,7 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
   return (
     <>
       <Modal
-        title="管理渠道分类"
+        title={isProvider ? '管理服务商' : '管理渠道分类'}
         open={visible}
         onCancel={onClose}
         footer={[
@@ -178,10 +182,10 @@ const ChannelCategoryManager: React.FC<ChannelCategoryManagerProps> = ({
       >
         <Form form={form} layout="vertical" onFinish={handleSave} initialValues={{ sort_order: 0, is_active: true }}>
           <Form.Item name="name" label={t('common.name')} rules={[{ required: true }]}>
-            <Input placeholder="例如：图片" disabled={editingItem?.is_system === 1} />
+            <Input placeholder={isProvider ? '例如：openai / custom' : '例如：图片'} disabled={!isProvider && editingItem?.is_system === 1} />
           </Form.Item>
           <Form.Item name="name_en" label={t('common.name_en', '英文名称')}>
-            <Input placeholder="例如：Image" />
+            <Input placeholder={isProvider ? '例如：OpenAI' : '例如：Image'} />
           </Form.Item>
           <Form.Item name="sort_order" label={t('models.sort_order', '排序')}>
             <InputNumber style={{ width: '100%' }} />

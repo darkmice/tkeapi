@@ -7,8 +7,10 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Card, Form, Input, Button, InputNumber, message, Typography, Space, Switch, Radio, Tabs, Select, Tag, Alert, Table, Spin, Upload, Modal, DatePicker, TimePicker, Divider, Descriptions, Row, Col, Popconfirm } from 'antd';
-import { CloudServerOutlined, ApiOutlined, DatabaseOutlined, UploadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { CloudServerOutlined, ApiOutlined, DatabaseOutlined, UploadOutlined, PlusOutlined, DeleteOutlined, EyeOutlined, SettingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import * as Icons from '@ant-design/icons';
+import { SecurityIpModal } from './SecurityIpModal';
+import { SecurityEmailModal } from './SecurityEmailModal';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import ReactQuill from 'react-quill-new';
@@ -23,6 +25,49 @@ import dayjs from 'dayjs';
 
 const { Text } = Typography;
 
+function liveUtcMs(anchor: { utcMs: number; localMs: number } | null, nowMs: number) {
+  if (!anchor) return nowMs;
+  return anchor.utcMs + (nowMs - anchor.localMs);
+}
+
+function clockParts(ms: number, timeZone: string) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone,
+    timeZoneName: 'shortOffset',
+  });
+  return Object.fromEntries(fmt.formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+}
+
+function formatClockBody(p: Record<string, string>) {
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return `${p.year}-${p.month}-${p.day} ${hour}:${p.minute}:${p.second}`;
+}
+
+function formatUtcClock(anchor: { utcMs: number; localMs: number } | null, nowMs: number) {
+  return formatClockBody(clockParts(liveUtcMs(anchor, nowMs), 'UTC'));
+}
+
+function formatTzClock(anchor: { utcMs: number; localMs: number } | null, nowMs: number, tz?: string) {
+  const name = tz?.trim();
+  if (!name) return '—';
+  try {
+    const p = clockParts(liveUtcMs(anchor, nowMs), name);
+    let offset = p.timeZoneName || 'UTC';
+    if (offset.startsWith('GMT')) offset = offset.replace('GMT', 'UTC');
+    if (offset === 'UTC') offset = 'UTC+0';
+    return `${formatClockBody(p)} (${offset})`;
+  } catch {
+    return '—';
+  }
+}
+
 /** 低余额在途默认档（与后端对齐） */
 const DEFAULT_INFLIGHT_TIERS = [
   { max_available: 20, max_inflight: 1 },
@@ -30,7 +75,7 @@ const DEFAULT_INFLIGHT_TIERS = [
 ];
 
 const INFLIGHT_CATS: { key: 'video' | 'image' | 'chat' | 'other'; label: string; hint?: string }[] = [
-  { key: 'video', label: '视频', hint: '含视频增强' },
+  { key: 'video', label: '视频', hint: '含封装' },
   { key: 'image', label: '图片' },
   { key: 'chat', label: '聊天' },
   { key: 'other', label: '其它', hint: '音频 / 向量 / 排序等' },
@@ -166,12 +211,16 @@ const Settings: React.FC = () => {
   const supportedLanguages: string[] = Form.useWatch('supported_languages', form) || ['zh', 'en'];
   const defaultLanguage: string = Form.useWatch('default_language', form) || 'zh';
   const logoUrl = Form.useWatch('logo', form);
+  const operationTimezone = Form.useWatch('default_timezone', form);
+  const adminDisplayTimezone = Form.useWatch('admin_display_timezone', form);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [serverUtcTime, setServerUtcTime] = useState<string | null>(null);
+  const utcAnchorRef = useRef<{ utcMs: number; localMs: number } | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [basicSubTab, setBasicSubTab] = useState(initialBasicSubTab);
   const [dbSubTab, setDbSubTab] = useState(initialDbSubTab);
+  const [previewingKey, setPreviewingKey] = useState<string | null>(null);
 
   // 当 URL searchParams 变化时同步子标签
   useEffect(() => {
@@ -196,6 +245,53 @@ const Settings: React.FC = () => {
   const [dbInfo, setDbInfo] = useState<any>(null);
   const [dbInfoLoading, setDbInfoLoading] = useState(false);
   const [dbInfoError, setDbInfoError] = useState<string | null>(null);
+
+  const [securityIpModalConfig, setSecurityIpModalConfig] = useState<{
+    open: boolean;
+    type: 'blacklist' | 'whitelist';
+    mode: 'view' | 'edit';
+  }>({
+    open: false,
+    type: 'blacklist',
+    mode: 'view',
+  });
+
+  const getIpListFromForm = (fieldName: 'ip_blacklist_text' | 'ip_whitelist_text'): string[] => {
+    const raw = form.getFieldValue(fieldName) || '';
+    return raw
+      .split('\n')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+  };
+
+  const openSecurityIpModal = (type: 'blacklist' | 'whitelist', mode: 'view' | 'edit') => {
+    setSecurityIpModalConfig({
+      open: true,
+      type,
+      mode,
+    });
+  };
+
+  const [securityEmailModalConfig, setSecurityEmailModalConfig] = useState<{
+    open: boolean;
+    mode: 'view' | 'edit';
+  }>({
+    open: false,
+    mode: 'view',
+  });
+
+  const getEmailWhitelistFromForm = (): string[] => {
+    const raw = form.getFieldValue(['registration', 'email_whitelist']);
+    if (!Array.isArray(raw)) return [];
+    return raw.map((s: unknown) => String(s ?? '').trim()).filter(Boolean);
+  };
+
+  const openSecurityEmailModal = (mode: 'view' | 'edit') => {
+    setSecurityEmailModalConfig({
+      open: true,
+      mode,
+    });
+  };
 
   const handleManualSync = async () => {
     const [start, end] = syncDates;
@@ -309,6 +405,12 @@ const Settings: React.FC = () => {
   useEffect(() => { fetchSettings(); }, [tab]);
 
   useEffect(() => {
+    if (tab !== 'basic') return;
+    const id = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [tab]);
+
+  useEffect(() => {
     if (resetCountdown === null) return;
     if (resetCountdown === 0) {
       if (resetStartedRef.current) return;
@@ -338,7 +440,11 @@ const Settings: React.FC = () => {
       ]);
       const { site, currency, login, registration, smtp, database: backendDatabase, agreement, storage, log_cleanup, menu_config, relay, server_time } = response;
       if (server_time) {
-        setServerUtcTime(server_time);
+        const parsed = Date.parse(`${String(server_time).trim().replace(' ', 'T')}Z`);
+        if (!Number.isNaN(parsed)) {
+          utcAnchorRef.current = { utcMs: parsed, localMs: Date.now() };
+          setClockNow(Date.now());
+        }
       }
       const defaultDatabase = { db_type: 'postgres', host: 'postgres', port: 5432, database: 'tokensapi', username: 'tokensapi', password: 'tokensapi', ssl_mode: false };
       const loadedDatabase = { ...defaultDatabase, ...backendDatabase };
@@ -375,8 +481,6 @@ const Settings: React.FC = () => {
         { key: '/tokens', label_zh: '令牌管理', label_en: 'Tokens', icon: 'KeyOutlined', enabled: true, sort_order: 4, allowed_levels: 'all' },
         { key: '/logs', label_zh: '日志记录', label_en: 'Logs', icon: 'HistoryOutlined', enabled: true, sort_order: 5, allowed_levels: 'all' },
         { key: '/task-logs', label_zh: '任务列表', label_en: 'Task Logs', icon: 'ScheduleOutlined', enabled: true, sort_order: 6, allowed_levels: 'all' },
-        { key: '/assets', label_zh: '资产素材', label_en: 'Assets', icon: 'PictureOutlined', enabled: true, sort_order: 7, allowed_levels: 'all' },
-        { key: '/assets-intl', label_zh: '资产管理', label_en: 'Assets Intl', icon: 'FolderOpenOutlined', enabled: true, sort_order: 8, allowed_levels: 'all' },
         { key: '/advanced-marketing', label_zh: '高级推广', label_en: 'Advanced Marketing', icon: 'TeamOutlined', enabled: true, sort_order: 10, allowed_levels: 'all' },
         { key: '/wallet', label_zh: '我的钱包', label_en: 'Wallet', icon: 'WalletOutlined', enabled: true, sort_order: 11, allowed_levels: 'all' },
         { key: '/ark-video-monitor', label_zh: '视频监控', label_en: 'Ark Video Monitor', icon: 'VideoCameraOutlined', enabled: true, sort_order: 11.5, allowed_levels: 'all' },
@@ -405,11 +509,9 @@ const Settings: React.FC = () => {
       });
 
       const filteredItems = loadedItems.filter((item: any) => {
-        if (item.key === '/moderation-query') return false;
+        if (item.key === '/moderation-query' || item.key === '/assets' || item.key === '/assets-intl') return false;
         if (item.key === '/playground') return isPluginActive('playground');
         if (item.key === '/playground-2026') return isPluginActive('playground_2026');
-        if (item.key === '/assets') return isPluginActive('asset_manager');
-        if (item.key === '/assets-intl') return isPluginActive('asset_manager_intl');
         if (item.key === '/advanced-marketing') return isPluginActive('team_marketing');
         if (item.key === '/ark-video-monitor') return isPluginActive('volcengine_ark_monitor');
 
@@ -422,23 +524,38 @@ const Settings: React.FC = () => {
         ...site,
         copyright: (site?.copyright !== undefined && site?.copyright !== null && site?.copyright !== '') ? site.copyright : '© 2026 TkeAPI. All rights reserved.',
         default_timezone: site?.default_timezone || 'Asia/Shanghai',
+        admin_display_timezone: site?.admin_display_timezone || site?.default_timezone || 'Asia/Shanghai',
         admin_path: site?.admin_path || 'admin1688',
         ip_blacklist_enabled: site?.ip_blacklist_enabled === true,
         ip_blacklist_text: (site?.ip_blacklist || []).join('\n'),
         ip_whitelist_enabled: site?.ip_whitelist_enabled === true,
-        ip_whitelist_text: (site?.ip_whitelist || []).join('\n'),
+        ip_whitelist_text: (site?.ip_whitelist && site.ip_whitelist.length > 0)
+          ? site.ip_whitelist.join('\n')
+          : (site?.ip_whitelist_enabled ? '10.0.0.0/24\n192.168.1.0/24\n172.16.0.0/24' : ''),
         login_style: site?.login_style || 'split',
         login_quote: site?.login_quote || '',
         show_timezone: site?.show_timezone !== false,
         login: login || {},
         registration: {
           ...(registration || {}),
+          username_ip_daily_limit:
+            registration?.username_ip_daily_limit === undefined
+              ? 3
+              : typeof registration.username_ip_daily_limit === 'number' && registration.username_ip_daily_limit >= 1
+                ? registration.username_ip_daily_limit
+                : null,
+          email_whitelist: Array.isArray(registration?.email_whitelist)
+            ? registration.email_whitelist.map((s: string) => String(s).trim()).filter(Boolean)
+            : [],
           require_bind_mobile: registration?.require_bind_mobile === true,
           require_bind_email: registration?.require_bind_email === true,
-          bind_enforcement: registration?.bind_enforcement || 'all',
+          bind_enforcement: registration?.bind_enforcement === 'prompt_only'
+            ? 'prompt_all'
+            : (registration?.bind_enforcement || 'all'),
           enable_user_kyc: registration?.enable_user_kyc === true,
           max_accounts_per_email: registration?.max_accounts_per_email || 5,
           max_accounts_per_mobile: registration?.max_accounts_per_mobile || 5,
+          max_accounts_per_wechat: registration?.max_accounts_per_wechat || 5,
         },
         smtp,
         database: loadedDatabase,
@@ -480,7 +597,7 @@ const Settings: React.FC = () => {
   };
 
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     try {
       const values = form.getFieldsValue(true);
       let payload: any = {};
@@ -489,18 +606,25 @@ const Settings: React.FC = () => {
         const nonemptyLines = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
         if (values.ip_blacklist_enabled === true && nonemptyLines(values.ip_blacklist_text || '').length === 0) {
           message.error('已开启注册 IP 黑名单，请至少填写一条 IP 或网段');
-          return;
+          return false;
         }
         if (values.ip_whitelist_enabled === true && nonemptyLines(values.ip_whitelist_text || '').length === 0) {
-          message.error('已开启注册 IP 白名单，请至少填写一条 IP 或网段');
-          return;
+          values.ip_whitelist_text = '10.0.0.0/24\n192.168.1.0/24\n172.16.0.0/24';
+          form.setFieldsValue({ ip_whitelist_text: values.ip_whitelist_text });
         }
         const emailDomains = values.registration?.email_whitelist;
-        const hasEmailDomain = Array.isArray(emailDomains) && emailDomains.some((d: string) => String(d).trim());
-        if (values.registration?.email_whitelist_enabled === true && !hasEmailDomain) {
+        const normalizedEmailDomains = Array.isArray(emailDomains)
+          ? emailDomains.map((d: string) => String(d).trim()).filter(Boolean)
+          : [];
+        if (values.registration?.email_whitelist_enabled === true && normalizedEmailDomains.length === 0) {
           message.error('已开启邮箱白名单，请至少填写一个允许的邮箱域名');
-          return;
+          return false;
         }
+        const rawUsernameIpLimit = values.registration?.username_ip_daily_limit;
+        const normalizedUsernameIpLimit =
+          rawUsernameIpLimit !== null && rawUsernameIpLimit !== undefined && rawUsernameIpLimit !== '' && Number(rawUsernameIpLimit) >= 1
+            ? Math.min(1000, Math.max(1, Math.floor(Number(rawUsernameIpLimit))))
+            : null;
         payload.site = {
           ...settings?.site,
           name: values.name || '', logo: values.logo || '', title: values.title || '',
@@ -521,6 +645,7 @@ const Settings: React.FC = () => {
           enable_theme_toggle: values.enable_theme_toggle !== false,
           default_theme: values.default_theme || 'dark',
           default_timezone: values.default_timezone || settings?.site?.default_timezone || 'Asia/Shanghai',
+          admin_display_timezone: values.admin_display_timezone || values.default_timezone || settings?.site?.default_timezone || 'Asia/Shanghai',
           show_timezone: values.show_timezone !== false,
           copyright: values.copyright || '',
           admin_path: values.admin_path || 'admin1688',
@@ -542,14 +667,19 @@ const Settings: React.FC = () => {
         payload.registration = {
           ...settings?.registration,
           ...values.registration,
+          username_ip_daily_limit: normalizedUsernameIpLimit,
+          email_whitelist: normalizedEmailDomains,
           require_bind_mobile: values.registration?.require_bind_mobile === true,
           require_bind_email: values.registration?.require_bind_email === true,
-          bind_enforcement: ['all', 'any', 'prompt_only'].includes(values.registration?.bind_enforcement)
+          bind_enforcement: (['all', 'any', 'prompt_all', 'prompt_any'].includes(values.registration?.bind_enforcement)
             ? values.registration.bind_enforcement
-            : 'all',
+            : values.registration?.bind_enforcement === 'prompt_only'
+              ? 'prompt_all'
+              : 'all'),
           enable_user_kyc: values.registration?.enable_user_kyc === true,
           max_accounts_per_email: Math.min(99, Math.max(1, Number(values.registration?.max_accounts_per_email) || 5)),
           max_accounts_per_mobile: Math.min(99, Math.max(1, Number(values.registration?.max_accounts_per_mobile) || 5)),
+          max_accounts_per_wechat: Math.min(99, Math.max(1, Number(values.registration?.max_accounts_per_wechat) || 5)),
         };
         payload.agreement = {
           ...settings?.agreement,
@@ -570,7 +700,7 @@ const Settings: React.FC = () => {
         };
       } else if (tab === 'database') {
         if (dbSubTab === 'db') {
-          return;
+          return false;
         }
         if (dbSubTab === 'storage') {
           payload.storage = {
@@ -597,9 +727,11 @@ const Settings: React.FC = () => {
         const newUrl = window.location.pathname.replace(`/${oldAdminPath}`, `/${newAdminPath}`) + window.location.search;
         window.location.replace(newUrl);
       }
+      return true;
     } catch (error) {
       console.error('Failed to update settings:', error);
       // 全局拦截器已统一弹出错误提示
+      return false;
     } finally {
       setLoading(false);
     }
@@ -644,18 +776,16 @@ const Settings: React.FC = () => {
                 setUploadingLogo(true);
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('category', '站点设置');
-                formData.append('remark', '站点 Logo');
+                formData.append('slot', 'logo');
                 
-                const res = await (request.post('/assets/upload', formData, {
+                const res = await (request.post('/settings/upload', formData, {
                   headers: {
                     'Content-Type': 'multipart/form-data',
-                    'x-plugin-ns': 'asset_manager',
                   },
                 }) as Promise<any>);
                 
-                if (res?.asset?.file_url) {
-                  form.setFieldsValue({ logo: res.asset.file_url });
+                if (res?.file_url) {
+                  form.setFieldsValue({ logo: res.file_url });
                   message.success('Logo 上传成功！');
                 } else {
                   message.error('上传成功，但未返回有效的图片链接');
@@ -698,7 +828,7 @@ const Settings: React.FC = () => {
       </Form.Item>
       <Form.Item name="supported_languages" noStyle />
       {(() => {
-        const implementedLangs = i18n.options.resources ? Object.keys(i18n.options.resources) : ['zh', 'en', 'ja', 'ko'];
+        const implementedLangs = i18n.options.resources ? Object.keys(i18n.options.resources) : ['zh', 'zh-TW', 'en', 'ja', 'ko', 'vi'];
         const defaultLangOptions = ALL_LANGUAGES
           .filter(l => implementedLangs.includes(l.code) && (enableMultilingual ? supportedLanguages.includes(l.code) : true))
           .map(l => ({ label: `${l.flag} ${l.name} (${l.nativeName})`, value: l.code }));
@@ -770,19 +900,56 @@ const Settings: React.FC = () => {
           </div>
         );
       })()}
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 12, lineHeight: 1.6 }}>
+        系统有三层时区：底层时钟固定 UTC（当前：{formatUtcClock(utcAnchorRef.current, clockNow)} UTC）；站点运营时区决定业务自然日；管理后台展示时区只影响后台列表与筛选，类似用户个人时区。
+      </Text>
       <Form.Item
-        label="站点默认时区"
+        label={
+          <span>
+            站点运营时区
+            <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+              {formatTzClock(utcAnchorRef.current, clockNow, operationTimezone)}
+            </Text>
+          </span>
+        }
         name="default_timezone"
         extra={
           <Text type="secondary">
-            业务展示与统计自然日切时区。系统底层时钟固定 UTC（当前：{serverUtcTime || '—'} UTC）。
+            计费时段、额度刷新、仪表盘/财务日统计、佣金按日、注册日限额。不改变底层 UTC，也不改变后台列表墙钟。
           </Text>
         }
       >
         <Select
           style={{ width: 320 }}
           showSearch
-          placeholder="请选择站点默认时区（IANA）"
+          placeholder="请选择站点运营时区（IANA）"
+          options={timezoneOptions}
+          filterOption={(input, option: any) =>
+            (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase()) ||
+            (option?.value as string ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+        />
+      </Form.Item>
+      <Form.Item
+        label={
+          <span>
+            管理后台展示时区
+            <Text type="secondary" style={{ fontWeight: 400, marginLeft: 8, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>
+              {formatTzClock(utcAnchorRef.current, clockNow, adminDisplayTimezone)}
+            </Text>
+          </span>
+        }
+        name="admin_display_timezone"
+        extra={
+          <Text type="secondary">
+            管理后台日志、订单、用户等列表的时间展示与日期筛选。不影响业务统计自然日。
+          </Text>
+        }
+      >
+        <Select
+          style={{ width: 320 }}
+          showSearch
+          placeholder="请选择管理后台展示时区（IANA）"
           options={timezoneOptions}
           filterOption={(input, option: any) =>
             (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase()) ||
@@ -842,7 +1009,7 @@ const Settings: React.FC = () => {
         开启后，未满足条件的用户登录会弹窗提醒。执行方式决定是否在创建 API 令牌时硬拦截。
       </Text>
       <Form.Item
-        label="必须绑定手机"
+        label="绑定手机"
         name={['registration', 'require_bind_mobile']}
         valuePropName="checked"
         extra={<Text type="secondary">需短信通道可用。<GoLink to={`/${adminPath}/message-notification`} text={t('settings.goto_settings')} /></Text>}
@@ -850,7 +1017,7 @@ const Settings: React.FC = () => {
         <Switch />
       </Form.Item>
       <Form.Item
-        label="必须绑定邮箱"
+        label="绑定邮箱"
         name={['registration', 'require_bind_email']}
         valuePropName="checked"
         extra={<Text type="secondary">需邮件通道可用。<GoLink to={`/${adminPath}/message-notification`} text={t('settings.goto_settings')} /></Text>}
@@ -858,31 +1025,21 @@ const Settings: React.FC = () => {
         <Switch />
       </Form.Item>
       <Form.Item noStyle dependencies={[['registration', 'require_bind_mobile'], ['registration', 'require_bind_email']]}>
-        {({ getFieldValue, setFieldsValue }) => {
+        {({ getFieldValue }) => {
           const needMobile = getFieldValue(['registration', 'require_bind_mobile']);
           const needEmail = getFieldValue(['registration', 'require_bind_email']);
           if (!needMobile && !needEmail) return null;
-          const both = !!(needMobile && needEmail);
-          const mode = getFieldValue(['registration', 'bind_enforcement']) || 'all';
-          if (!both && mode === 'any') {
-            setTimeout(() => setFieldsValue({ registration: { ...getFieldValue('registration'), bind_enforcement: 'all' } }), 0);
-          }
           return (
             <Form.Item
               label="执行方式"
               name={['registration', 'bind_enforcement']}
               initialValue="all"
             >
-              <Radio.Group buttonStyle="solid">
-                {both ? (
-                  <>
-                    <Radio.Button value="all">全部都要</Radio.Button>
-                    <Radio.Button value="any">满足其一</Radio.Button>
-                  </>
-                ) : (
-                  <Radio.Button value="all">创建令牌前必须绑定</Radio.Button>
-                )}
-                <Radio.Button value="prompt_only">仅弹窗提示</Radio.Button>
+              <Radio.Group buttonStyle="solid" style={{ display: 'flex', flexWrap: 'wrap', rowGap: 8 }}>
+                <Radio.Button value="all">弹窗必须绑定全部</Radio.Button>
+                <Radio.Button value="any">弹窗必须绑定其一</Radio.Button>
+                <Radio.Button value="prompt_all">仅弹窗提示绑定全部</Radio.Button>
+                <Radio.Button value="prompt_any">仅弹窗提示绑定其一</Radio.Button>
               </Radio.Group>
             </Form.Item>
           );
@@ -899,24 +1056,81 @@ const Settings: React.FC = () => {
       >
         <Switch />
       </Form.Item>
+      <Form.Item name="ip_blacklist_text" hidden>
+        <Input />
+      </Form.Item>
       <Form.Item
         noStyle
-        shouldUpdate={(prevValues, currentValues) => prevValues.ip_blacklist_enabled !== currentValues.ip_blacklist_enabled}
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues.ip_blacklist_enabled !== currentValues.ip_blacklist_enabled ||
+          prevValues.ip_blacklist_text !== currentValues.ip_blacklist_text
+        }
       >
         {({ getFieldValue }) => {
           const enabled = getFieldValue('ip_blacklist_enabled');
+          const rawText = getFieldValue('ip_blacklist_text') || '';
+          const list = rawText.split('\n').map((s: string) => s.trim()).filter(Boolean);
           if (!enabled) return null;
           return (
-            <Form.Item
-              label="黑名单 IP / CIDR 网段列表"
-              name="ip_blacklist_text"
-              extra={<Text type="secondary">每行一个 IP 或 CIDR 网段，例如：192.168.1.100 或 10.0.0.0/8</Text>}
+            <div
+              style={{
+                marginBottom: 18,
+                padding: '12px 16px',
+                border: '1px solid rgba(128,128,128,0.2)',
+                borderRadius: 8,
+                background: 'var(--ant-color-fill-alter, rgba(0,0,0,0.02))',
+              }}
             >
-              <Input.TextArea
-                rows={4}
-                placeholder={'192.168.1.100\n10.0.0.0/8'}
-              />
-            </Form.Item>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Text strong>黑名单 IP / CIDR 网段规则</Text>
+                    {list.length > 0 ? (
+                      <Tag color="error">已配置 {list.length} 条规则</Tag>
+                    ) : (
+                      <Tag color="warning">未配置规则 (生效拦截需至少配置 1 条)</Tag>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {list.length > 0 ? (
+                      <>
+                        {list.slice(0, 3).map((ip: string) => (
+                          <Text key={ip} code style={{ fontSize: 12 }}>
+                            {ip}
+                          </Text>
+                        ))}
+                        {list.length > 3 && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            +{list.length - 3} 更多
+                          </Text>
+                        )}
+                      </>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        暂未配置任何拦截规则，点击右侧按钮进行配置
+                      </Text>
+                    )}
+                  </div>
+                </div>
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => openSecurityIpModal('blacklist', 'view')}
+                  >
+                    查看明细
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<SettingOutlined />}
+                    onClick={() => openSecurityIpModal('blacklist', 'edit')}
+                  >
+                    配置规则
+                  </Button>
+                </Space>
+              </div>
+            </div>
           );
         }}
       </Form.Item>
@@ -929,24 +1143,81 @@ const Settings: React.FC = () => {
       >
         <Switch />
       </Form.Item>
+      <Form.Item name="ip_whitelist_text" hidden>
+        <Input />
+      </Form.Item>
       <Form.Item
         noStyle
-        shouldUpdate={(prevValues, currentValues) => prevValues.ip_whitelist_enabled !== currentValues.ip_whitelist_enabled}
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues.ip_whitelist_enabled !== currentValues.ip_whitelist_enabled ||
+          prevValues.ip_whitelist_text !== currentValues.ip_whitelist_text
+        }
       >
         {({ getFieldValue }) => {
           const enabled = getFieldValue('ip_whitelist_enabled');
+          const rawText = getFieldValue('ip_whitelist_text') || '';
+          const list = rawText.split('\n').map((s: string) => s.trim()).filter(Boolean);
           if (!enabled) return null;
           return (
-            <Form.Item
-              label="白名单 IP / CIDR 网段列表"
-              name="ip_whitelist_text"
-              extra={<Text type="secondary">每行一个 IP 或 CIDR 网段。默认是这三段的最后一位：10.0.0.0/24、192.168.1.0/24、172.16.0.0/24</Text>}
+            <div
+              style={{
+                marginBottom: 18,
+                padding: '12px 16px',
+                border: '1px solid rgba(128,128,128,0.2)',
+                borderRadius: 8,
+                background: 'var(--ant-color-fill-alter, rgba(0,0,0,0.02))',
+              }}
             >
-              <Input.TextArea
-                rows={4}
-                placeholder={'10.0.0.0/24\n192.168.1.0/24\n172.16.0.0/24'}
-              />
-            </Form.Item>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Text strong>白名单 IP / CIDR 网段规则</Text>
+                    {list.length > 0 ? (
+                      <Tag color="success">已配置 {list.length} 条放行规则</Tag>
+                    ) : (
+                      <Tag color="warning">未配置规则 (建议至少保留内网段)</Tag>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {list.length > 0 ? (
+                      <>
+                        {list.slice(0, 3).map((ip: string) => (
+                          <Text key={ip} code style={{ fontSize: 12 }}>
+                            {ip}
+                          </Text>
+                        ))}
+                        {list.length > 3 && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            +{list.length - 3} 更多
+                          </Text>
+                        )}
+                      </>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        暂未配置任何放行规则，点击右侧按钮进行配置
+                      </Text>
+                    )}
+                  </div>
+                </div>
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => openSecurityIpModal('whitelist', 'view')}
+                  >
+                    查看明细
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<SettingOutlined />}
+                    onClick={() => openSecurityIpModal('whitelist', 'edit')}
+                  >
+                    配置规则
+                  </Button>
+                </Space>
+              </div>
+            </div>
           );
         }}
       </Form.Item>
@@ -969,16 +1240,88 @@ const Settings: React.FC = () => {
       </Form.Item>
 
       <Form.Item label={t('settings.email_whitelist_enabled')} name={['registration', 'email_whitelist_enabled']} valuePropName="checked"
-        extra={<Text type="secondary">开启后仅允许指定域名的邮箱注册</Text>}>
+        extra={<Text type="secondary">开启后仅允许白名单内的邮箱域名（如 qq.com、*.edu.cn）或指定邮箱地址注册</Text>}>
         <Switch />
       </Form.Item>
-      <Form.Item noStyle dependencies={[['registration', 'email_whitelist_enabled']]}>
-        {({ getFieldValue }) => getFieldValue(['registration', 'email_whitelist_enabled']) ? (
-          <Form.Item label="允许的邮箱域名" name={['registration', 'email_whitelist']}>
-            <Select mode="tags" placeholder={t('settings.email_whitelist_placeholder')} style={{ width: '100%' }}
-              tokenSeparators={[',', ' ']} />
-          </Form.Item>
-        ) : null}
+      <Form.Item name={['registration', 'email_whitelist']} hidden>
+        <Select mode="tags" />
+      </Form.Item>
+      <Form.Item
+        noStyle
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues.registration?.email_whitelist_enabled !== currentValues.registration?.email_whitelist_enabled ||
+          prevValues.registration?.email_whitelist !== currentValues.registration?.email_whitelist
+        }
+      >
+        {({ getFieldValue }) => {
+          const enabled = getFieldValue(['registration', 'email_whitelist_enabled']);
+          const rawList = getFieldValue(['registration', 'email_whitelist']);
+          const list: string[] = Array.isArray(rawList)
+            ? rawList.map((s: unknown) => String(s ?? '').trim()).filter(Boolean)
+            : [];
+          if (!enabled) return null;
+          return (
+            <div
+              style={{
+                marginBottom: 18,
+                padding: '12px 16px',
+                border: '1px solid rgba(128,128,128,0.2)',
+                borderRadius: 8,
+                background: 'var(--ant-color-fill-alter, rgba(0,0,0,0.02))',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <Text strong>允许的邮箱域名 / 邮箱白名单</Text>
+                    {list.length > 0 ? (
+                      <Tag color="success">已配置 {list.length} 条允许规则</Tag>
+                    ) : (
+                      <Tag color="warning">未配置规则 (生效需至少配置 1 条)</Tag>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {list.length > 0 ? (
+                      <>
+                        {list.slice(0, 5).map((item: string) => (
+                          <Text key={item} code style={{ fontSize: 12 }}>
+                            {item}
+                          </Text>
+                        ))}
+                        {list.length > 5 && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            +{list.length - 5} 更多
+                          </Text>
+                        )}
+                      </>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        暂未配置任何允许的邮箱域名或邮箱，点击右侧按钮进行批量配置
+                      </Text>
+                    )}
+                  </div>
+                </div>
+                <Space>
+                  <Button
+                    size="small"
+                    icon={<EyeOutlined />}
+                    onClick={() => openSecurityEmailModal('view')}
+                  >
+                    查看明细
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<SettingOutlined />}
+                    onClick={() => openSecurityEmailModal('edit')}
+                  >
+                    配置规则
+                  </Button>
+                </Space>
+              </div>
+            </div>
+          );
+        }}
       </Form.Item>
     </div>
   );
@@ -1145,8 +1488,38 @@ const Settings: React.FC = () => {
 
   const registrationSettingsContent = (
     <div style={{ maxWidth: 680 }}>
-      <Form.Item label={t('settings.enable_username_reg')} name={['registration', 'enable_username_registration']} valuePropName="checked"><Switch /></Form.Item>
-      <Form.Item label={t('settings.enable_email_reg')} name={['registration', 'enable_email_registration']} valuePropName="checked"><Switch /></Form.Item>
+      <Form.Item label={t('settings.enable_username_reg')} name={['registration', 'enable_username_registration']} valuePropName="checked">
+        <Switch
+          onChange={(checked) => {
+            if (checked && form.getFieldValue(['registration', 'username_ip_daily_limit']) == null) {
+              form.setFieldValue(['registration', 'username_ip_daily_limit'], 3);
+            }
+          }}
+        />
+      </Form.Item>
+      <Form.Item noStyle dependencies={[['registration', 'enable_username_registration']]}>
+        {({ getFieldValue }) => getFieldValue(['registration', 'enable_username_registration']) ? (
+          <Form.Item
+            label={t('settings.ip_daily_limit')}
+            name={['registration', 'username_ip_daily_limit']}
+            initialValue={3}
+            extra={<Text type="secondary">单独限制同一 IP 直接注册用户名的个数（达上限后需改用其他方式注册）；留空不填则遵循「站点安全 → IP 防刷加强」规则</Text>}
+          >
+            <InputNumber
+              min={1}
+              max={1000}
+              precision={0}
+              placeholder="留空按站点安全规则"
+              addonAfter={t('settings.ip_daily_limit_unit')}
+              style={{ width: 220 }}
+            />
+          </Form.Item>
+        ) : null}
+      </Form.Item>
+      <Form.Item label={t('settings.enable_email_reg')} name={['registration', 'enable_email_registration']} valuePropName="checked"
+        extra={<Text type="secondary">{t('settings.login_hint_email')}，<GoLink to={`/${adminPath}/message-notification`} text={t('settings.goto_settings')} /></Text>}>
+        <Switch />
+      </Form.Item>
       <Form.Item label={t('settings.enable_mobile_registration')} name={['registration', 'enable_mobile_registration']} valuePropName="checked"
         extra={<Text type="secondary">{t('settings.login_hint_sms')}，<GoLink to={`/${adminPath}/message-notification`} text={t('settings.goto_settings')} /></Text>}>
         <Switch />
@@ -1162,6 +1535,13 @@ const Settings: React.FC = () => {
       <Form.Item
         label={t('settings.max_accounts_per_mobile')}
         name={['registration', 'max_accounts_per_mobile']}
+        extra={<Text type="secondary">{t('settings.max_accounts_per_contact_hint')}</Text>}
+      >
+        <InputNumber min={1} max={99} precision={0} style={{ width: 160 }} />
+      </Form.Item>
+      <Form.Item
+        label={t('settings.max_accounts_per_wechat')}
+        name={['registration', 'max_accounts_per_wechat']}
         extra={<Text type="secondary">{t('settings.max_accounts_per_contact_hint')}</Text>}
       >
         <InputNumber min={1} max={99} precision={0} style={{ width: 160 }} />
@@ -1213,6 +1593,60 @@ const Settings: React.FC = () => {
     message.success('已填入标准预设协议内容');
   };
 
+  const handlePreviewAgreement = async (type: 'tos' | 'privacy', lang: 'zh' | 'en') => {
+    if (loading || previewingKey) return;
+
+    const agreementValues = form.getFieldValue('agreement') || {};
+    const modeKey = type === 'tos'
+      ? (lang === 'en' ? 'tos_mode_en' : 'tos_mode')
+      : (lang === 'en' ? 'privacy_mode_en' : 'privacy_mode');
+    const linkKey = type === 'tos'
+      ? (lang === 'en' ? 'tos_link_en' : 'tos_link')
+      : (lang === 'en' ? 'privacy_link_en' : 'privacy_link');
+    const fallbackLinkKey = type === 'tos' ? 'tos_link' : 'privacy_link';
+
+    const mode = agreementValues[modeKey] || 'text';
+
+    let targetUrl = '';
+
+    if (mode === 'link') {
+      let link = String(agreementValues[linkKey] || '').trim();
+      if (!link && lang === 'en') {
+        link = String(agreementValues[fallbackLinkKey] || '').trim();
+      }
+      if (!link) {
+        message.warning(lang === 'en' ? 'Please enter a link URL first' : '请先填写链接地址');
+        return;
+      }
+      targetUrl = link;
+      if (!/^https?:\/\//i.test(targetUrl) && !targetUrl.startsWith('/')) {
+        targetUrl = `https://${targetUrl}`;
+      }
+    } else {
+      if (lang === 'en') {
+        targetUrl = type === 'tos' ? '/legal/terms_en.html' : '/legal/privacy_en.html';
+      } else {
+        targetUrl = type === 'tos' ? '/legal/terms.html' : '/legal/privacy.html';
+      }
+    }
+
+    const key = `${type}_${lang}`;
+    setPreviewingKey(key);
+
+    try {
+      const ok = await handleSave();
+      if (ok) {
+        // 如果是本地静态页面预览，添加随机时间戳参数，强制击穿浏览器及所有网关代理缓存
+        const previewUrl = targetUrl.startsWith('/legal')
+          ? `${targetUrl}?_t=${Date.now()}`
+          : targetUrl;
+        window.open(previewUrl, '_blank');
+      }
+    } finally {
+      setPreviewingKey(null);
+    }
+  };
+
   const agreementSettingsContent = (
     <div style={{ maxWidth: 780 }}>
       <Alert
@@ -1253,11 +1687,23 @@ const Settings: React.FC = () => {
               填入预设服务条款
             </Button>
           </div>
-          <Form.Item label="显示方式" name={['agreement', 'tos_mode']}>
-            <Radio.Group buttonStyle="solid">
-              <Radio.Button value="text">站内富文本 (默认)</Radio.Button>
-              <Radio.Button value="link">网页链接</Radio.Button>
-            </Radio.Group>
+          <Form.Item label="显示方式">
+            <Space size="middle" wrap>
+              <Form.Item name={['agreement', 'tos_mode']} noStyle>
+                <Radio.Group buttonStyle="solid">
+                  <Radio.Button value="text">站内富文本 (默认)</Radio.Button>
+                  <Radio.Button value="link">网页链接</Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+              <Button
+                icon={<EyeOutlined />}
+                loading={previewingKey === 'tos_zh'}
+                disabled={loading && previewingKey !== 'tos_zh'}
+                onClick={() => handlePreviewAgreement('tos', 'zh')}
+              >
+                预览
+              </Button>
+            </Space>
           </Form.Item>
           <Form.Item noStyle dependencies={[['agreement', 'tos_mode']]}>
             {({ getFieldValue }) => getFieldValue(['agreement', 'tos_mode']) === 'link' ? (
@@ -1277,11 +1723,23 @@ const Settings: React.FC = () => {
               填入预设隐私协议
             </Button>
           </div>
-          <Form.Item label="显示方式" name={['agreement', 'privacy_mode']}>
-            <Radio.Group buttonStyle="solid">
-              <Radio.Button value="text">站内富文本 (默认)</Radio.Button>
-              <Radio.Button value="link">网页链接</Radio.Button>
-            </Radio.Group>
+          <Form.Item label="显示方式">
+            <Space size="middle" wrap>
+              <Form.Item name={['agreement', 'privacy_mode']} noStyle>
+                <Radio.Group buttonStyle="solid">
+                  <Radio.Button value="text">站内富文本 (默认)</Radio.Button>
+                  <Radio.Button value="link">网页链接</Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+              <Button
+                icon={<EyeOutlined />}
+                loading={previewingKey === 'privacy_zh'}
+                disabled={loading && previewingKey !== 'privacy_zh'}
+                onClick={() => handlePreviewAgreement('privacy', 'zh')}
+              >
+                预览
+              </Button>
+            </Space>
           </Form.Item>
           <Form.Item noStyle dependencies={[['agreement', 'privacy_mode']]}>
             {({ getFieldValue }) => getFieldValue(['agreement', 'privacy_mode']) === 'link' ? (
@@ -1303,11 +1761,23 @@ const Settings: React.FC = () => {
               Fill Preset Terms
             </Button>
           </div>
-          <Form.Item label="Display Mode" name={['agreement', 'tos_mode_en']}>
-            <Radio.Group buttonStyle="solid">
-              <Radio.Button value="text">Rich Text (Default)</Radio.Button>
-              <Radio.Button value="link">Link URL</Radio.Button>
-            </Radio.Group>
+          <Form.Item label="Display Mode">
+            <Space size="middle" wrap>
+              <Form.Item name={['agreement', 'tos_mode_en']} noStyle>
+                <Radio.Group buttonStyle="solid">
+                  <Radio.Button value="text">Rich Text (Default)</Radio.Button>
+                  <Radio.Button value="link">Link URL</Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+              <Button
+                icon={<EyeOutlined />}
+                loading={previewingKey === 'tos_en'}
+                disabled={loading && previewingKey !== 'tos_en'}
+                onClick={() => handlePreviewAgreement('tos', 'en')}
+              >
+                Preview
+              </Button>
+            </Space>
           </Form.Item>
           <Form.Item noStyle dependencies={[['agreement', 'tos_mode_en']]}>
             {({ getFieldValue }) => getFieldValue(['agreement', 'tos_mode_en']) === 'link' ? (
@@ -1327,11 +1797,23 @@ const Settings: React.FC = () => {
               Fill Preset Privacy Policy
             </Button>
           </div>
-          <Form.Item label="Display Mode" name={['agreement', 'privacy_mode_en']}>
-            <Radio.Group buttonStyle="solid">
-              <Radio.Button value="text">Rich Text (Default)</Radio.Button>
-              <Radio.Button value="link">Link URL</Radio.Button>
-            </Radio.Group>
+          <Form.Item label="Display Mode">
+            <Space size="middle" wrap>
+              <Form.Item name={['agreement', 'privacy_mode_en']} noStyle>
+                <Radio.Group buttonStyle="solid">
+                  <Radio.Button value="text">Rich Text (Default)</Radio.Button>
+                  <Radio.Button value="link">Link URL</Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+              <Button
+                icon={<EyeOutlined />}
+                loading={previewingKey === 'privacy_en'}
+                disabled={loading && previewingKey !== 'privacy_en'}
+                onClick={() => handlePreviewAgreement('privacy', 'en')}
+              >
+                Preview
+              </Button>
+            </Space>
           </Form.Item>
           <Form.Item noStyle dependencies={[['agreement', 'privacy_mode_en']]}>
             {({ getFieldValue }) => getFieldValue(['agreement', 'privacy_mode_en']) === 'link' ? (
@@ -1657,7 +2139,7 @@ const Settings: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>历史使用数据每日统计校准与补录</Text>
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-          每天站点时区 00:00 自动增量同步历史日志到汇总表。若发现特定日期统计有偏差或需补录，可手动触发后台异步校准。
+          每天站点运营时区 00:00 自动增量同步历史日志到汇总表。若发现特定日期统计有偏差或需补录，可手动触发后台异步校准。
         </Text>
         <Space wrap>
           <DatePicker.RangePicker
@@ -1905,6 +2387,45 @@ const Settings: React.FC = () => {
           </div>
         )}
       </Modal>
+      <SecurityIpModal
+        open={securityIpModalConfig.open}
+        type={securityIpModalConfig.type}
+        mode={securityIpModalConfig.mode}
+        initialList={getIpListFromForm(
+          securityIpModalConfig.type === 'blacklist' ? 'ip_blacklist_text' : 'ip_whitelist_text'
+        )}
+        onClose={() => setSecurityIpModalConfig((prev) => ({ ...prev, open: false }))}
+        onSave={(newList) => {
+          const fieldName =
+            securityIpModalConfig.type === 'blacklist' ? 'ip_blacklist_text' : 'ip_whitelist_text';
+          form.setFieldsValue({ [fieldName]: newList.join('\n') });
+        }}
+        onSaveAndApply={async (newList) => {
+          const fieldName =
+            securityIpModalConfig.type === 'blacklist' ? 'ip_blacklist_text' : 'ip_whitelist_text';
+          form.setFieldsValue({ [fieldName]: newList.join('\n') });
+          return await handleSave();
+        }}
+        onSwitchToEdit={() => {
+          setSecurityIpModalConfig((prev) => ({ ...prev, mode: 'edit' }));
+        }}
+      />
+      <SecurityEmailModal
+        open={securityEmailModalConfig.open}
+        mode={securityEmailModalConfig.mode}
+        initialList={getEmailWhitelistFromForm()}
+        onClose={() => setSecurityEmailModalConfig((prev) => ({ ...prev, open: false }))}
+        onSave={(newList) => {
+          form.setFieldValue(['registration', 'email_whitelist'], newList);
+        }}
+        onSaveAndApply={async (newList) => {
+          form.setFieldValue(['registration', 'email_whitelist'], newList);
+          return await handleSave();
+        }}
+        onSwitchToEdit={() => {
+          setSecurityEmailModalConfig((prev) => ({ ...prev, mode: 'edit' }));
+        }}
+      />
     </Card>
   );
 };

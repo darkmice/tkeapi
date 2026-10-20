@@ -33,12 +33,12 @@ pub struct Channel {
     pub category_id: Option<i64>,
     #[sqlx(default)]
     pub yid: Option<String>,
-    pub sort_order: i32,
-    pub priority: i32,
-    pub weight: i32,
-    pub status: i32, // 1=active, 0=disabled, 2=testing
+    pub sort_order: i64,
+    pub priority: i64,
+    pub weight: i64,
+    pub status: i64, // 1=active, 0=disabled, 2=testing
     pub balance: Option<f64>,
-    pub max_rps: Option<i32>,
+    pub max_rps: Option<i64>,
     pub quota_limit: f64, // 渠道使用最大额度（上限），-1 即代表无限额
     pub quota_used: f64,  // 该渠道累计真实消耗金额
     #[sqlx(default)]
@@ -101,7 +101,7 @@ impl Channel {
     #[inline]
     pub fn matches_model(&self, pattern_model: &str, pattern_mids: &[String]) -> bool {
         let m = self.models.trim();
-        m == "[]" || m.contains(pattern_model) || pattern_mids.iter().any(|p| m.contains(p))
+        m.contains(pattern_model) || pattern_mids.iter().any(|p| m.contains(p))
     }
 
     #[inline]
@@ -138,7 +138,7 @@ impl Channel {
     }
 
     /// 获取渠道的 TOS 存储配置：返回 Some(过期天数) 表示开启，None 表示未开启
-    pub fn tos_storage(&self) -> Option<i32> {
+    pub fn tos_storage(&self) -> Option<i64> {
         let cfg: serde_json::Value = serde_json::from_str(&self.config).ok()?;
         if !cfg.get("tos_storage_enabled")?.as_bool()? {
             return None;
@@ -146,7 +146,7 @@ impl Channel {
         Some(
             cfg.get("tos_storage_days")
                 .and_then(|d| d.as_i64())
-                .unwrap_or(1) as i32,
+                .unwrap_or(1),
         )
     }
 
@@ -161,7 +161,7 @@ impl Channel {
     }
 
     /// 对象存储转存上下文：`(channel_id, 过期天数, 可选厂商)`；未开启则 None
-    pub fn storage_persist(&self) -> Option<(i64, i32, Option<String>)> {
+    pub fn storage_persist(&self) -> Option<(i64, i64, Option<String>)> {
         let days = self.tos_storage()?;
         Some((self.id, days, self.tos_storage_provider()))
     }
@@ -199,6 +199,53 @@ impl Channel {
             now_month,
         )
     }
+
+    /// 获取当前渠道分组针对指定上游配置 (channel_configs.id) 的独立调度覆盖参数（仅优先级与权重）
+    pub fn get_upstream_override(
+        &self,
+        config_id: i64,
+    ) -> Option<crate::models::channel_config::UpstreamScheduleOverride> {
+        let cfg_val: serde_json::Value = serde_json::from_str(&self.config).ok()?;
+        extract_upstream_override(&cfg_val, config_id)
+    }
+
+    /// 将当前渠道分组的独立覆盖参数（优先级、权重）叠加到上游默认配置，未单独设置的字段回退使用上游默认值；渠道倍率固定使用上游配置值
+    pub fn resolve_upstream_config(
+        &self,
+        cfg: &crate::models::ChannelConfig,
+    ) -> crate::models::ChannelConfig {
+        let mut resolved = cfg.clone();
+        if let Some(ov) = self.get_upstream_override(cfg.id) {
+            if let Some(priority) = ov.priority {
+                resolved.priority = priority;
+            }
+            if let Some(weight) = ov.weight {
+                resolved.weight = weight;
+            }
+        }
+        resolved
+    }
+}
+
+/// 从渠道分组 `config` JSON 中提取指定上游配置 (`config_id`) 的调度覆盖参数（仅优先级与权重）
+pub fn extract_upstream_override(
+    cfg_val: &serde_json::Value,
+    config_id: i64,
+) -> Option<crate::models::channel_config::UpstreamScheduleOverride> {
+    let map = cfg_val.get("upstream_overrides")?.as_object()?;
+    let entry = map.get(&config_id.to_string())?;
+    let mut ov: crate::models::channel_config::UpstreamScheduleOverride =
+        serde_json::from_value(entry.clone()).ok()?;
+    if let Some(w) = ov.weight {
+        if w < 1 {
+            ov.weight = Some(1);
+        }
+    }
+    if ov.priority.is_none() && ov.weight.is_none() {
+        None
+    } else {
+        Some(ov)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -217,10 +264,10 @@ pub struct CreateChannelRequest {
     pub group_aid: Option<String>,
     pub preset_id: Option<i64>,
     pub category_id: Option<i64>,
-    pub sort_order: Option<i32>,
-    pub priority: Option<i32>,
-    pub weight: Option<i32>,
-    pub max_rps: Option<i32>,
+    pub sort_order: Option<i64>,
+    pub priority: Option<i64>,
+    pub weight: Option<i64>,
+    pub max_rps: Option<i64>,
     pub quota_limit: Option<f64>,
     pub quota_used: Option<f64>,
     pub daily_quota_limit: Option<f64>,
@@ -253,11 +300,11 @@ pub struct UpdateChannelRequest {
         deserialize_with = "crate::models::user::deserialize_some_option"
     )]
     pub category_id: Option<Option<i64>>,
-    pub sort_order: Option<i32>,
-    pub priority: Option<i32>,
-    pub weight: Option<i32>,
-    pub status: Option<i32>,
-    pub max_rps: Option<i32>,
+    pub sort_order: Option<i64>,
+    pub priority: Option<i64>,
+    pub weight: Option<i64>,
+    pub status: Option<i64>,
+    pub max_rps: Option<i64>,
     pub quota_limit: Option<f64>,
     pub quota_used: Option<f64>,
     pub daily_quota_limit: Option<f64>,
@@ -288,12 +335,12 @@ pub struct ChannelSafe {
     pub group_aid: Option<String>,
     pub preset_id: Option<i64>,
     pub category_id: Option<i64>,
-    pub sort_order: i32,
-    pub priority: i32,
-    pub weight: i32,
-    pub status: i32,
+    pub sort_order: i64,
+    pub priority: i64,
+    pub weight: i64,
+    pub status: i64,
     pub balance: Option<f64>,
-    pub max_rps: Option<i32>,
+    pub max_rps: Option<i64>,
     pub quota_limit: f64, // 渠道额度上限
     pub quota_used: f64,  // 当前消耗总计
     pub daily_quota_limit: f64,
@@ -370,10 +417,10 @@ pub struct ChannelCategory {
     pub name: String,
     #[sqlx(default)]
     pub name_en: String,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
     #[serde(default)]
-    pub is_system: i32,
+    pub is_system: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
 }
@@ -382,8 +429,8 @@ pub struct ChannelCategory {
 pub struct ChannelCategoryRequest {
     pub name: String,
     pub name_en: Option<String>,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
 }
 
 /// 脱敏工具：保留前4后4字符，中间用 ****** 替代；短于8字符则全部隐藏
@@ -405,4 +452,128 @@ pub struct TestChannelRequest {
     pub model: Option<String>,
     pub forward_rule_id: Option<i64>,
     pub sub_channel_id: Option<i64>,
+    pub entry_path: Option<String>,
+    pub scenario: Option<String>,
+    pub custom_body: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ChannelConfig;
+    use crate::time_system::DbTs;
+
+    fn sample_config() -> ChannelConfig {
+        ChannelConfig {
+            id: 42,
+            name: "Default Preset".to_string(),
+            provider_type: "openai".to_string(),
+            base_url: "https://api.example.com".to_string(),
+            api_key: "sk-test".to_string(),
+            remark: None,
+            created_at: DbTs::default(),
+            updated_at: DbTs::default(),
+            yid: "30042".to_string(),
+            sort_order: 0,
+            rate: 1.0,
+            priority: 5,
+            weight: 2,
+            quota_limit: -1.0,
+            quota_used: 0.0,
+            daily_quota_limit: -1.0,
+            daily_quota_used: 0.0,
+            weekly_quota_limit: -1.0,
+            weekly_quota_used: 0.0,
+            monthly_quota_limit: -1.0,
+            monthly_quota_used: 0.0,
+            last_reset_day: String::new(),
+            last_reset_week: String::new(),
+            last_reset_month: String::new(),
+            daily_reset_hour: 0,
+            daily_reset_minute: 0,
+            daily_reset_cooldown_minutes: 0,
+            status: 1,
+            category_id: None,
+            category_ids: "[]".to_string(),
+            upstream_system: String::new(),
+            upstream_group: String::new(),
+            upstream_sync_interval_minutes: 0,
+            upstream_sync_rate_add: 0.0,
+            upstream_currency: String::new(),
+            site_currency: String::new(),
+            upstream_currency_rate: 1.0,
+            upstream_synced_at: None,
+        }
+    }
+
+    fn sample_channel(config_json: &str) -> Channel {
+        Channel {
+            id: 1,
+            name: "Group A".to_string(),
+            provider_type: "high_availability_group".to_string(),
+            base_url: String::new(),
+            api_key: String::new(),
+            models: "[]".to_string(),
+            model_mapping: "{}".to_string(),
+            user_groups: "[]".to_string(),
+            exclude_user_groups: "[]".to_string(),
+            group_aid: Some("1001".to_string()),
+            preset_id: None,
+            category_id: None,
+            yid: None,
+            sort_order: 0,
+            priority: 0,
+            weight: 1,
+            status: 1,
+            balance: None,
+            max_rps: None,
+            quota_limit: -1.0,
+            quota_used: 0.0,
+            daily_quota_limit: -1.0,
+            daily_quota_used: 0.0,
+            weekly_quota_limit: -1.0,
+            weekly_quota_used: 0.0,
+            monthly_quota_limit: -1.0,
+            monthly_quota_used: 0.0,
+            last_reset_day: String::new(),
+            last_reset_week: String::new(),
+            last_reset_month: String::new(),
+            config: config_json.to_string(),
+            rate: 1.0,
+            created_at: DbTs::default(),
+            updated_at: DbTs::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_upstream_config_falls_back_to_default_when_not_overridden() {
+        let cfg = sample_config();
+        let ch = sample_channel(r#"{"sub_channels":[42]}"#);
+        assert!(ch.get_upstream_override(42).is_none());
+        let resolved = ch.resolve_upstream_config(&cfg);
+        assert!((resolved.rate - 1.0).abs() < 1e-6);
+        assert_eq!(resolved.priority, 5);
+        assert_eq!(resolved.weight, 2);
+    }
+
+    #[test]
+    fn resolve_upstream_config_applies_partial_and_full_overrides() {
+        let cfg = sample_config();
+        let ch_partial = sample_channel(
+            r#"{"sub_channels":[42],"upstream_overrides":{"42":{"priority":20}}}"#,
+        );
+        let resolved_partial = ch_partial.resolve_upstream_config(&cfg);
+        assert!((resolved_partial.rate - 1.0).abs() < 1e-6);
+        assert_eq!(resolved_partial.priority, 20);
+        assert_eq!(resolved_partial.weight, 2); // falls back to cfg.weight
+
+        let ch_full = sample_channel(
+            r#"{"sub_channels":[42],"upstream_overrides":{"42":{"rate":0.75,"priority":10,"weight":8}}}"#,
+        );
+        let resolved_full = ch_full.resolve_upstream_config(&cfg);
+        // 渠道倍率不可按分组覆盖，始终保持上游预设默认值 1.0
+        assert!((resolved_full.rate - 1.0).abs() < 1e-6);
+        assert_eq!(resolved_full.priority, 10);
+        assert_eq!(resolved_full.weight, 8);
+    }
 }

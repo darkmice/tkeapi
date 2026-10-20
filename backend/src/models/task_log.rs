@@ -12,7 +12,7 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 
-fn is_zero_i32(v: &i32) -> bool {
+fn is_zero_i64(v: &i64) -> bool {
     *v == 0
 }
 
@@ -26,13 +26,13 @@ pub struct TaskLog {
     pub channel_id: Option<i64>,
     pub model: String,
     pub endpoint: String,
-    pub prompt_tokens: i32,
-    pub completion_tokens: i32,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
     #[sqlx(default)]
-    pub cached_tokens: i32,
+    pub cached_tokens: i64,
     pub cost: f64,
-    pub latency_ms: i32,
-    pub status_code: i32,
+    pub latency_ms: i64,
+    pub status_code: i64,
     #[sqlx(default)]
     pub error_message: Option<String>,
     #[sqlx(default)]
@@ -68,8 +68,8 @@ pub struct TaskLog {
     pub channel_group_aid: Option<String>,
     /// 请求当时是否走 HA 组（写路径快照）
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub is_ha: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub is_ha: i64,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_nickname: Option<String>,
@@ -105,10 +105,10 @@ pub struct TaskLog {
     /// 任务是否已终结（列表用于级联进行中不向普通用户暴露 S1 产物预览）
     #[sqlx(default)]
     #[serde(skip_serializing)]
-    pub is_completed: i16,
+    pub is_completed: i64,
     /// 视频模型输入是否包含视频(1=含视频, 0=无视频)
     #[sqlx(default)]
-    pub has_video: i16,
+    pub has_video: i64,
     pub created_at: DbTs,
 }
 

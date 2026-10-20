@@ -69,6 +69,15 @@ pub async fn update_profile(
         }
         user.nickname = Some(nickname.clone());
     }
+    crate::models::user::assign_profile_identity(
+        &mut user.first_name,
+        &mut user.last_name,
+        &mut user.birth_ym,
+        request.first_name,
+        request.last_name,
+        request.birth_ym,
+    )
+    .map_err(AppError::BadRequest)?;
     // 邮箱/手机/微信不得通过资料接口直接改写，必须走验证码绑定接口，防止未验证绑定被找回密码利用
     if request.email.is_some() || request.mobile.is_some() || request.wechat_id.is_some() {
         return Err(AppError::BadRequest(
@@ -86,8 +95,10 @@ pub async fn update_profile(
         user.notification_preferences = Some(merged);
     }
 
+    let mut password_changed = false;
     if let Some(password) = request.password {
         if !password.is_empty() {
+            auth::validate_password(&password)?;
             if let Some(old_password) = request.old_password {
                 if !auth::verify_password(&old_password, &user.password_hash).unwrap_or(false) {
                     return Err(AppError::BadRequest("原密码不正确".to_string()));
@@ -96,28 +107,91 @@ pub async fn update_profile(
                 return Err(AppError::BadRequest("修改密码需要验证原密码".to_string()));
             }
             user.password_hash = auth::hash_password(&password)?;
+            password_changed = true;
         }
     }
 
-    sqlx::query(&state.db.format_query(
-        r#"UPDATE users SET email = ?, password_hash = ?, nickname = ?, mobile = ?, 
-           wechat_id = ?, timezone = ?, notification_preferences = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?"#,
-    ))
-    .bind(&user.email)
-    .bind(&user.password_hash)
-    .bind(&user.nickname)
-    .bind(&user.mobile)
-    .bind(&user.wechat_id)
-    .bind(&user.timezone)
-    .bind(&user.notification_preferences)
-    .bind(&user.id)
-    .execute(&state.db.pool)
-    .await?;
+    if password_changed {
+        sqlx::query(&state.db.format_query(
+            r#"UPDATE users SET email = ?, password_hash = ?, nickname = ?, mobile = ?, 
+               wechat_id = ?, timezone = ?, notification_preferences = ?, first_name = ?, last_name = ?, birth_ym = ?, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+        ))
+        .bind(&user.email)
+        .bind(&user.password_hash)
+        .bind(&user.nickname)
+        .bind(&user.mobile)
+        .bind(&user.wechat_id)
+        .bind(&user.timezone)
+        .bind(&user.notification_preferences)
+        .bind(&user.first_name)
+        .bind(&user.last_name)
+        .bind(&user.birth_ym)
+        .bind(&user.id)
+        .execute(&state.db.pool)
+        .await?;
+    } else {
+        sqlx::query(&state.db.format_query(
+            r#"UPDATE users SET email = ?, password_hash = ?, nickname = ?, mobile = ?, 
+               wechat_id = ?, timezone = ?, notification_preferences = ?, first_name = ?, last_name = ?, birth_ym = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?"#,
+        ))
+        .bind(&user.email)
+        .bind(&user.password_hash)
+        .bind(&user.nickname)
+        .bind(&user.mobile)
+        .bind(&user.wechat_id)
+        .bind(&user.timezone)
+        .bind(&user.notification_preferences)
+        .bind(&user.first_name)
+        .bind(&user.last_name)
+        .bind(&user.birth_ym)
+        .bind(&user.id)
+        .execute(&state.db.pool)
+        .await?;
+    }
 
+    crate::api::auth::sanitize_user_for_client(&mut user);
     crate::admin_permission::hydrate_user_admin_permissions(&state, &mut user).await?;
 
     Ok(Json(user))
+}
+
+async fn load_avatar_owner(
+    state: &Arc<AppState>,
+    claims: &auth::Claims,
+) -> AppResult<(String, String, Option<String>)> {
+    sqlx::query_as(
+        &state
+            .db
+            .format_query("SELECT id, uid, avatar FROM users WHERE id = ?"),
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("User not found".to_string()))
+}
+
+/// 用户上传自己的头像（客户端已裁成 1:1 小图）
+pub async fn upload_avatar(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<auth::Claims>,
+    multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let (user_id, uid, old_avatar) = load_avatar_owner(&state, &claims).await?;
+    let avatar =
+        crate::api::users::store_user_avatar(&state, &user_id, &uid, old_avatar, multipart).await?;
+    Ok(Json(serde_json::json!({ "avatar": avatar })))
+}
+
+/// 用户移除自己的头像
+pub async fn remove_avatar(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<auth::Claims>,
+) -> AppResult<Json<serde_json::Value>> {
+    let (user_id, uid, old_avatar) = load_avatar_owner(&state, &claims).await?;
+    crate::api::users::clear_user_avatar(&state, &user_id, &uid, old_avatar).await?;
+    Ok(Json(serde_json::json!({ "avatar": null })))
 }
 
 async fn ensure_client_ip_allowed(
@@ -144,40 +218,59 @@ pub async fn bind_mobile(
         .fetch_one(&state.db.pool)
         .await?;
 
-    // 换绑：验证原手机验证码
-    if let Some(ref old_mobile) = user.mobile {
-        if !old_mobile.is_empty() {
-            let old_code = request
-                .old_code
-                .as_ref()
-                .ok_or_else(|| AppError::BadRequest("换绑需验证原手机验证码".to_string()))?;
-            crate::api::auth::verify_sms_code_pub(&state, old_mobile, old_code, "bind_mobile")
-                .await?;
-        }
+    let settings = crate::api::settings::load_all_settings(&state).await?;
+    let mobile = crate::auth::contact::normalize_mobile(
+        &request.mobile,
+        settings.registration.allow_international_mobile,
+    )?;
+
+    let old_mobile_opt = user
+        .mobile
+        .as_deref()
+        .map(crate::auth::contact::canonical_mobile_lenient)
+        .filter(|m| !m.is_empty());
+    if old_mobile_opt.as_deref() == Some(mobile.as_str()) {
+        return Err(AppError::BadRequest(
+            "新手机号不能与当前已绑定手机号相同".to_string(),
+        ));
     }
 
-    // 验证新手机验证码
-    crate::api::auth::verify_sms_code_pub(&state, &request.mobile, &request.code, "bind_mobile")
-        .await?;
+    // 预校验原手机验证码与新手机验证码（暂不消费，避免新手机号撞上限或新码输错导致旧码作废）
+    if let Some(ref old_mobile) = old_mobile_opt {
+        let old_code = request
+            .old_code
+            .as_ref()
+            .ok_or_else(|| AppError::BadRequest("换绑需验证原手机验证码".to_string()))?;
+        crate::api::auth::peek_sms_code_pub(&state, old_mobile, old_code, "bind_mobile").await?;
+    }
+    crate::api::auth::peek_sms_code_pub(&state, &mobile, &request.code, "bind_mobile").await?;
 
-    let settings = crate::api::settings::load_all_settings(&state).await?;
-    let limit = crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_mobile);
+    let limit =
+        crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_mobile);
     let mut tx = state.db.pool.begin().await?;
     crate::auth::contact::assert_mobile_slot_tx(
         &mut tx,
         &state.db,
-        &request.mobile,
+        &mobile,
         Some(&claims.sub),
         limit,
     )
     .await?;
+
+    if let Some(ref old_mobile) = old_mobile_opt {
+        if let Some(ref old_code) = request.old_code {
+            crate::api::auth::verify_sms_code_pub(&state, old_mobile, old_code, "bind_mobile")
+                .await?;
+        }
+    }
+    crate::api::auth::verify_sms_code_pub(&state, &mobile, &request.code, "bind_mobile").await?;
 
     sqlx::query(
         &state.db.format_query(
             "UPDATE users SET mobile = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ),
     )
-    .bind(&request.mobile)
+    .bind(&mobile)
     .bind(&claims.sub)
     .execute(&mut *tx)
     .await?;
@@ -202,38 +295,59 @@ pub async fn bind_email(
         .fetch_one(&state.db.pool)
         .await?;
 
-    // 换绑：验证原邮箱验证码（排除占位邮箱）
-    if !user.email.is_empty() && !user.email.ends_with("@tokensbyte.local") {
+    let settings = crate::api::settings::load_all_settings(&state).await?;
+    let email = crate::auth::contact::canonical_email(&request.email);
+    if email.is_empty() {
+        return Err(AppError::BadRequest("邮箱不能为空".to_string()));
+    }
+    if !crate::auth::contact::is_real_email(&email) {
+        return Err(AppError::BadRequest("无效的邮箱地址".to_string()));
+    }
+    crate::api::auth::validate_email(&settings.registration, &email)?;
+
+    let old_email = crate::auth::contact::canonical_email(&user.email);
+    let has_old_email = crate::auth::contact::is_real_email(&old_email);
+    if has_old_email && old_email == email {
+        return Err(AppError::BadRequest(
+            "新邮箱不能与当前已绑定邮箱相同".to_string(),
+        ));
+    }
+
+    // 预校验原邮箱验证码与新邮箱验证码（暂不消费，避免新邮箱撞上限或新码输错导致旧码作废）
+    if has_old_email {
         let old_code = request
             .old_code
             .as_ref()
             .ok_or_else(|| AppError::BadRequest("换绑需验证原邮箱验证码".to_string()))?;
-        crate::api::auth::verify_email_code_pub(&state, &user.email, old_code, "bind_email")
-            .await?;
+        crate::api::auth::peek_email_code_pub(&state, &old_email, old_code, "bind_email").await?;
     }
+    crate::api::auth::peek_email_code_pub(&state, &email, &request.code, "bind_email").await?;
 
-    // 验证新邮箱验证码
-    crate::api::auth::verify_email_code_pub(&state, &request.email, &request.code, "bind_email")
-        .await?;
-
-    let settings = crate::api::settings::load_all_settings(&state).await?;
     let limit = crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_email);
     let mut tx = state.db.pool.begin().await?;
     crate::auth::contact::assert_email_slot_tx(
         &mut tx,
         &state.db,
-        &request.email,
+        &email,
         Some(&claims.sub),
         limit,
     )
     .await?;
+
+    if has_old_email {
+        if let Some(ref old_code) = request.old_code {
+            crate::api::auth::verify_email_code_pub(&state, &old_email, old_code, "bind_email")
+                .await?;
+        }
+    }
+    crate::api::auth::verify_email_code_pub(&state, &email, &request.code, "bind_email").await?;
 
     sqlx::query(
         &state.db.format_query(
             "UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         ),
     )
-    .bind(&request.email)
+    .bind(&email)
     .bind(&claims.sub)
     .execute(&mut *tx)
     .await?;
@@ -257,12 +371,20 @@ pub async fn bind_wechat(
             .ok_or_else(|| AppError::BadRequest("微信授权未配置".to_string()))?;
         let req_base_url =
             crate::api::auth::get_base_url_from_req(&headers, &state.config.base_url);
-        let redirect_uri = format!("{}/api/v1/user/bind/wechat/callback", req_base_url);
+        let callback_base = wechat.callback_domain.trim();
+        let redirect_base = if !callback_base.is_empty() {
+            crate::api::auth::normalize_origin(callback_base)
+        } else {
+            req_base_url.clone()
+        };
+        let redirect_uri = format!("{}/api/v1/user/bind/wechat/callback", redirect_base);
+        let return_origin = (redirect_base != req_base_url).then_some(req_base_url.as_str());
         let state_val = crate::api::auth::generate_oauth_bind_state(
             &state.config.jwt_secret,
             "bind",
             "wechat",
             &claims.sub,
+            return_origin,
         );
         let url = crate::services::oauth::OAuthService::wechat_auth_url(
             &wechat.app_id,
@@ -281,6 +403,7 @@ pub async fn bind_wechat(
 /// 为前端扫码绑定签发 HMAC state（需登录）
 pub async fn bind_oauth_state(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Extension(claims): Extension<auth::Claims>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -296,17 +419,26 @@ pub async fn bind_oauth_state(
             "action 仅支持 bind 或 verify".to_string(),
         ));
     }
+    let req_base = crate::api::auth::get_base_url_from_req(&headers, &state.config.base_url);
+    let origin = crate::api::auth::resolve_trusted_oauth_origin(
+        query.get("origin").map(|s| s.as_str()).filter(|s| !s.is_empty()),
+        &req_base,
+        &state.config.base_url,
+        None,
+    )
+    .unwrap_or(req_base);
     let state_val = crate::api::auth::generate_oauth_bind_state(
         &state.config.jwt_secret,
         action,
         provider,
         &claims.sub,
+        Some(&origin),
     );
     Ok(Json(serde_json::json!({ "state": state_val })))
 }
 
 /// 微信绑定回调 — 统一处理验证旧微信 / 绑定新微信两种场景
-/// state 必须为服务端 HMAC 签发：verify_wechat_{uid}_{ts}_{sig} / bind_wechat_{uid}_{ts}_{sig}
+/// state 必须为服务端 HMAC 签发：verify_wechat_{uid}_{ts}_{origin}_{sig} / bind_wechat_{uid}_{ts}_{origin}_{sig}
 pub async fn bind_wechat_callback(
     State(state): State<Arc<AppState>>,
     Query(query): Query<crate::api::auth::OAuthCallbackQuery>,
@@ -314,7 +446,7 @@ pub async fn bind_wechat_callback(
     let result = (async {
         let code = query.code.ok_or_else(|| AppError::BadRequest("缺少 code".to_string()))?;
         let state_str = query.state.unwrap_or_default();
-        let (action, provider, user_id) = crate::api::auth::verify_oauth_bind_state(
+        let (action, provider, user_id, origin) = crate::api::auth::verify_oauth_bind_state(
             &state.config.jwt_secret,
             &state_str,
         )
@@ -322,6 +454,11 @@ pub async fn bind_wechat_callback(
         if provider != "wechat" {
             return Err(AppError::BadRequest("无效的 state 参数".to_string()));
         }
+
+        let make_redirect = |param: &str| match origin.as_deref().filter(|s| !s.is_empty()) {
+            Some(base) => format!("{}/profile?wechat_action={param}", base.trim_end_matches('/')),
+            None => format!("/profile?wechat_action={param}"),
+        };
 
         let settings = crate::api::settings::load_all_settings(&state).await?;
         let wechat = settings.wechat_oauth.ok_or_else(|| AppError::BadRequest("微信授权未配置".to_string()))?;
@@ -337,21 +474,55 @@ pub async fn bind_wechat_callback(
             ).bind(&user_id).fetch_optional(&state.db.pool).await?.flatten();
 
             if current_wechat.as_deref() != Some(wechat_identifier) && current_wechat.as_deref() != Some(fallback_identifier) {
-                return Ok("/profile?wechat_action=verify_failed".to_string());
+                return Ok(make_redirect("verify_failed"));
             }
-            return Ok("/profile?wechat_action=verified".to_string());
+            mark_oauth_rebind_verified(&user_id, "wechat");
+            return Ok(make_redirect("verified"));
         }
 
         // ── 绑定新微信（首次绑定 / 换绑第二步） ─────────────────
         if action == "bind" {
-            let exists: bool = sqlx::query_scalar(&state.db.format_query("SELECT EXISTS(SELECT 1 FROM users WHERE (wechat_id = ? OR wechat_id = ?) AND id != ?)"))
-                .bind(wechat_identifier).bind(fallback_identifier).bind(&user_id).fetch_one(&state.db.pool).await?;
-            if exists {
-                return Ok("/profile?wechat_action=bindconflict".to_string());
+            let current_wechat: Option<String> = sqlx::query_scalar(
+                &state.db.format_query("SELECT wechat_id FROM users WHERE id = ?")
+            ).bind(&user_id).fetch_optional(&state.db.pool).await?.flatten();
+            let is_rebind = current_wechat.as_deref().is_some_and(|w| !w.trim().is_empty());
+            if is_rebind && !has_oauth_rebind_verified(&user_id, "wechat") {
+                return Ok(make_redirect("verify_failed"));
+            }
+
+            let mut tx = state.db.pool.begin().await?;
+            if wechat_identifier != fallback_identifier {
+                sqlx::query(&state.db.format_query(
+                    "UPDATE users SET wechat_id = ?, wechat_name = ? WHERE wechat_id = ?",
+                ))
+                .bind(wechat_identifier)
+                .bind(&info.nickname)
+                .bind(fallback_identifier)
+                .execute(&mut *tx)
+                .await?;
+            }
+            let limit = crate::auth::contact::normalize_limit(
+                settings.registration.max_accounts_per_wechat,
+            );
+            if crate::auth::contact::assert_wechat_slot_tx(
+                &mut tx,
+                &state.db,
+                wechat_identifier,
+                Some(&user_id),
+                limit,
+            )
+            .await
+            .is_err()
+            {
+                return Ok(make_redirect("bindconflict"));
+            }
+            if is_rebind && !consume_oauth_rebind_verified(&user_id, "wechat") {
+                return Ok(make_redirect("verify_failed"));
             }
             sqlx::query(&state.db.format_query("UPDATE users SET wechat_id = ?, wechat_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"))
-                .bind(wechat_identifier).bind(&info.nickname).bind(&user_id).execute(&state.db.pool).await?;
-            return Ok("/profile?wechat_action=bindok".to_string());
+                .bind(wechat_identifier).bind(&info.nickname).bind(&user_id).execute(&mut *tx).await?;
+            tx.commit().await?;
+            return Ok(make_redirect("bindok"));
         }
 
         Err(AppError::BadRequest("无效的 state 参数".to_string()))
@@ -359,6 +530,34 @@ pub async fn bind_wechat_callback(
     match result {
         Ok(url) => Redirect::temporary(&url).into_response(),
         Err(err) => err.into_response(),
+    }
+}
+
+static OAUTH_REBIND_VERIFIED: std::sync::LazyLock<
+    dashmap::DashMap<(String, &'static str), std::time::Instant>,
+> = std::sync::LazyLock::new(dashmap::DashMap::new);
+
+const OAUTH_REBIND_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn mark_oauth_rebind_verified(user_id: &str, provider: &'static str) {
+    let now = std::time::Instant::now();
+    OAUTH_REBIND_VERIFIED.retain(|_, ts| now.duration_since(*ts) < OAUTH_REBIND_TTL);
+    OAUTH_REBIND_VERIFIED.insert((user_id.to_string(), provider), now);
+}
+
+fn has_oauth_rebind_verified(user_id: &str, provider: &'static str) -> bool {
+    if let Some(ts) = OAUTH_REBIND_VERIFIED.get(&(user_id.to_string(), provider)) {
+        ts.elapsed() < OAUTH_REBIND_TTL
+    } else {
+        false
+    }
+}
+
+fn consume_oauth_rebind_verified(user_id: &str, provider: &'static str) -> bool {
+    if let Some((_, ts)) = OAUTH_REBIND_VERIFIED.remove(&(user_id.to_string(), provider)) {
+        ts.elapsed() < OAUTH_REBIND_TTL
+    } else {
+        false
     }
 }
 
@@ -380,11 +579,18 @@ pub async fn bind_google(
 
         let action = query.get("action").map(|s| s.as_str()).unwrap_or("bind");
         let action = if action == "verify" { "verify" } else { "bind" };
+        let return_origin = crate::api::auth::resolve_trusted_oauth_origin(
+            query.get("origin").map(|s| s.as_str()).filter(|s| !s.is_empty()),
+            &req_base_url,
+            &state.config.base_url,
+            None,
+        );
         let state_val = crate::api::auth::generate_oauth_bind_state(
             &state.config.jwt_secret,
             action,
             "google",
             &claims.sub,
+            return_origin.as_deref(),
         );
 
         let url = crate::services::oauth::OAuthService::google_auth_url(
@@ -410,7 +616,7 @@ pub async fn bind_google_callback(
     let result = (async {
         let code = query.code.ok_or_else(|| AppError::BadRequest("缺少 code".to_string()))?;
         let state_str = query.state.unwrap_or_default();
-        let (action, provider, user_id) = crate::api::auth::verify_oauth_bind_state(
+        let (action, provider, user_id, origin) = crate::api::auth::verify_oauth_bind_state(
             &state.config.jwt_secret,
             &state_str,
         )
@@ -419,6 +625,11 @@ pub async fn bind_google_callback(
             return Err(AppError::BadRequest("无效的 state 参数".to_string()));
         }
 
+        let make_redirect = |param: &str| match origin.as_deref().filter(|s| !s.is_empty()) {
+            Some(base) => format!("{}/profile?google_action={param}", base.trim_end_matches('/')),
+            None => format!("/profile?google_action={param}"),
+        };
+
         let settings = crate::api::settings::load_all_settings(&state).await?;
         let google = settings.google_oauth.ok_or_else(|| AppError::BadRequest("谷歌授权未配置".to_string()))?;
         let req_base_url = crate::api::auth::get_base_url_from_req(&headers, &state.config.base_url);
@@ -426,29 +637,62 @@ pub async fn bind_google_callback(
         let info = crate::services::oauth::OAuthService::google_exchange(&google.client_id, &google.client_secret, &code, &redirect_uri).await?;
 
         let google_display_name = info.name.clone().or_else(|| info.email.clone());
+        let account: Option<(Option<String>, String)> = sqlx::query_as(
+            &state.db.format_query("SELECT google_id, email FROM users WHERE id = ?"),
+        )
+        .bind(&user_id)
+        .fetch_optional(&state.db.pool)
+        .await?;
+        let Some((current_google, current_email)) = account else {
+            return Err(AppError::NotFound("用户不存在".to_string()));
+        };
 
         if action == "verify" {
-            let current_google: Option<String> = sqlx::query_scalar(
-                &state.db.format_query("SELECT google_id FROM users WHERE id = ?")
-            ).bind(&user_id).fetch_optional(&state.db.pool).await?.flatten();
-
-            if current_google.as_deref() != Some(&info.id) {
-                return Ok("/profile?google_action=verify_failed".to_string());
+            if !crate::services::oauth::google_identity_matches(current_google.as_deref(), &info) {
+                return Ok(make_redirect("verify_failed"));
             }
-            return Ok("/profile?google_action=verified".to_string());
+            mark_oauth_rebind_verified(&user_id, "google");
+            return Ok(make_redirect("verified"));
         }
 
         if action == "bind" {
-            let exists: bool = sqlx::query_scalar(&state.db.format_query("SELECT EXISTS(SELECT 1 FROM users WHERE google_id = ? AND id != ?)"))
-                .bind(&info.id).bind(&user_id).fetch_one(&state.db.pool).await?;
-            if exists {
-                return Ok("/profile?google_action=bindconflict".to_string());
+            let is_rebind = current_google.as_deref().is_some_and(|g| !g.trim().is_empty());
+            if is_rebind && !has_oauth_rebind_verified(&user_id, "google") {
+                return Ok(make_redirect("verify_failed"));
             }
 
-            sqlx::query(&state.db.format_query("UPDATE users SET google_id = ?, google_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"))
-                .bind(&info.id).bind(&google_display_name).bind(&user_id).execute(&state.db.pool).await?;
+            let Some(google_id) = info.account_key() else {
+                return Ok(make_redirect("verify_failed"));
+            };
+            let exists: bool = sqlx::query_scalar(&state.db.format_query("SELECT EXISTS(SELECT 1 FROM users WHERE google_id = ? AND id != ?)"))
+                .bind(&google_id).bind(&user_id).fetch_one(&state.db.pool).await?;
+            if exists {
+                return Ok(make_redirect("bindconflict"));
+            }
+            if is_rebind && !consume_oauth_rebind_verified(&user_id, "google") {
+                return Ok(make_redirect("verify_failed"));
+            }
 
-            return Ok("/profile?google_action=bindok".to_string());
+            let bind_email = crate::api::auth::google_email_to_apply(
+                &state,
+                &settings.registration,
+                &current_email,
+                info.verified_email().as_deref(),
+                Some(&user_id),
+                true,
+            )
+            .await?;
+            sqlx::query(&state.db.format_query(
+                "UPDATE users SET google_id = ?, google_name = ?, email = COALESCE(?, email), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ))
+            .bind(&google_id)
+            .bind(&google_display_name)
+            .bind(&bind_email)
+            .bind(&user_id)
+            .execute(&state.db.pool)
+            .await?;
+
+            return Ok(make_redirect("bindok"));
         }
 
         Err(AppError::BadRequest("无效的 state 参数".to_string()))
@@ -479,7 +723,7 @@ pub async fn unbind_third_party(
     match bind_type.as_str() {
         "wechat" => {
             sqlx::query(&state.db.format_query(
-                "UPDATE users SET wechat_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE users SET wechat_id = NULL, wechat_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ))
             .bind(&claims.sub)
             .execute(&state.db.pool)
@@ -490,7 +734,7 @@ pub async fn unbind_third_party(
         }
         "google" => {
             sqlx::query(&state.db.format_query(
-                "UPDATE users SET google_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE users SET google_id = NULL, google_name = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             ))
             .bind(&claims.sub)
             .execute(&state.db.pool)
@@ -509,7 +753,7 @@ pub async fn get_wallet_stats(
 ) -> AppResult<Json<WalletStats>> {
     let user_id = &claims.sub;
 
-    let (balance, gift_balance, credit_limit, pay_enabled): (f64, f64, f64, i32) =
+    let (balance, gift_balance, credit_limit, pay_enabled): (f64, f64, f64, i64) =
         sqlx::query_as(&state.db.format_query(
             "SELECT balance, gift_balance, credit_limit, pay_enabled FROM users WHERE id = ?",
         ))
@@ -569,19 +813,26 @@ pub async fn get_wallet_stats(
     .fetch_optional(&state.db.pool)
     .await?;
 
-    let (marketing_enabled, commission_ratio, invite_reward_inviter, invite_reward_invitee, commission_basis, commission_transfer_min, commission_transfer_max) =
-        match level_marketing {
-            Some((m, c, ri, re, basis, tmin, tmax)) => (
-                m == 1,
-                c,
-                ri,
-                re,
-                crate::services::affiliate::normalize_commission_basis(&basis).to_string(),
-                tmin.max(0.0),
-                tmax.max(0.0),
-            ),
-            None => (false, 0.0, 0.0, 0.0, "consumption".to_string(), 0.0, 0.0),
-        };
+    let (
+        marketing_enabled,
+        commission_ratio,
+        invite_reward_inviter,
+        invite_reward_invitee,
+        commission_basis,
+        commission_transfer_min,
+        commission_transfer_max,
+    ) = match level_marketing {
+        Some((m, c, ri, re, basis, tmin, tmax)) => (
+            m == 1,
+            c,
+            ri,
+            re,
+            crate::services::affiliate::normalize_commission_basis(&basis).to_string(),
+            tmin.max(0.0),
+            tmax.max(0.0),
+        ),
+        None => (false, 0.0, 0.0, 0.0, "consumption".to_string(), 0.0, 0.0),
+    };
 
     Ok(Json(WalletStats {
         balance,
@@ -737,7 +988,7 @@ pub struct AffiliateReferral {
 
 #[derive(Debug, Serialize)]
 pub struct AffiliateLedgerItem {
-    pub id: i32,
+    pub id: i64,
     pub created_at: String,
     pub from_username: String,
     pub from_uid: String,
@@ -784,7 +1035,7 @@ struct AffiliateReferralRow {
 
 #[derive(Debug, sqlx::FromRow)]
 struct AffiliateLedgerRow {
-    id: i32,
+    id: i64,
     amount: f64,
     ratio: f64,
     source_key: Option<String>,
@@ -802,11 +1053,7 @@ fn commission_source_kind(source_key: &str, amount: f64) -> &'static str {
     } else if source_key.starts_with("recharge:") {
         "recharge"
     } else if source_key.starts_with("log:") || source_key.starts_with("daycons:") {
-        if source_key.starts_with("daycons:") && amount < 0.0 {
-            "refund"
-        } else {
-            "consumption"
-        }
+        "consumption"
     } else if amount < 0.0 {
         "refund"
     } else {
@@ -877,9 +1124,11 @@ pub async fn get_affiliate_overview(
     let (ledger_page, ledger_page_size, ledger_offset) =
         page_params(query.ledger_page, query.ledger_page_size);
 
-    let identity: Option<(String, f64)> = sqlx::query_as(&state.db.format_query(
-        "SELECT uid, commission_balance FROM users WHERE id = ?",
-    ))
+    let identity: Option<(String, f64)> = sqlx::query_as(
+        &state
+            .db
+            .format_query("SELECT uid, commission_balance FROM users WHERE id = ?"),
+    )
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await?;
@@ -893,7 +1142,8 @@ pub async fn get_affiliate_overview(
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await?;
-    let Some((marketing_flag, ratio, reward_inviter, reward_invitee, daily_limit, basis_raw)) = level
+    let Some((marketing_flag, ratio, reward_inviter, reward_invitee, daily_limit, basis_raw)) =
+        level
     else {
         return Ok(Json(empty_affiliate_overview()));
     };
@@ -915,7 +1165,8 @@ pub async fn get_affiliate_overview(
     let stamp = |day: chrono::NaiveDate| format!("{} 00:00:00{}", day.format("%Y-%m-%d"), offset);
     let today_start = stamp(today);
     let tomorrow_start = stamp(today + chrono::Duration::days(1));
-    let month_day = chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
+    let month_day =
+        chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
     let month_start = stamp(month_day);
 
     let (total_referred, active_referred, today_referred, month_referred): (i64, i64, i64, i64) =
@@ -948,7 +1199,7 @@ pub async fn get_affiliate_overview(
             COALESCE(SUM(amount), 0)::float8, \
             COALESCE(SUM(CASE WHEN created_at >= ?::timestamptz AND created_at < ?::timestamptz THEN amount ELSE 0 END), 0)::float8, \
             COALESCE(SUM(CASE WHEN created_at >= ?::timestamptz AND created_at < ?::timestamptz THEN amount ELSE 0 END), 0)::float8, \
-            COALESCE(SUM(CASE WHEN source_key LIKE 'log:%' THEN amount ELSE 0 END), 0)::float8, \
+            COALESCE(SUM(CASE WHEN source_key LIKE 'log:%' OR source_key LIKE 'daycons:%' THEN amount ELSE 0 END), 0)::float8, \
             COALESCE(SUM(CASE WHEN source_key LIKE 'recharge:%' THEN amount ELSE 0 END), 0)::float8, \
             COALESCE(SUM(CASE WHEN source_key LIKE 'ark:%' THEN amount ELSE 0 END), 0)::float8, \
             COALESCE(SUM(CASE WHEN source_key LIKE 'arkrefund:%' THEN amount ELSE 0 END), 0)::float8 \
@@ -979,7 +1230,7 @@ pub async fn get_affiliate_overview(
     .fetch_one(&state.db.pool)
     .await?;
 
-    let paid_recharge = "amount > 0 AND COALESCE(wallet_type, 'system') = 'system' AND recharge_type NOT IN ('gift', 'registration', 'commission', 'redemption', 'ark_video_consume', 'ark_video_refund')";
+    let paid_recharge = "amount > 0 AND COALESCE(wallet_type, 'system') = 'system' AND recharge_type NOT IN ('gift', 'registration', 'commission', 'redemption', 'redemption_refund', 'model_voucher', 'coupon_purchase', 'coupon_pack', 'coupon_subscription', 'ark_video_consume', 'ark_video_refund')";
     let referrals: Vec<AffiliateReferralRow> = sqlx::query_as(&state.db.format_query(&format!(
         "SELECT u.uid, u.username, u.is_active, u.created_at, \
             COALESCE((SELECT SUM(rr.amount) FROM recharge_records rr WHERE rr.user_id = u.id AND {paid_recharge}), 0)::float8 AS recharge_total, \
@@ -1014,9 +1265,11 @@ pub async fn get_affiliate_overview(
     .fetch_all(&state.db.pool)
     .await?;
 
-    let ledger_total: i64 = sqlx::query_scalar(&state.db.format_query(
-        "SELECT COUNT(*) FROM commissions WHERE user_id = ?",
-    ))
+    let ledger_total: i64 = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT COUNT(*) FROM commissions WHERE user_id = ?"),
+    )
     .bind(user_id)
     .fetch_one(&state.db.pool)
     .await?;
@@ -1113,8 +1366,14 @@ mod affiliate_overview_tests {
     #[test]
     fn classifies_commission_sources() {
         assert_eq!(commission_source_kind("log:12", 1.0), "consumption");
-        assert_eq!(commission_source_kind("daycons:u1:2026-10-03", 1.0), "consumption");
-        assert_eq!(commission_source_kind("daycons:u1:2026-10-03", -1.0), "refund");
+        assert_eq!(
+            commission_source_kind("daycons:u1:2026-10-03", 1.0),
+            "consumption"
+        );
+        assert_eq!(
+            commission_source_kind("daycons:inv:u1:2026-10-05", -1.0),
+            "consumption"
+        );
         assert_eq!(commission_source_kind("recharge:9", 1.0), "recharge");
         assert_eq!(commission_source_kind("ark:3", 1.0), "video");
         assert_eq!(commission_source_kind("arkrefund:4", -1.0), "refund");

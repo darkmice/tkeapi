@@ -7,7 +7,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Card, Typography, Row, Col, Table, Button, Tag, Grid, Tabs, Input, InputNumber, Modal, message } from 'antd';
+import { Card, Typography, Row, Col, Table, Button, Tag, Grid, Tabs, Input, InputNumber, Modal, message, Space, Tooltip } from 'antd';
 import {
   SwapOutlined,
   HistoryOutlined,
@@ -28,9 +28,10 @@ import type { WalletStats, RechargeRecord } from '../../types';
 import dayjs from 'dayjs';
 
 import RechargeModal from './RechargeModal';
-import { rechargeTypeColor, rechargeTypeFilters, rechargeTypeLabel, extractOrderNo, cleanRemark } from '../../utils/rechargeType';
+import { rechargeTypeFilters, rechargeTypeLabel, extractOrderNo, cleanRemark } from '../../utils/rechargeType';
 import { copyWithFeedback } from '../../utils/clipboard';
 import { formatApiDateTime } from '../../utils/timedisplay';
+import PageHeader from '../../components/PageHeader';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -122,14 +123,9 @@ const Wallet: React.FC = () => {
   const [records, setRecords] = useState<RechargeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
-  const [redeemCode, setRedeemCode] = useState('');
-  const [redeeming, setRedeeming] = useState(false);
-  const [redeemCooldown, setRedeemCooldown] = useState(0);
-  const [redeemFeedback, setRedeemFeedback] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [transferring, setTransferring] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferAmount, setTransferAmount] = useState<number | null>(null);
-  const redeemLockRef = React.useRef(false);
 
   // 邀请返利与流水数据
   const [affiliateData, setAffiliateData] = useState<AffiliateOverview | null>(null);
@@ -141,8 +137,6 @@ const Wallet: React.FC = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'records';
-
-  const redemptionEnabled = !!settings?.marketing?.enable_redemption;
 
   const fetchAffiliate = useCallback(async (refPage = referralPage, refPageSize = referralPageSize, ledPage = ledgerPage, ledPageSize = ledgerPageSize) => {
     setAffiliateLoading(true);
@@ -240,65 +234,6 @@ const Wallet: React.FC = () => {
     await copyWithFeedback(inviteLink, t('wallet.copy_invite_link_success', '邀请链接已复制到剪贴板'), t('wallet.copy_failed', '复制失败，请手动选择复制'));
   };
 
-  const handleRedeem = async () => {
-    if (redeemLockRef.current || redeeming || redeemCooldown > 0) return;
-
-    const code = redeemCode.trim();
-    if (!code) {
-      setRedeemFeedback({
-        type: 'warning',
-        text: isEn ? 'Please enter a redemption code' : '请输入兑换码',
-      });
-      return;
-    }
-
-    redeemLockRef.current = true;
-    setRedeeming(true);
-    setRedeemFeedback(null);
-    try {
-      const res = await (request.post('/redemptions/redeem', { code }, {
-        skipErrorHandler: true,
-      } as any) as any);
-      if (res?.success) {
-        const amount = Number(res.quota_added || 0);
-        setRedeemFeedback({
-          type: 'success',
-          text: isEn
-            ? `Redeemed successfully (+${currencySymbol}${amount.toFixed(6)})`
-            : `兑换成功，已充值 ${currencySymbol}${amount.toFixed(6)}`,
-        });
-        setRedeemCode('');
-        fetchData();
-      }
-    } catch (e: any) {
-      const data = e?.response?.data;
-      let serverMsg =
-        data?.error?.message ||
-        data?.message ||
-        (typeof data?.error === 'string' ? data.error : undefined) ||
-        (typeof data === 'string' ? data : undefined);
-      if (serverMsg === 'Invalid or already used redemption code') {
-        serverMsg = isEn ? 'Invalid or already used redemption code' : '兑换码无效或已被使用';
-      }
-      setRedeemFeedback({
-        type: 'error',
-        text: serverMsg || (isEn ? 'Redemption failed' : '兑换失败，请稍后重试'),
-      });
-    } finally {
-      setRedeeming(false);
-      setRedeemCooldown(3);
-      setTimeout(() => {
-        redeemLockRef.current = false;
-      }, 300);
-    }
-  };
-
-  useEffect(() => {
-    if (redeemCooldown <= 0) return;
-    const timer = setTimeout(() => setRedeemCooldown((s) => s - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [redeemCooldown]);
-
   useEffect(() => {
     fetchData();
   }, []);
@@ -347,7 +282,7 @@ const Wallet: React.FC = () => {
         const orderNo = extractOrderNo(record);
         if (orderNo) {
           return (
-            <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, color: mainText }}>
+            <Text style={{ fontFamily: 'monospace', fontSize: 12, color: mainText }}>
               {orderNo}
             </Text>
           );
@@ -364,7 +299,17 @@ const Wallet: React.FC = () => {
       onFilter: (value: string | number | boolean, record: RechargeRecord) =>
         record.recharge_type === value,
       render: (type: string, record: RechargeRecord) => (
-        <Tag color={rechargeTypeColor(type)} bordered={false} style={{ margin: 0 }}>
+        <Tag
+          bordered={false}
+          style={{
+            margin: 0,
+            fontSize: 12,
+            fontFamily: 'monospace',
+            background: isLight ? '#f4f4f5' : '#27272a',
+            color: mainText,
+            border: `1px solid ${isLight ? '#e4e4e7' : '#3f3f46'}`,
+          }}
+        >
           {rechargeTypeLabel(type, record.wallet_type)}
         </Tag>
       ),
@@ -408,21 +353,6 @@ const Wallet: React.FC = () => {
     },
   ];
 
-  const commissionSourceColor = (source: string) => {
-    switch (source) {
-      case 'consumption':
-        return 'blue';
-      case 'recharge':
-        return 'green';
-      case 'video':
-        return 'purple';
-      case 'refund':
-        return 'error';
-      default:
-        return 'default';
-    }
-  };
-
   const commissionSourceLabel = (source: string) => {
     if (source === 'consumption') return t('affiliate_page.source_consumption', '消费返佣');
     if (source === 'recharge') return t('affiliate_page.source_recharge', '充值返佣');
@@ -449,7 +379,7 @@ const Wallet: React.FC = () => {
         const orderNo = extractOrderNo(record);
         if (orderNo) {
           return (
-            <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, color: mainText }}>
+            <Text style={{ fontFamily: 'monospace', fontSize: 12, color: mainText }}>
               {orderNo}
             </Text>
           );
@@ -466,7 +396,16 @@ const Wallet: React.FC = () => {
       onFilter: (value: string | number | boolean, record: AffiliateLedgerItem) =>
         record.source === value,
       render: (source: string) => (
-        <Tag color={commissionSourceColor(source)} bordered={false} style={{ margin: 0 }}>
+        <Tag
+          bordered={false}
+          style={{
+            margin: 0,
+            fontSize: 12,
+            background: isLight ? '#f4f4f5' : '#27272a',
+            color: mainText,
+            border: `1px solid ${isLight ? '#e4e4e7' : '#3f3f46'}`,
+          }}
+        >
           {commissionSourceLabel(source)}
         </Tag>
       ),
@@ -543,7 +482,16 @@ const Wallet: React.FC = () => {
       key: 'is_active',
       width: 100,
       render: (active: number) => (
-        <Tag color={active === 1 ? 'green' : 'default'} bordered={false}>
+        <Tag
+          bordered={false}
+          style={{
+            margin: 0,
+            fontSize: 12,
+            background: active === 1 ? (isLight ? '#18181b' : '#fafafa') : (isLight ? '#f4f4f5' : '#27272a'),
+            color: active === 1 ? (isLight ? '#fafafa' : '#18181b') : subText,
+            border: `1px solid ${isLight ? '#e4e4e7' : '#3f3f46'}`,
+          }}
+        >
           {active === 1 ? t('affiliate_page.active', '有效') : t('affiliate_page.inactive', '普通')}
         </Tag>
       ),
@@ -626,13 +574,22 @@ const Wallet: React.FC = () => {
     },
     {
       title: isEn ? 'Exclusive Discount' : '专享折扣',
-      dataIndex: 'discount',
+      dataIndex: 'actualDiscount',
       key: 'discount',
       align: 'right' as const,
-      render: (val: number) => (
-        <Text style={{ color: mainText }}>
-          {val}x
-        </Text>
+      render: (_: number, record: (typeof modelDiscountData)[number]) => (
+        <Space size={6}>
+          <Text style={{ color: mainText }}>
+            {record.actualDiscount}x
+          </Text>
+          {record.isLimited && (
+            <Tooltip title={isEn ? `Configured ${record.discount}x, clamped by model floor price ${record.limit}x` : `原设 ${record.discount}x，受模型保底限价 ${record.limit}x 约束`}>
+              <Tag color="orange" style={{ margin: 0, fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>
+                {isEn ? `Floor ${record.limit}x` : `保底 ${record.limit}x`}
+              </Tag>
+            </Tooltip>
+          )}
+        </Space>
       ),
     },
   ];
@@ -780,15 +737,12 @@ const Wallet: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: screens.md ? '16px 0 40px 0' : '12px 0 24px 0' }}>
-      {/* Header Area */}
-      <div style={{ marginBottom: 24 }}>
-        <Title level={2} style={{ margin: 0, fontWeight: 700, color: mainText, letterSpacing: '-0.025em' }}>
-          {t('wallet.wallet_and_account', '钱包与账户')}
-        </Title>
-        <Text style={{ color: subText, fontSize: 14, marginTop: 4, display: 'block' }}>
-          {isEn ? 'Manage your balance, top-ups, referral rewards, and commission ledger.' : '管理您的账户余额、充值记录、邀请返利及佣金明细。'}
-        </Text>
-      </div>
+      {/* 统一标准页面头部 */}
+      <PageHeader
+        title={t('wallet.wallet_and_account', '钱包与账户')}
+        description={isEn ? 'Manage your balance, top-ups, referral rewards, and commission ledger.' : '管理您的账户余额、充值记录、邀请返利及佣金明细。'}
+        marginBottom={24}
+      />
 
       {/* Main Balances Grid */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -925,11 +879,25 @@ const Wallet: React.FC = () => {
                   <Text style={{ fontSize: 15, fontWeight: 600, color: mainText }}>
                     {t('wallet.invite_friends', '邀请好友获返利')}
                   </Text>
-                  <Tag color="blue" bordered={false} style={{ margin: 0, fontSize: 12 }}>
-                    {stats?.commission_basis === 'recharge' ? t('affiliate_page.basis_recharge', '按充值') : t('affiliate_page.basis_consumption', '按实际消费')}
-                    {' · '}
-                    {Math.round((stats?.commission_ratio || 0) * 100)}%
-                  </Tag>
+                  {stats?.marketing_enabled ? (
+                    <Tag
+                      bordered={false}
+                      style={{
+                        margin: 0,
+                        fontSize: 12,
+                        background: isLight ? '#18181b' : '#fafafa',
+                        color: isLight ? '#fafafa' : '#18181b',
+                      }}
+                    >
+                      {stats?.commission_basis === 'recharge' ? t('affiliate_page.basis_recharge', '按充值') : t('affiliate_page.basis_consumption', '按实际消费')}
+                      {' · '}
+                      {Math.round((stats?.commission_ratio || 0) * 100)}%
+                    </Tag>
+                  ) : (
+                    <Tag bordered={false} style={{ margin: 0, fontSize: 12, background: neutralBg, color: subText }}>
+                      {t('affiliate_page.awards_paused', '已停止发放')}
+                    </Tag>
+                  )}
                   {(affiliateData?.daily_invite_limit || 0) > 0 && (
                     <Tag bordered={false} style={{ margin: 0, fontSize: 12 }}>
                       {t('affiliate_page.daily_limit', '每日限额')}: {affiliateData?.summary?.today_referred || 0}/{affiliateData?.daily_invite_limit}
@@ -1057,86 +1025,7 @@ const Wallet: React.FC = () => {
         </Card>
       )}
 
-      {/* 兑换码：管理后台开启兑换功能后显示 */}
-      {redemptionEnabled && (
-        <div
-          style={{
-            marginBottom: 20,
-            padding: '12px 18px',
-            borderRadius: 8,
-            border: cardBorder,
-            background: cardBg,
-            boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-            display: 'flex',
-            flexDirection: screens.md ? 'row' : 'column',
-            alignItems: screens.md ? 'center' : 'stretch',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
-          <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <TagOutlined style={{ color: subText, fontSize: 15 }} />
-            <Text style={{ fontSize: 14, fontWeight: 600, color: mainText }}>
-              {isEn ? 'Redeem Code' : '兑换码充值'}
-            </Text>
-            <Text style={{ color: subText, fontSize: 12 }}>
-              {isEn ? 'Enter a valid redemption code to top up balance.' : '输入有效兑换码为钱包余额充值。'}
-            </Text>
-            {redeemFeedback && (
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color:
-                    redeemFeedback.type === 'success'
-                      ? (isLight ? '#15803d' : '#4ade80')
-                      : redeemFeedback.type === 'warning'
-                        ? (isLight ? '#b45309' : '#fbbf24')
-                        : (isLight ? '#dc2626' : '#f87171'),
-                }}
-              >
-                {redeemFeedback.text}
-              </Text>
-            )}
-          </div>
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', width: screens.md ? 'auto' : '100%', flexShrink: 0 }}>
-            <Input
-              value={redeemCode}
-              onChange={(e) => {
-                setRedeemCode(e.target.value);
-                if (redeemFeedback) setRedeemFeedback(null);
-              }}
-              onPressEnter={handleRedeem}
-              placeholder={isEn ? 'Enter redemption code' : '请输入兑换码'}
-              allowClear
-              status={redeemFeedback?.type === 'error' ? 'error' : undefined}
-              style={{ width: screens.md ? 240 : '100%', height: 32, borderRadius: 6, fontSize: 13 }}
-            />
-            <Button
-              type="primary"
-              loading={redeeming}
-              disabled={redeeming || redeemCooldown > 0 || !redeemCode.trim()}
-              onClick={handleRedeem}
-              style={{
-                height: 32,
-                borderRadius: 6,
-                fontWeight: 500,
-                fontSize: 13,
-                background: isLight ? '#09090b' : '#fafafa',
-                color: isLight ? '#fafafa' : '#09090b',
-                borderWidth: 0,
-                opacity: (redeeming || redeemCooldown > 0 || !redeemCode.trim()) ? 0.55 : 1,
-                flexShrink: 0,
-              }}
-            >
-              {redeemCooldown > 0
-                ? (isEn ? `Wait ${redeemCooldown}s` : `${redeemCooldown}s 后再试`)
-                : (isEn ? 'Redeem' : '兑换')}
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Tabs for Records, Referrals, Ledger & Models */}
       <div className="wallet-tab-table-wrapper">

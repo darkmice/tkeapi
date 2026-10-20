@@ -5,6 +5,7 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
+#[cfg(feature = "commercial_plugins")]
 use reqwest::Client;
 
 pub async fn query_balance(ak: &str, sk: &str) -> anyhow::Result<f64> {

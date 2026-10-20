@@ -129,7 +129,7 @@ async fn fetch_listed_models(
         "{class_sql}{volc_filter}{}",
         crate::db::preset_models::LISTED_ONLY
     );
-    let list_sql = format!("SELECT * FROM models{where_sql} ORDER BY sort_order DESC, id DESC");
+    let list_sql = format!("SELECT m.*, t.name AS type_name FROM models m LEFT JOIN model_types t ON m.type_id = t.id{where_sql} ORDER BY m.sort_order DESC, m.id DESC");
     let formatted_sql = state.db.format_query(&list_sql);
     let mut q = sqlx::query_as::<_, Model>(&formatted_sql);
     for id in model_filter_ids(query) {
@@ -165,7 +165,7 @@ async fn fetch_library_models(
 
     // 2. 不在运营列表的模型行。进仓库即表示未上架，不再单独标「已下架」。
     let unlisted_sql = format!(
-        "SELECT * FROM models{class_sql}{copy_filter} AND is_listed = 0 AND is_system = 0 ORDER BY sort_order DESC, id DESC"
+        "SELECT m.*, t.name AS type_name FROM models m LEFT JOIN model_types t ON m.type_id = t.id{class_sql}{copy_filter} AND m.is_listed = 0 AND m.is_system = 0 ORDER BY m.sort_order DESC, m.id DESC"
     );
     let formatted_unlisted_sql = state.db.format_query(&unlisted_sql);
     let mut uq = sqlx::query_as::<_, Model>(&formatted_unlisted_sql);
@@ -301,21 +301,16 @@ pub async fn create_model(
     let pre_deduction = req.pre_deduction.unwrap_or(1.0);
     let site_discount = req.site_discount.unwrap_or(1.0);
     let site_discount_enabled = req.site_discount_enabled.unwrap_or(1);
-    if site_discount_enabled == 1 && site_discount <= 0.0 {
-        return Err(crate::error::AppError::BadRequest(
-            "开启折扣限价时，折扣限价倍率必须大于 0".to_string(),
-        ));
-    }
     let global_discount = req.global_discount.unwrap_or(1.0);
     let global_discount_enabled = req.global_discount_enabled.unwrap_or(0);
     let discount_schedule = req.discount_schedule.clone().unwrap_or_default();
-    if let Err(msg) = crate::models::validate_discount_schedule(
+    validate_unified_model_discounts(
+        site_discount,
+        site_discount_enabled,
+        global_discount,
+        global_discount_enabled,
         &discount_schedule,
-        site_discount_enabled == 1,
-        global_discount_enabled == 1,
-    ) {
-        return Err(crate::error::AppError::BadRequest(msg));
-    }
+    )?;
 
     let original_id = req.original_id.unwrap_or_default();
     let model_id_alias = req.model_id_alias.unwrap_or_default();
@@ -376,12 +371,12 @@ pub async fn publish_library_model(
         "SELECT {} FROM model_library WHERE id = $1",
         crate::db::preset_models::LIBRARY_MODEL_COLUMNS
     ))
-        .bind(id)
-        .fetch_optional(&state.db.pool)
-        .await?
-        .ok_or_else(|| crate::error::AppError::NotFound("模型库中未找到该模型".to_string()))?;
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("模型库中未找到该模型".to_string()))?;
 
-    let existing: Option<(i64, i32)> = sqlx::query_as(
+    let existing: Option<(i64, i64)> = sqlx::query_as(
         &state.db.format_query(
             "SELECT id, is_listed FROM models WHERE (library_mid = ? AND library_mid <> '') OR mid = ? ORDER BY is_listed DESC, id DESC LIMIT 1"
         )
@@ -465,7 +460,7 @@ pub async fn unlist_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Model>> {
-    let listed: Option<i32> = sqlx::query_scalar(
+    let listed: Option<i64> = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_listed FROM models WHERE id = ?"),
@@ -474,11 +469,7 @@ pub async fn unlist_model(
     .fetch_optional(&state.db.pool)
     .await?;
     match listed {
-        None => {
-            return Err(crate::error::AppError::NotFound(
-                "模型不存在".to_string(),
-            ))
-        }
+        None => return Err(crate::error::AppError::NotFound("模型不存在".to_string())),
         Some(v) if v != 1 => {
             return Err(crate::error::AppError::BadRequest(
                 "该模型已下架".to_string(),
@@ -486,11 +477,9 @@ pub async fn unlist_model(
         }
         Some(_) => {}
     }
-    sqlx::query(
-        &state
-            .db
-            .format_query("UPDATE models SET is_listed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
-    )
+    sqlx::query(&state.db.format_query(
+        "UPDATE models SET is_listed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ))
     .bind(id)
     .execute(&state.db.pool)
     .await?;
@@ -506,7 +495,7 @@ pub async fn relist_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Model>> {
-    let listed: Option<i32> = sqlx::query_scalar(
+    let listed: Option<i64> = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_listed FROM models WHERE id = ?"),
@@ -515,11 +504,7 @@ pub async fn relist_model(
     .fetch_optional(&state.db.pool)
     .await?;
     match listed {
-        None => {
-            return Err(crate::error::AppError::NotFound(
-                "模型不存在".to_string(),
-            ))
-        }
+        None => return Err(crate::error::AppError::NotFound("模型不存在".to_string())),
         Some(v) if v == 1 => {
             return Err(crate::error::AppError::BadRequest(
                 "该模型已上架".to_string(),
@@ -527,11 +512,9 @@ pub async fn relist_model(
         }
         Some(_) => {}
     }
-    sqlx::query(
-        &state
-            .db
-            .format_query("UPDATE models SET is_listed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
-    )
+    sqlx::query(&state.db.format_query(
+        "UPDATE models SET is_listed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ))
     .bind(id)
     .execute(&state.db.pool)
     .await?;
@@ -539,6 +522,149 @@ pub async fn relist_model(
         .bind(id)
         .fetch_one(&state.db.pool)
         .await?;
+    crate::api::plugins::notify_marketplace_data_changed(&state).await;
+    Ok(Json(model))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CopyModelRequest {
+    /// 新名称；空或缺省沿用原名
+    pub name: Option<String>,
+}
+
+fn copy_name(req: &CopyModelRequest, src_name: &str) -> String {
+    req.name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or(src_name)
+        .to_string()
+}
+
+/// 仓库目录副本 mid：避开 `model_library` 与 `models` 已用 mid（目录可见性按 mid 判断）。
+async fn allocate_library_mid(state: &AppState) -> AppResult<String> {
+    loop {
+        let candidate: String = {
+            let n: u32 = rand::thread_rng().gen_range(320000..=329999);
+            n.to_string()
+        };
+        let taken: bool = sqlx::query_scalar(&state.db.format_query(
+            "SELECT EXISTS(SELECT 1 FROM model_library WHERE mid = ?) OR EXISTS(SELECT 1 FROM models WHERE mid = ?)",
+        ))
+        .bind(&candidate)
+        .bind(&candidate)
+        .fetch_one(&state.db.pool)
+        .await?;
+        if !taken {
+            return Ok(candidate);
+        }
+    }
+}
+
+/// 复制 `models` 行（运营模型或仓库里的下架行）：新 mid，可改名，其余列原样，留在原列表。
+pub async fn copy_model(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<CopyModelRequest>,
+) -> AppResult<Json<Model>> {
+    let src_name: String = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT name FROM models WHERE id = ?"),
+    )
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("模型不存在".to_string()))?;
+    let name = copy_name(&req, &src_name);
+    let mid = allocate_listed_mid(&state).await?;
+
+    let new_id: i64 = sqlx::query_scalar(&state.db.format_query(
+        r#"INSERT INTO models (
+                mid, name, model_id, original_id, model_id_alias,
+                provider_id, api_provider_id, type_id, group_ratios, forward_rule_ids,
+                billing_rule_id, pre_deduction, site_discount, site_discount_enabled,
+                global_discount, global_discount_enabled, discount_schedule, is_active, enable_log_content,
+                is_system, library_mid, is_listed, logo, remark, description, feature_attributes, sort_order,
+                created_at, updated_at
+           )
+           SELECT
+                ?, ?, model_id, original_id, model_id_alias,
+                provider_id, api_provider_id, type_id, group_ratios, forward_rule_ids,
+                billing_rule_id, pre_deduction, site_discount, site_discount_enabled,
+                global_discount, global_discount_enabled, discount_schedule, is_active, enable_log_content,
+                is_system, library_mid, is_listed, logo, remark, description, feature_attributes, sort_order,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+           FROM models WHERE id = ?
+           RETURNING id"#,
+    ))
+    .bind(&mid)
+    .bind(&name)
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("模型不存在".to_string()))?;
+
+    let model = sqlx::query_as(&state.db.format_query("SELECT * FROM models WHERE id = ?"))
+        .bind(new_id)
+        .fetch_one(&state.db.pool)
+        .await?;
+    crate::api::plugins::notify_marketplace_data_changed(&state).await;
+    Ok(Json(model))
+}
+
+/// 复制模型仓库目录条目（`model_library`）：新 mid，可改名，其余列原样，仍在仓库目录。
+pub async fn copy_library_model(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<CopyModelRequest>,
+) -> AppResult<Json<Model>> {
+    let src_name: String = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT name FROM model_library WHERE id = ?"),
+    )
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("模型库中未找到该模型".to_string()))?;
+    let name = copy_name(&req, &src_name);
+    let mid = allocate_library_mid(&state).await?;
+
+    let new_id: i64 = sqlx::query_scalar(&state.db.format_query(
+        r#"INSERT INTO model_library (
+                mid, name, model_id, original_id, model_id_alias,
+                provider_id, api_provider_id, type_id, group_ratios, billing_rule_id,
+                pre_deduction, is_active, forward_rule_ids, enable_log_content,
+                site_discount, site_discount_enabled, global_discount, global_discount_enabled,
+                discount_schedule, logo, remark, description, feature_attributes, is_system, sort_order,
+                created_at, updated_at
+           )
+           SELECT
+                ?, ?, model_id, original_id, model_id_alias,
+                provider_id, api_provider_id, type_id, group_ratios, billing_rule_id,
+                pre_deduction, is_active, forward_rule_ids, enable_log_content,
+                site_discount, site_discount_enabled, global_discount, global_discount_enabled,
+                discount_schedule, logo, remark, description, feature_attributes, is_system, sort_order,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+           FROM model_library WHERE id = ?
+           RETURNING id"#,
+    ))
+    .bind(&mid)
+    .bind(&name)
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("模型库中未找到该模型".to_string()))?;
+
+    let mut model: Model = sqlx::query_as(&format!(
+        "SELECT {} FROM model_library WHERE id = $1",
+        crate::db::preset_models::LIBRARY_MODEL_COLUMNS
+    ))
+    .bind(new_id)
+    .fetch_one(&state.db.pool)
+    .await?;
+    model.library_kind = Some("catalog".into());
     crate::api::plugins::notify_marketplace_data_changed(&state).await;
     Ok(Json(model))
 }
@@ -683,9 +809,11 @@ async fn retarget_channels_after_model_id_change(
     .fetch_all(&state.db.pool)
     .await?;
 
-    let rows = sqlx::query(&state.db.format_query(
-        "SELECT id, models, model_mapping, config FROM channels",
-    ))
+    let rows = sqlx::query(
+        &state
+            .db
+            .format_query("SELECT id, models, model_mapping, config FROM channels"),
+    )
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -697,7 +825,9 @@ async fn retarget_channels_after_model_id_change(
             .unwrap_or_else(|_| "{}".to_string());
         let config_raw: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
         let selected: Vec<String> = serde_json::from_str(&models_raw).unwrap_or_default();
-        let peer_selected = peer_mids.iter().any(|peer| selected.iter().any(|item| item == peer));
+        let peer_selected = peer_mids
+            .iter()
+            .any(|peer| selected.iter().any(|item| item == peer));
         let (models_out, mapping_out, config_out, changed) = retarget_channel_model_keys(
             &models_raw,
             &mapping_raw,
@@ -724,29 +854,80 @@ async fn retarget_channels_after_model_id_change(
     Ok(())
 }
 
-async fn write_discount_schedule(
+fn validate_unified_model_discounts(
+    site_discount: f64,
+    site_enabled: i64,
+    global_discount: f64,
+    global_enabled: i64,
+    schedule: &str,
+) -> AppResult<()> {
+    if !site_discount.is_finite() || site_discount <= 0.0 {
+        return Err(crate::error::AppError::BadRequest(
+            "折扣限价倍率必须大于 0".to_string(),
+        ));
+    }
+    if !global_discount.is_finite() || global_discount <= 0.0 {
+        return Err(crate::error::AppError::BadRequest(
+            "全站折扣倍率必须大于 0".to_string(),
+        ));
+    }
+    if site_enabled == 1 && global_enabled == 1 && global_discount < site_discount {
+        return Err(crate::error::AppError::BadRequest(format!(
+            "全站折扣 {:.2} 不能低于折扣限价 {:.2}",
+            global_discount, site_discount
+        )));
+    }
+    if let Err(msg) =
+        crate::models::validate_discount_schedule(schedule, site_enabled == 1, global_enabled == 1)
+    {
+        return Err(crate::error::AppError::BadRequest(msg));
+    }
+    Ok(())
+}
+
+async fn update_model_discounts(
     state: &crate::AppState,
     table: &str,
     id: i64,
-    raw: &str,
-    site_enabled: Option<i32>,
-    global_enabled: Option<i32>,
+    req: &UpdateModelRequest,
 ) -> AppResult<()> {
-    let row: (i32, i32) = sqlx::query_as(&state.db.format_query(&format!(
-        "SELECT site_discount_enabled, global_discount_enabled FROM {table} WHERE id = ?"
+    if req.site_discount.is_none()
+        && req.site_discount_enabled.is_none()
+        && req.global_discount.is_none()
+        && req.global_discount_enabled.is_none()
+        && req.discount_schedule.is_none()
+    {
+        return Ok(());
+    }
+    let row: (f64, i64, f64, i64, String) = sqlx::query_as(&state.db.format_query(&format!(
+        "SELECT site_discount, site_discount_enabled, global_discount, global_discount_enabled, discount_schedule FROM {table} WHERE id = ?"
     )))
     .bind(id)
     .fetch_one(&state.db.pool)
     .await?;
-    let site_on = site_enabled.unwrap_or(row.0) == 1;
-    let global_on = global_enabled.unwrap_or(row.1) == 1;
-    if let Err(msg) = crate::models::validate_discount_schedule(raw, site_on, global_on) {
-        return Err(crate::error::AppError::BadRequest(msg));
-    }
+
+    let site_discount = req.site_discount.unwrap_or(row.0);
+    let site_enabled = req.site_discount_enabled.unwrap_or(row.1);
+    let global_discount = req.global_discount.unwrap_or(row.2);
+    let global_enabled = req.global_discount_enabled.unwrap_or(row.3);
+    let schedule = req.discount_schedule.as_deref().unwrap_or(row.4.as_str());
+
+    validate_unified_model_discounts(
+        site_discount,
+        site_enabled,
+        global_discount,
+        global_enabled,
+        schedule,
+    )?;
+
     sqlx::query(&state.db.format_query(&format!(
-        "UPDATE {table} SET discount_schedule = ? WHERE id = ?"
+        "UPDATE {table} SET site_discount = ?, site_discount_enabled = ?, global_discount = ?, global_discount_enabled = ?, discount_schedule = ? WHERE id = ?"
     )))
-    .bind(raw)
+    .bind(site_discount)
+    .bind(site_enabled)
+    .bind(global_discount)
+    .bind(global_enabled)
+    .bind(schedule)
     .bind(id)
     .execute(&state.db.pool)
     .await?;
@@ -846,13 +1027,12 @@ pub async fn update_model(
         .execute(&state.db.pool)
         .await?;
         if model_id != &old_model_id {
-            let mid: String = sqlx::query_scalar(
-                &state.db.format_query("SELECT mid FROM models WHERE id = ?"),
-            )
-            .bind(id)
-            .fetch_optional(&state.db.pool)
-            .await?
-            .unwrap_or_default();
+            let mid: String =
+                sqlx::query_scalar(&state.db.format_query("SELECT mid FROM models WHERE id = ?"))
+                    .bind(id)
+                    .fetch_optional(&state.db.pool)
+                    .await?
+                    .unwrap_or_default();
             retarget_channels_after_model_id_change(&state, id, &mid, &old_model_id, model_id)
                 .await?;
         }
@@ -997,85 +1177,7 @@ pub async fn update_model(
         .execute(&state.db.pool)
         .await?;
     }
-    if let Some(sd) = req.site_discount {
-        if sd <= 0.0 {
-            return Err(crate::error::AppError::BadRequest(
-                "折扣限价倍率必须大于 0".to_string(),
-            ));
-        }
-        sqlx::query(
-            &state
-                .db
-                .format_query("UPDATE models SET site_discount = ? WHERE id = ?"),
-        )
-        .bind(sd)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(sde) = req.site_discount_enabled {
-        if sde == 1 {
-            let current_sd: f64 = match req.site_discount {
-                Some(v) => v,
-                None => sqlx::query_scalar(
-                    &state
-                        .db
-                        .format_query("SELECT site_discount FROM models WHERE id = ?"),
-                )
-                .bind(id)
-                .fetch_optional(&state.db.pool)
-                .await?
-                .unwrap_or(1.0),
-            };
-            if current_sd <= 0.0 {
-                return Err(crate::error::AppError::BadRequest(
-                    "开启折扣限价时，折扣限价倍率必须大于 0".to_string(),
-                ));
-            }
-        }
-        sqlx::query(
-            &state
-                .db
-                .format_query("UPDATE models SET site_discount_enabled = ? WHERE id = ?"),
-        )
-        .bind(sde)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(gd) = req.global_discount {
-        sqlx::query(
-            &state
-                .db
-                .format_query("UPDATE models SET global_discount = ? WHERE id = ?"),
-        )
-        .bind(gd)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(gde) = req.global_discount_enabled {
-        sqlx::query(
-            &state
-                .db
-                .format_query("UPDATE models SET global_discount_enabled = ? WHERE id = ?"),
-        )
-        .bind(gde)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(ref schedule) = req.discount_schedule {
-        write_discount_schedule(
-            &state,
-            "models",
-            id,
-            schedule,
-            req.site_discount_enabled,
-            req.global_discount_enabled,
-        )
-        .await?;
-    }
+    update_model_discounts(&state, "models", id, &req).await?;
     if let Some(ref logo) = req.logo {
         sqlx::query(
             &state
@@ -1130,6 +1232,8 @@ pub async fn update_model(
         .bind(id)
         .execute(&state.db.pool)
         .await?;
+        crate::api::plugins::sync_marketplace_page_sort(&state, id, sort_order).await?;
+        crate::api::plugins::sync_playground_2026_page_sort(&state, id, sort_order).await?;
     }
 
     sqlx::query(
@@ -1155,7 +1259,7 @@ pub async fn delete_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let origin: Option<(Option<String>, i32)> = sqlx::query_as(
+    let origin: Option<(Option<String>, i64)> = sqlx::query_as(
         &state
             .db
             .format_query("SELECT library_mid, is_listed FROM models WHERE id = ?"),
@@ -1215,9 +1319,11 @@ pub async fn update_library_model(
     macro_rules! set_field {
         ($field:ident, $col:expr) => {
             if let Some(ref val) = req.$field {
-                sqlx::query(&state.db.format_query(&format!(
-                    "UPDATE {tbl} SET {} = ? WHERE id = ?", $col
-                )))
+                sqlx::query(
+                    &state
+                        .db
+                        .format_query(&format!("UPDATE {tbl} SET {} = ? WHERE id = ?", $col)),
+                )
                 .bind(val)
                 .bind(id)
                 .execute(&state.db.pool)
@@ -1235,9 +1341,11 @@ pub async fn update_library_model(
     set_field!(feature_attributes, "feature_attributes");
 
     if let Some(pid) = req.provider_id {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET provider_id = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET provider_id = ? WHERE id = ?")),
+        )
         .bind(pid)
         .bind(id)
         .execute(&state.db.pool)
@@ -1253,9 +1361,11 @@ pub async fn update_library_model(
         .await?;
     }
     if let Some(tid) = req.type_id {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET type_id = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET type_id = ? WHERE id = ?")),
+        )
         .bind(tid)
         .bind(id)
         .execute(&state.db.pool)
@@ -1263,9 +1373,11 @@ pub async fn update_library_model(
     }
     if let Some(ref gr) = req.group_ratios {
         let gr_str = serde_json::to_string(gr).unwrap_or_else(|_| "{}".to_string());
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET group_ratios = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET group_ratios = ? WHERE id = ?")),
+        )
         .bind(&gr_str)
         .bind(id)
         .execute(&state.db.pool)
@@ -1281,18 +1393,22 @@ pub async fn update_library_model(
         .await?;
     }
     if let Some(pd) = req.pre_deduction {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET pre_deduction = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET pre_deduction = ? WHERE id = ?")),
+        )
         .bind(pd)
         .bind(id)
         .execute(&state.db.pool)
         .await?;
     }
     if let Some(active) = req.is_active {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET is_active = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET is_active = ? WHERE id = ?")),
+        )
         .bind(active)
         .bind(id)
         .execute(&state.db.pool)
@@ -1330,57 +1446,13 @@ pub async fn update_library_model(
         .execute(&state.db.pool)
         .await?;
     }
-    if let Some(sd) = req.site_discount {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET site_discount = ? WHERE id = ?"
-        )))
-        .bind(sd)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(sde) = req.site_discount_enabled {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET site_discount_enabled = ? WHERE id = ?"
-        )))
-        .bind(sde)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(gd) = req.global_discount {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET global_discount = ? WHERE id = ?"
-        )))
-        .bind(gd)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(gde) = req.global_discount_enabled {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET global_discount_enabled = ? WHERE id = ?"
-        )))
-        .bind(gde)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
-    }
-    if let Some(ref schedule) = req.discount_schedule {
-        write_discount_schedule(
-            &state,
-            tbl,
-            id,
-            schedule,
-            req.site_discount_enabled,
-            req.global_discount_enabled,
-        )
-        .await?;
-    }
+    update_model_discounts(&state, tbl, id, &req).await?;
     if let Some(sort_order) = req.sort_order {
-        sqlx::query(&state.db.format_query(&format!(
-            "UPDATE {tbl} SET sort_order = ? WHERE id = ?"
-        )))
+        sqlx::query(
+            &state
+                .db
+                .format_query(&format!("UPDATE {tbl} SET sort_order = ? WHERE id = ?")),
+        )
         .bind(sort_order)
         .bind(id)
         .execute(&state.db.pool)
@@ -1409,10 +1481,14 @@ pub async fn delete_library_model(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    sqlx::query(&state.db.format_query("DELETE FROM model_library WHERE id = ?"))
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
+    sqlx::query(
+        &state
+            .db
+            .format_query("DELETE FROM model_library WHERE id = ?"),
+    )
+    .bind(id)
+    .execute(&state.db.pool)
+    .await?;
 
     crate::api::plugins::notify_marketplace_data_changed(&state).await;
 
@@ -1442,7 +1518,10 @@ mod model_id_retarget_tests {
         assert!(mapping.get("old-id").is_none());
         let config: serde_json::Value = serde_json::from_str(&config).unwrap();
         assert_eq!(config["ha_model_mapping"]["new-id"]["9"], "ha-up");
-        assert_eq!(config["res_model_mapping"]["new-id"]["default"]["1080p"], "r-up");
+        assert_eq!(
+            config["res_model_mapping"]["new-id"]["default"]["1080p"],
+            "r-up"
+        );
         assert_eq!(config["tos_storage_enabled"], true);
     }
 
@@ -1482,3 +1561,25 @@ mod model_id_retarget_tests {
     }
 }
 
+#[cfg(test)]
+mod copy_name_tests {
+    use super::{copy_name, CopyModelRequest};
+
+    #[test]
+    fn keeps_source_name_when_blank_or_missing() {
+        let none = CopyModelRequest { name: None };
+        let blank = CopyModelRequest {
+            name: Some("   ".into()),
+        };
+        assert_eq!(copy_name(&none, "GPT-4o"), "GPT-4o");
+        assert_eq!(copy_name(&blank, "GPT-4o"), "GPT-4o");
+    }
+
+    #[test]
+    fn uses_trimmed_new_name() {
+        let req = CopyModelRequest {
+            name: Some("  GPT-4o 副本 ".into()),
+        };
+        assert_eq!(copy_name(&req, "GPT-4o"), "GPT-4o 副本");
+    }
+}

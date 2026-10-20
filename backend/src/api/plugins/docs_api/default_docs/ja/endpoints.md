@@ -43,10 +43,15 @@
 | 阿里百炼 | テキストベクトル化 | `/compatible-mode/v1/embeddings` | `POST` |
 | Alibaba Bailian | Document Reranking (Rerank) | `/compatible-api/v1/reranks` | `POST` |
 | Alibaba Bailian | Document Reranking (Native) | `/api/v1/services/rerank/text-rerank/text-rerank` | `POST` |
-| 可灵 AI | テキスト動画生成 (Kling) | `/v1/videos/text2video` | `POST` |
-| 可灵 AI | 画像動画生成 (Kling) | `/v1/videos/image2video` | `POST` |
-| 可灵 AI | タスクステータス照会 (動画/画像) | `/v1/videos/{endpoint}/{task_id}` | `GET` |
-| Google | Gemini テキスト生成 | `/v1beta/models/{model}:generateContent` | `POST` |
-| Google | Gemini ストリーミングテキスト生成 | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| 可灵 AI | テキスト動画生成 (Native) | `/text-to-video/{model_id}` | `POST` |
+| 可灵 AI | 画像動画生成 (Native) | `/image-to-video/{model_id}` | `POST` |
+| 可灵 AI | Omni 動画生成 (Native) | `/omni-video/{model_id}` | `POST` |
+| 可灵 AI | タスクステータス照会 (Native) | `/tasks` | `GET` |
+| Google | Gemini コンテンツ生成 | `/v1/models/{model}:generateContent` | `POST` |
+| Google | Gemini ストリーミングコンテンツ生成 | `/v1/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini コンテンツ生成 (v1beta) | `/v1beta/models/{model}:generateContent` | `POST` |
+| Google | Gemini ストリーミングコンテンツ生成 (v1beta) | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini Interactions インタラクション | `/v1/interactions` | `POST` |
+| Google | Gemini Interactions インタラクション (v1beta) | `/v1beta/interactions` | `POST` |
 | Anthropic | Claude ネイティブメッセージ | `/v1/messages` | `POST` |
 | MiniMax | Anthropic 互換 Messages | `/anthropic/v1/messages` | `POST` |

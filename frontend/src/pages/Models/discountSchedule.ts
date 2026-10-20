@@ -38,14 +38,20 @@ function clockMinutes(v: unknown): number | null {
   return Number(matched[1]) * 60 + Number(matched[2]);
 }
 
-export function unpackDiscountSchedule(raw?: string | null): { enabled: boolean; slots: DiscountSlotForm[] } {
+export function unpackDiscountSchedule(raw?: string | null): {
+  enabled: boolean;
+  slots: DiscountSlotForm[];
+  edit_tz: 'operation' | 'admin_display';
+} {
   let enabled = false;
   let slots: DiscountSlotForm[] = [];
+  let edit_tz: 'operation' | 'admin_display' = 'operation';
   try {
     if (raw) {
       const parsed = JSON.parse(raw);
       enabled = !!parsed?.enabled;
       if (Array.isArray(parsed?.slots)) slots = parsed.slots;
+      if (parsed?.edit_tz === 'admin_display') edit_tz = 'admin_display';
     }
   } catch {
     enabled = false;
@@ -53,6 +59,7 @@ export function unpackDiscountSchedule(raw?: string | null): { enabled: boolean;
   }
   return {
     enabled,
+    edit_tz,
     slots: slots
       .map((item) => ({
         all_day: !!item.all_day,
@@ -71,9 +78,14 @@ export function discountScheduleOn(raw?: string | null): boolean {
   return parsed.enabled && parsed.slots.length > 0;
 }
 
-export function packDiscountSchedule(enabled: boolean, slots: DiscountSlotForm[] | undefined): string {
+export function packDiscountSchedule(
+  enabled: boolean,
+  slots: DiscountSlotForm[] | undefined,
+  editTz: 'operation' | 'admin_display' = 'operation',
+): string {
   return JSON.stringify({
     enabled: !!enabled,
+    edit_tz: editTz === 'admin_display' ? 'admin_display' : 'operation',
     slots: (slots || []).map((item) => ({
       all_day: !!item.all_day,
       start: item.all_day ? '' : clockString(item.start),
@@ -98,12 +110,13 @@ export function validateDiscountScheduleForm(
   const intervals = [];
   for (let i = 0; i < list.length; i += 1) {
     const item = list[i];
-    const site = Number(item.site_discount);
-    const global = Number(item.global_discount);
-    if (siteOn && !(site > 0)) return `第 ${i + 1} 条规则的折扣限价必须大于 0`;
-    if (globalOn && !(global > 0)) return `第 ${i + 1} 条规则的全站折扣必须大于 0`;
+    const site = item.site_discount == null || (item.site_discount as unknown) === '' ? NaN : Number(item.site_discount);
+    const global = item.global_discount == null || (item.global_discount as unknown) === '' ? NaN : Number(item.global_discount);
+    if (siteOn && !(Number.isFinite(site) && site >= 0)) return `第 ${i + 1} 条规则的折扣限价必须大于等于 0（0 为免费）`;
+    if (globalOn && !(Number.isFinite(global) && global >= 0)) return `第 ${i + 1} 条规则的全站折扣必须大于等于 0（0 为免费）`;
     if (siteOn && globalOn && global < site) {
-      return `第 ${i + 1} 条规则的全站折扣 ${global} 低于折扣限价 ${site}`;
+      const shown = (n: number) => (n === 0 ? '免费' : String(n));
+      return `第 ${i + 1} 条规则的全站折扣 ${shown(global)} 低于折扣限价 ${shown(site)}`;
     }
     if (isAllDayMultiplier(item)) continue;
     const startMin = clockMinutes(item.start);
@@ -129,13 +142,17 @@ export function discountChartItems(
   pick: 'site_discount' | 'global_discount',
   fallback: number,
 ): TimeMultiplierRule[] {
-  const items: TimeMultiplierRule[] = (slots || []).map((item) => ({
-    start: item.start,
-    end: item.end,
-    days: normalizeWeekdays(item.days),
-    all_day: !!item.all_day,
-    multiplier: Number(item[pick] ?? fallback),
-  }));
+  const items: TimeMultiplierRule[] = (slots || []).map((item) => {
+    const raw = item[pick];
+    const num = raw == null || (raw as unknown) === '' ? fallback : Number(raw);
+    return {
+      start: item.start,
+      end: item.end,
+      days: normalizeWeekdays(item.days),
+      all_day: !!item.all_day,
+      multiplier: Number.isFinite(num) && num >= 0 ? num : fallback,
+    };
+  });
   items.push({ all_day: true, days: [...ALL_WEEKDAYS], multiplier: fallback });
   return items;
 }

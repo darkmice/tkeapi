@@ -228,15 +228,34 @@
   font-size: 16px;
   font-weight: 500;
 }
+.arts-ct-grid.is-solo-channels .arts-ct-channels {
+  width: min(640px, 100%);
+  margin: 0 auto;
+}
 .arts-ct-grid.is-solo-social .arts-ct-social {
   min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  column-gap: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 .arts-ct-grid.is-solo-social .arts-ct-social .arts-ct-kicker,
 .arts-ct-grid.is-solo-social .arts-ct-social h3 {
-  grid-column: 1 / -1;
+  justify-content: center;
+}
+.arts-ct-grid.is-solo-social .arts-ct-social-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 40px;
+  width: 100%;
+}
+.arts-ct-grid.is-solo-social .arts-ct-social a {
+  width: auto;
+  justify-content: center;
+  border-bottom: none;
+  padding: 10px 4px;
 }
 
 .arts-ct-extra {
@@ -304,7 +323,7 @@ body.dark .arts-ct-card:hover .arts-ct-arrow {
 }
 
 @media (max-width: 900px) {
-  .arts-ct-hero, .arts-ct-body { padding-left: 24px; padding-right: 24px; }
+  .arts-ct-hero, .arts-ct-body { padding-left: 16px; padding-right: 16px; }
   .arts-ct-grid,
   .arts-ct-grid.is-solo-social,
   .arts-ct-grid.is-solo-channels,
@@ -312,7 +331,12 @@ body.dark .arts-ct-card:hover .arts-ct-arrow {
     grid-template-columns: 1fr;
   }
   .arts-ct-pill, .arts-ct-curve { display: none; }
-  .arts-ct-hero { padding-top: calc(var(--nav-height) + 36px); padding-bottom: 44px; }
+  .arts-ct-hero { padding-top: calc(var(--nav-height) + 24px); padding-bottom: 36px; }
+  .arts-ct-hero h1 { font-size: clamp(2.3rem, 7.5vw, 3.4rem); line-height: 1.05; }
+  .arts-ct-card { padding: 16px 14px; border-radius: 12px; }
+  .arts-ct-card p { font-size: 16px; }
+  .arts-ct-social { padding: 22px 18px 16px; border-radius: 12px; }
+  .arts-ct-social h3 { font-size: 22px; }
 }
 </style>
 
@@ -439,6 +463,7 @@ body.dark .arts-ct-card:hover .arts-ct-arrow {
           </span>
           <span data-i18n="contact_social">社交媒体</span>
         </h3>
+        <div class="arts-ct-social-links">
         {% for link in columns.contact.content.social_links %}
           {% if link.enabled != false %}
           {% if link.platform or link.value %}
@@ -462,6 +487,7 @@ body.dark .arts-ct-card:hover .arts-ct-arrow {
           {% endif %}
           {% endif %}
         {% endfor %}
+        </div>
       </aside>
       {% endif %}
     </div>

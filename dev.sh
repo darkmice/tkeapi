@@ -1,8 +1,8 @@
 #!/bin/bash
-# tokensbyte opensource
-# (c) 2026 tokensbyte.ai
+# tkeapi (tokensbyte) opensource
+# © 2026 tkeapi.com
 # @copyright      Copyright netbcloud/wstianxia 
-# @license        MIT (https://www.tokensbyte.ai/)
+# @license        MIT (https://www.tkeapi.com/)
 
 # ──────────────────────────────────────────────────
 # TokensByte 本地开发启动脚本
@@ -24,6 +24,7 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 cd "${ROOT_DIR}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"
 
 if ! command -v docker >/dev/null 2>&1 || ! docker --version >/dev/null 2>&1; then
     if [ -d "/Applications/Docker.app/Contents/Resources/bin" ]; then
@@ -199,8 +200,10 @@ find_mac_lld() {
         /usr/local/opt/llvm/bin/ld64.lld \
         "$(command -v ld64.lld 2>/dev/null || true)"; do
         if [ -n "${cand}" ] && [ -x "${cand}" ]; then
-            printf '%s\n' "${cand}"
-            return 0
+            if echo 'int main(){return 0;}' | clang -x c - -fuse-ld="${cand}" -o /dev/null >/dev/null 2>&1; then
+                printf '%s\n' "${cand}"
+                return 0
+            fi
         fi
     done
     return 1
@@ -289,7 +292,7 @@ apply_dev_rust_compile_accel() {
     # 仓库在 /Volumes（外置/网络盘）时，把 target 放到本机 SSD 缓存，避免 IO 拖慢冷/热编译
     # 可用 TOKENSBYTE_LOCAL_TARGET=0 关闭；=1 强制开启
     local want_local_target=0
-    case "${TOKENSBYTE_LOCAL_TARGET:-auto}" in
+    case "${TOKENSBYTE_LOCAL_TARGET:-0}" in
         0|false|no|off) want_local_target=0 ;;
         1|true|yes|on) want_local_target=1 ;;
         *)

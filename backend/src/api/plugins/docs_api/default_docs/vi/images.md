@@ -24,7 +24,7 @@ curl -X POST https://{{domain}}/v1/images/generations \
   -H "Authorization: Bearer sk-your_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "dall-e-3",
+    "model": "gpt-image-2",
     "prompt": "一只在太空中漂浮的宇航员猫，写实赛博朋克风格",
     "size": "1024x1024",
     "n": 1

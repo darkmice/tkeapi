@@ -27,7 +27,7 @@
   height: 100%;
   z-index: 1;
   pointer-events: auto;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 /* 浮动艺术构件组 */
@@ -1214,32 +1214,58 @@ body.dark .arts-cta .arts-btn-ghost:hover {
   border-color: rgba(255, 255, 255, 0.35) !important;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .arts-hero, .arts-build, .arts-why { grid-template-columns: 1fr; }
-  .arts-hero { padding: 72px 24px 48px; min-height: auto; }
-  .arts-hero-art { height: 320px; min-height: 280px; }
+  .arts-hero {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: calc(var(--nav-height, 64px) + 16px) 16px 36px !important;
+    min-height: auto !important;
+    gap: 16px !important;
+  }
+  .arts-hero-copy {
+    order: 1 !important;
+    width: 100% !important;
+    text-align: left !important;
+  }
+  .arts-hero-art {
+    order: 2 !important;
+    height: 230px !important;
+    min-height: 190px !important;
+    width: 100% !important;
+    margin-top: 6px !important;
+  }
   .arts-art-group-0 .arts-pill,
   .arts-art-group-1 .arts-pill,
   .arts-art-group-2 .arts-pill,
   .arts-art-group-3 .arts-pill,
   .arts-art-group-4 .arts-pill {
-    width: 140px;
-    height: 36px;
+    width: 120px;
+    height: 32px;
   }
   .arts-badge-art {
-    font-size: 20px !important;
+    font-size: 18px !important;
   }
   .arts-gallery-track { grid-template-columns: repeat(2, 1fr); }
   .arts-qnav { grid-template-columns: 1fr; }
-  .arts-gallery, .arts-trust, .arts-build, .arts-qnav { padding-left: 24px; padding-right: 24px; }
-  .arts-why, .arts-cta { margin-left: 16px; margin-right: 16px; padding: 40px 24px; }
-  .arts-hero-copy h1 { font-size: clamp(2.0rem, 6.5vw, 3.2rem); line-height: 1.22; }
+  .arts-gallery, .arts-trust, .arts-build, .arts-qnav { padding-left: 16px; padding-right: 16px; }
+  .arts-side-label { display: none !important; }
+  .arts-panel { padding: 22px 18px 20px !important; border-radius: 14px !important; }
+  .arts-build h2 { font-size: clamp(2.2rem, 7.5vw, 3.2rem) !important; }
+  .arts-hero-copy h1 { font-size: clamp(2.1rem, 7.5vw, 2.85rem); line-height: 1.15; margin-bottom: 14px; }
+  .arts-hero-copy p { font-size: 15px; line-height: 1.55; }
 }
 @media (max-width: 640px) {
-  .arts-hero-copy h1 { font-size: clamp(1.8rem, 7.5vw, 2.3rem); line-height: 1.25; margin-bottom: 22px; }
-  .arts-gallery-track, .arts-why-cards { grid-template-columns: 1fr; }
-  .arts-hero-actions { flex-direction: column; }
-  .arts-btn { width: 100%; }
+  .arts-hero-copy h1 { font-size: clamp(1.95rem, 8vw, 2.45rem); line-height: 1.18; margin-bottom: 16px; }
+  .arts-why-cards { grid-template-columns: 1fr; }
+  .arts-gallery-track { grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+  .arts-gcard-body { left: 10px !important; right: 10px !important; bottom: 10px !important; }
+  .arts-gcard h3 { font-size: 16px !important; }
+  .arts-gcard p { font-size: 12px !important; }
+  .arts-hero-actions { flex-direction: column; width: 100%; gap: 10px; }
+  .arts-hero-actions .arts-btn { width: 100%; height: 44px; display: flex; align-items: center; justify-content: center; }
+  .arts-qnav-card { padding: 18px 16px; }
+  .arts-trust-logos { gap: 16px 20px; }
 }
 </style>
 
@@ -1339,8 +1365,26 @@ body.dark .arts-cta .arts-btn-ghost:hover {
       <span>Google</span>
       <span>DeepSeek</span>
       <span>ByteDance</span>
+      <span>MiniMax</span>
+      <span>xAI</span>
+      <span>Zhipu</span>
+      <span>Moonshot</span>
     </div>
   </section>
+  <script>
+  (function shuffleArtsTrust() {
+    var row = document.querySelector('.arts-trust-row');
+    if (!row) return;
+    var items = Array.prototype.slice.call(row.children);
+    for (var i = items.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = items[i];
+      items[i] = items[j];
+      items[j] = tmp;
+    }
+    items.forEach(function (el) { row.appendChild(el); });
+  })();
+  </script>
 
   <section class="arts-gallery">
     <div class="arts-gallery-head">
@@ -1490,7 +1534,7 @@ body.dark .arts-cta .arts-btn-ghost:hover {
     {% if columns.about.enabled | default(value=true) %}
     <a href="/home/about">
       <h3 data-i18n-dynamic="{{ columns.about.title | default(value="") }}" data-i18n-key="qnav3_title">{{ columns.about.title | default(value="关于我们") }}</h3>
-      <p data-i18n="qnav3_desc">了解团队愿景与技术实力</p>
+      <p data-i18n-dynamic="{{ columns.about.press_title | default(value="") }}" data-i18n-key="about_press_title">{{ columns.about.press_title | default(value="统一大模型接口体验，让接入 AI 零负担") }}</p>
     </a>
     {% endif %}
   </nav>

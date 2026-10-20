@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { Link, useLocation, useOutletContext } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { getAnnouncementLabel, getAnnouncementDisplayTime } from '../../utils/announcement';
 import { Row, Col, Card, Typography, List, Progress, Alert, Grid, Spin, Modal, Button, Divider, Tooltip as AntTooltip, Radio, Tag } from 'antd';
 import {
@@ -30,10 +30,9 @@ import request from '../../utils/request';
 import useSettingsStore from '../../store/settings';
 import useAuthStore from '../../store/auth';
 import { useThemeStore } from '../../store/theme';
-import type { DashboardStats, RequestLog, Announcement, ModelTrend30dResponse, LiveMetricsResponse, LiveMetricsSnapshot } from '../../types';
+import type { DashboardStats, RequestLog, Announcement, LiveMetricsResponse, LiveMetricsSnapshot } from '../../types';
 import dayjs from 'dayjs';
-import { timedisplayNow, toCalendarDateRangeParams } from '../../utils/dateRangeParams';
-import ModelDistribution30d from './ModelDistribution30d';
+import { statsCalendarNow, toCalendarDateRangeParams } from '../../utils/dateRangeParams';
 import UsageAreaChart from './UsageAreaChart';
 
 const { Title, Text } = Typography;
@@ -203,6 +202,7 @@ const Dashboard: React.FC = () => {
   }, [pinnedAnnouncement, currentPinnedIndex, i18n.language]);
   const isAdmin = user?.role === 'admin';
   const location = useLocation();
+  const navigate = useNavigate();
   const configuredAdminPath = settings?.site?.admin_path || localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
   const pathFirstSegment = location.pathname.split('/')[1] || '';
   const currentAdminPath = (pathFirstSegment && pathFirstSegment !== 'dashboard') ? pathFirstSegment : configuredAdminPath;
@@ -211,14 +211,14 @@ const Dashboard: React.FC = () => {
   const logsPath = `${basePath}/logs`;
   const taskLogsPath = `${basePath}/task-logs`;
   const [dateRange, setDateRange] = useState<[any, any] | null>(() => {
-    const now = timedisplayNow();
+    const now = statsCalendarNow();
     return [now.startOf('day'), now.endOf('day')];
   });
   const [quickRange, setQuickRange] = useState<string>('today');
 
   const handleQuickRangeChange = (e: any) => {
     const val = e.target.value;
-    const now = timedisplayNow();
+    const now = statsCalendarNow();
     setQuickRange(val);
     if (val === 'today') {
       setDateRange([now.startOf('day'), now.endOf('day')]);
@@ -266,27 +266,6 @@ const Dashboard: React.FC = () => {
     ? t('dashboard.scope_admin')
     : t('dashboard.scope_user');
   const [cardHeight, setCardHeight] = useState(580);
-  const [isModel30dView, setIsModel30dView] = useState(false);
-  const [modelStats30d, setModelStats30d] = useState<ModelTrend30dResponse | null>(null);
-  const [loading30d, setLoading30d] = useState(false);
-
-  const fetchModelStats30d = async () => {
-    setLoading30d(true);
-    try {
-      const data = await (request.get<ModelTrend30dResponse>('/dashboard/models_30d') as unknown as Promise<ModelTrend30dResponse>);
-      setModelStats30d(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading30d(false);
-    }
-  };
-
-  useEffect(() => {
-    if (isModel30dView && !modelStats30d) {
-      fetchModelStats30d();
-    }
-  }, [isModel30dView]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -312,7 +291,6 @@ const Dashboard: React.FC = () => {
       fontWeight: 600,
       fontSize: 11,
       flexShrink: 0,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       color: index === 0 
         ? (_isLight ? '#09090b' : '#fafafa') 
         : index === 1 
@@ -479,7 +457,6 @@ const Dashboard: React.FC = () => {
           border: _isLight ? '1px solid #e4e4e7' : '1px solid rgba(255, 255, 255, 0.12)',
           fontSize: 11.5,
           fontWeight: 500,
-          fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
           color: _isLight ? '#18181b' : '#fafafa',
           lineHeight: '16px',
         }}
@@ -537,7 +514,6 @@ const Dashboard: React.FC = () => {
     color: _isLight ? '#09090b' : '#fafafa',
     fontWeight: 700,
     fontSize: screens.xs ? 24 : 30,
-    fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     fontVariantNumeric: 'tabular-nums',
     letterSpacing: '-0.035em',
     lineHeight: 1.15,
@@ -573,8 +549,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1600, margin: '0 auto' }}>
-      {!isModel30dView && (
-      <>
       {pinnedAnnouncement && (
         <div
           className="compact-announcement-banner"
@@ -770,7 +744,7 @@ const Dashboard: React.FC = () => {
                 color: _isLight ? '#000000' : '#ffffff',
                 cursor: 'pointer',
               }}
-              onClick={() => setIsModel30dView(true)}
+              onClick={() => navigate(`${basePath}/dashboard/model-distribution`)}
             />
           </AntTooltip>
         </div>
@@ -974,7 +948,6 @@ const Dashboard: React.FC = () => {
                         border: _isLight ? '1px solid #e4e4e7' : '1px solid rgba(255, 255, 255, 0.12)',
                         fontSize: 11.5,
                         fontWeight: 500,
-                        fontFamily: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                         color: _isLight ? '#16a34a' : '#4ade80',
                         lineHeight: '16px',
                       }}
@@ -1192,7 +1165,6 @@ const Dashboard: React.FC = () => {
                                   gap: 4,
                                   fontSize: 11,
                                   fontWeight: 600,
-                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                   fontVariantNumeric: 'tabular-nums',
                                   color: statusMeta.text,
                                   flexShrink: 0,
@@ -1209,7 +1181,6 @@ const Dashboard: React.FC = () => {
                                   <span 
                                     style={{
                                       fontSize: 12,
-                                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                       fontVariantNumeric: 'tabular-nums',
                                       color: _isLight ? '#27272a' : '#e4e4e7',
                                       fontWeight: 500,
@@ -1310,7 +1281,6 @@ const Dashboard: React.FC = () => {
                                       alignItems: 'center',
                                       gap: 2,
                                       fontSize: 11,
-                                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                       fontVariantNumeric: 'tabular-nums',
                                       color: latencyColor,
                                     }}
@@ -1326,7 +1296,6 @@ const Dashboard: React.FC = () => {
                                 <span 
                                   style={{
                                     fontSize: 11,
-                                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                     fontVariantNumeric: 'tabular-nums',
                                     color: _isLight ? '#71717a' : '#a1a1aa',
                                     whiteSpace: 'nowrap',
@@ -1342,7 +1311,6 @@ const Dashboard: React.FC = () => {
                               {/* Cost */}
                               <span 
                                 style={{
-                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                   fontVariantNumeric: 'tabular-nums',
                                   fontWeight: 600,
                                   fontSize: 13,
@@ -1417,7 +1385,7 @@ const Dashboard: React.FC = () => {
           >
             <Spin spinning={loading} wrapperClassName="flex-1 flex flex-col min-h-0" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               {(() => {
-                const todayKey = timedisplayNow().format('YYYY-MM-DD');
+                const todayKey = statsCalendarNow().format('YYYY-MM-DD');
                 const rangeStart = dateRange?.[0];
                 const rangeEnd = dateRange?.[1];
                 const costDateLabel = rangeStart && rangeEnd
@@ -1445,7 +1413,7 @@ const Dashboard: React.FC = () => {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: _isLight ? '#71717a' : '#a1a1aa' }}>
                         <CalendarIcon size={12} style={{ opacity: 0.7 }} />
-                        <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', fontWeight: 500 }}>
+                        <span style={{ fontWeight: 500 }}>
                           {costDateLabel}
                         </span>
                         <span style={{ opacity: 0.4 }}>·</span>
@@ -1531,7 +1499,6 @@ const Dashboard: React.FC = () => {
                                       style={{
                                         flexShrink: 0,
                                         fontSize: 11,
-                                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                         color: _isLight ? '#a1a1aa' : '#71717a',
                                       }}
                                     >
@@ -1542,7 +1509,6 @@ const Dashboard: React.FC = () => {
                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, flexShrink: 0, textAlign: 'right' }}>
                                     <span 
                                       style={{
-                                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                                         fontVariantNumeric: 'tabular-nums',
                                         fontWeight: 600,
                                         fontSize: 13,
@@ -1556,7 +1522,7 @@ const Dashboard: React.FC = () => {
                                       {item.total_tokens > 0 && (
                                         <span 
                                           title={`${item.total_tokens.toLocaleString()} Tokens`}
-                                          style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 10, opacity: 0.85 }}
+                                          style={{ fontSize: 10, opacity: 0.85 }}
                                         >
                                           {formatTokenCount(item.total_tokens)}
                                         </span>
@@ -1623,7 +1589,6 @@ const Dashboard: React.FC = () => {
                                           <span 
                                             style={{ 
                                               color: _isLight ? '#27272a' : '#d4d4d8', 
-                                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', 
                                               fontVariantNumeric: 'tabular-nums', 
                                               fontWeight: 500,
                                               whiteSpace: 'nowrap',
@@ -1684,18 +1649,7 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
-      </>
-      )}
 
-      {isModel30dView && (
-        <ModelDistribution30d
-          data={modelStats30d}
-          loading={loading30d}
-          currencySymbol={currencySymbol}
-          onBack={() => setIsModel30dView(false)}
-        />
-      )}
-      
       {/* Global override for table styles to ensure monochrome dark theme */}
       <style>{`
         .shadcn-icon-btn {

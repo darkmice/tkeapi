@@ -6,1583 +6,1486 @@
  */
 
 //! 拆分后新增迁移只追加到本文件末尾。
+//! 历史迁移已归档沉淀至 ledger/ 模块。
+//! 系统更新不得改写 `plugins.is_enabled`，也不得改写已有 MediaKit 预置模型的 `is_active`。
+//! 新插件只 `INSERT ... ON CONFLICT (name) DO NOTHING`。
 
-use std::collections::HashSet;
 use sqlx::PgPool;
+use std::collections::HashSet;
 
+#[allow(unused_imports)]
 use crate::db::migrations::{once_heavy_migration, once_migration};
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
-    // ── 更新火山画质增强/字幕擦除预设模型备注文案 ──
-    once_migration!(pool, done, "update_volcengine_enhance_preset_remark_v1",
-        "UPDATE models SET remark = '系统预设' WHERE remark = '火山引擎画质增强/字幕擦除插件预置模型，请勿删除'"
-    );
-
-    // ── 移除系统预设可灵 (Kling) 模型 ──
-    once_migration!(pool, done, "remove_kling_system_preset_models_v1",
-        "DELETE FROM models WHERE is_system = 1 AND (mid IN ('310004', '310005', '310006', '310007') OR model_id LIKE 'kling%')"
-    );
-
-    // ── 模型分类外键级联置空保护（防止删除服务商/类型时外键拦截） ──
-    once_migration!(pool, done, "fk_model_classifications_on_delete_set_null_v1",
-        "UPDATE billing_rules SET provider_id = NULL WHERE provider_id IS NOT NULL AND provider_id NOT IN (SELECT id FROM model_providers)",
-        "UPDATE billing_rules SET type_id = NULL WHERE type_id IS NOT NULL AND type_id NOT IN (SELECT id FROM model_types)",
-        "UPDATE models SET provider_id = NULL WHERE provider_id IS NOT NULL AND provider_id NOT IN (SELECT id FROM model_providers)",
-        "UPDATE models SET type_id = NULL WHERE type_id IS NOT NULL AND type_id NOT IN (SELECT id FROM model_types)",
-        "UPDATE models SET api_provider_id = NULL WHERE api_provider_id IS NOT NULL AND api_provider_id NOT IN (SELECT id FROM model_api_providers)",
-        "ALTER TABLE billing_rules DROP CONSTRAINT IF EXISTS billing_rules_provider_id_fkey",
-        "ALTER TABLE billing_rules ADD CONSTRAINT billing_rules_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES model_providers(id) ON DELETE SET NULL",
-        "ALTER TABLE billing_rules DROP CONSTRAINT IF EXISTS billing_rules_type_id_fkey",
-        "ALTER TABLE billing_rules ADD CONSTRAINT billing_rules_type_id_fkey FOREIGN KEY (type_id) REFERENCES model_types(id) ON DELETE SET NULL",
-        "ALTER TABLE models DROP CONSTRAINT IF EXISTS models_provider_id_fkey",
-        "ALTER TABLE models ADD CONSTRAINT models_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES model_providers(id) ON DELETE SET NULL",
-        "ALTER TABLE models DROP CONSTRAINT IF EXISTS models_type_id_fkey",
-        "ALTER TABLE models ADD CONSTRAINT models_type_id_fkey FOREIGN KEY (type_id) REFERENCES model_types(id) ON DELETE SET NULL",
-        "ALTER TABLE models DROP CONSTRAINT IF EXISTS models_api_provider_id_fkey",
-        "ALTER TABLE models ADD CONSTRAINT models_api_provider_id_fkey FOREIGN KEY (api_provider_id) REFERENCES model_api_providers(id) ON DELETE SET NULL"
-    );
-
-    if !done.contains("playground_2026_seedream_pro_image_special_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_seedream_pro_image_special(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_seedream_pro_image_special_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_seedream_pro_image_special_v1".into());
-                tracing::info!("创作中心2026 Seedream Pro 图片专用参数回填完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_seedream_pro_image_special_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_seedream_pro_smart_ratio_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_seedream_pro_image_special(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_seedream_pro_smart_ratio_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_seedream_pro_smart_ratio_v1".into());
-                tracing::info!("创作中心2026 Seedream Pro 智能比例回填完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_seedream_pro_smart_ratio_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_gpt_image_2_zh_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_gpt_image_2_localization(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gpt_image_2_zh_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_gpt_image_2_zh_v1".into());
-                tracing::info!("创作中心2026 gpt-image-2 中文与描述菜单本地化迁移完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_gpt_image_2_zh_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_gpt_image_2_variations_default_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_gpt_image_2_localization(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gpt_image_2_variations_default_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_gpt_image_2_variations_default_v1".into());
-                tracing::info!("创作中心2026 gpt-image-2 默认变体数量修正迁移完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_gpt_image_2_variations_default_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
+    // 拆分后最新迁移追加入口（单表轻量增量在此追加）
     once_migration!(
         pool,
         done,
-        "playground_2026_gpt_image_2_strip_redundant_params_v1",
-        include_str!("helpers/playground_2026_gpt_image_2_strip_redundant_params_v1.sql")
-    );
-
-    if !done.contains("playground_2026_gpt_image_2_official_size_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_gpt_image_2_localization(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gpt_image_2_official_size_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_gpt_image_2_official_size_v1".into());
-                tracing::info!(
-                    "创作中心2026 gpt-image-2 官方比例/4K 尺寸迁移完成，更新 {} 条配置",
-                    n
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_gpt_image_2_official_size_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_gpt_image_2_multi_ref_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_gpt_image_2_localization(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gpt_image_2_multi_ref_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_gpt_image_2_multi_ref_v1".into());
-                tracing::info!(
-                    "创作中心2026 gpt-image-2 多参考图上限迁移完成，更新 {} 条配置",
-                    n
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_gpt_image_2_multi_ref_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    once_migration!(
-        pool,
-        done,
-        "playground_2026_seedream_image_special_official_v1",
-        include_str!("helpers/playground_2026_seedream_image_special_official_v1.sql")
-    );
-
-    once_migration!(
-        pool,
-        done,
-        "playground_2026_seedream_strip_size_param_v1",
-        include_str!("helpers/playground_2026_seedream_strip_size_param_v1.sql")
-    );
-
-    once_migration!(
-        pool,
-        done,
-        "playground_2026_seedream_5_0_pro_default_resolution_1_5k_v1",
-        include_str!("helpers/playground_2026_seedream_5_0_pro_default_resolution_1_5k_v1.sql")
-    );
-
-    // ── fal.ai MiniMax H3 Max 参考生视频转发规则 ──
-    once_migration!(pool, done, "fal_minimax_h3_max_r2v_forward_rule_v1",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT 'fal.ai MiniMax H3 Max 参考生视频', 'fal',
-               'fal.ai MiniMax 参考生视频：队列提交 + 状态轮询 + 结果拉取。渠道 base_url=https://queue.fal.run，密钥填 FAL_KEY；模型 ID 填变体名如 h3-max（提交 /minimax/${model}/reference-to-video，轮询 /minimax/${model}/requests/${task_id}/status）',
-               '{"target_type":"fal_video","path_rewrite":{"old":"/v1/video/generations","new":"/minimax/${model}/reference-to-video"},"auth_type":"key","poll_path":"/minimax/${model}/requests/${task_id}/status"}',
-               '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (
-            SELECT 1 FROM forward_rules WHERE name = 'fal.ai MiniMax H3 Max 参考生视频'
-        )"#
-    );
-
-    // 已落地规则：修正 poll_path（去掉误加的 /reference-to-video）
-    once_migration!(pool, done, "fal_minimax_h3_max_r2v_poll_path_v2",
-        r#"UPDATE forward_rules
-        SET config_json = jsonb_set(
-              config_json::jsonb,
-              '{poll_path}',
-              '"/minimax/${model}/requests/${task_id}/status"'
-            )::text,
-            updated_at = NOW()
-        WHERE name = 'fal.ai MiniMax H3 Max 参考生视频'
-          AND config_json::jsonb->>'poll_path'
-            = '/minimax/${model}/reference-to-video/requests/${task_id}/status'"#
-    );
-
-    // ── fal.ai MiniMax H3 Max 参考生视频官方系统计费规则 ──
-    once_migration!(pool, done, "fal_minimax_h3_max_r2v_billing_rule_v1",
-        r#"INSERT INTO billing_rules (name, billing_type, prompt_rate, completion_rate, fixed_rate, duration_rate, billing_rule, extended_config, is_system, pid, pricing_type)
-        SELECT 'fal.ai MiniMax H3 Max 参考生视频', 'duration', 0.0, 0.0, 0.0, 0.08, 'fal_ref_video',
-               '{"free_ref_tokens":4096,"ref_token_rate_per_1k":0.02,"image_tokens_default":1024,"video_ref_tokens_per_sec":{"480p":2886,"768p":7459},"audio_ref_tokens_per_sec":80}',
-               1, '7' || lpad((floor(random() * 10000)::int)::text, 4, '0'), 'official'
-        WHERE NOT EXISTS (SELECT 1 FROM billing_rules WHERE name = 'fal.ai MiniMax H3 Max 参考生视频')
-        "#
-    );
-
-    // ── 同步现有环境预设模型为最新用户配置（若未被删除） ──
-    once_migration!(pool, done, "sync_preset_models_latest_config_v1",
-        "UPDATE models SET model_id = 'doubao-seedance-2-0-260128', original_id = 'doubao-seedance-2-0', model_id_alias = '', pre_deduction = 5.0, site_discount = 1.0, site_discount_enabled = 1, global_discount = 1.0, global_discount_enabled = 1, enable_log_content = 0, feature_attributes = '[]' WHERE mid = '310001'",
-        "UPDATE models SET model_id = 'doubao-seedance-2-0-fast', original_id = 'doubao-seedance-2-0-fast', model_id_alias = '', pre_deduction = 5.0, site_discount = 1.0, site_discount_enabled = 1, global_discount = 1.0, global_discount_enabled = 1, enable_log_content = 1, feature_attributes = '[]' WHERE mid = '310002'",
-        "UPDATE models SET model_id = 'doubao-seedance-2-5-260628', original_id = 'doubao-seedance-2-5', model_id_alias = '', pre_deduction = 5.0, site_discount = 1.0, site_discount_enabled = 1, global_discount = 1.0, global_discount_enabled = 1, enable_log_content = 1, feature_attributes = '[]' WHERE mid = '310003'",
-        "UPDATE models SET model_id = 'doubao-seedance-2-0-mini', original_id = 'doubao-seedance-2-0-mini', model_id_alias = '', pre_deduction = 5.0, site_discount = 1.0, site_discount_enabled = 1, global_discount = 1.0, global_discount_enabled = 1, enable_log_content = 1, feature_attributes = '[]' WHERE mid = '310004'"
-    );
-
-    // ── 火山方舟多模态向量官方转发规则 ──
-    once_migration!(pool, done, "volcengine_embeddings_forward_rules_v1",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '火山方舟 多模态向量', 'volcengine',
-               '将多模态向量请求转发到火山方舟官方多模态向量接口（/api/v3/embeddings/multimodal）',
-               '{"target_type":"openai","path_rewrite":{"old":"/v1/embeddings","new":"/api/v3/embeddings/multimodal"},"path_passthrough":["/api/v3/embeddings/multimodal"],"auth_type":"bearer"}',
-               '向量', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '火山方舟 多模态向量')"#
-    );
-
-    // ── 模型列表页面排序权重字段 ──
-    once_migration!(pool, done, "models_sort_order_column_v1",
-        "ALTER TABLE models ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0",
-        "COMMENT ON COLUMN models.sort_order IS '页面排序，数值越大越在列表中显示越靠前'"
-    );
-
-    // ── 创作中心 Seedance 2.0 方案剔除反向提示词 ──
-    if !done.contains("strip_seedance2_negative_prompt_v1") {
-        match crate::db::migrations::helpers::playground::strip_playground_seedance2_negative_prompt(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('strip_seedance2_negative_prompt_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("strip_seedance2_negative_prompt_v1".into());
-                tracing::info!("创作中心 Seedance 2.0 方案移除反向提示词完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "strip_seedance2_negative_prompt_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    // ── 用户等级发票收据配置与申请表 ──
-    once_migration!(pool, done, "user_levels_invoices_feature_v1",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS invoice_enabled INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS invoice_mode TEXT NOT NULL DEFAULT 'international'",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS invoice_config TEXT NOT NULL DEFAULT '{}'",
-        r#"CREATE TABLE IF NOT EXISTS user_invoice_requests (
+        "marketing_membership_v1",
+        "ALTER TABLE logs ADD COLUMN IF NOT EXISTS coupon_deduct DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN logs.coupon_deduct IS '预扣中由营销卡券面值承担的金额；退款须退回卡券，不能退成现金'",
+        r#"CREATE TABLE IF NOT EXISTS mkt_member_plans (
             id BIGSERIAL PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            invoice_type TEXT NOT NULL DEFAULT 'normal',
-            title_type TEXT NOT NULL DEFAULT 'company',
-            title TEXT NOT NULL,
-            tax_number TEXT,
-            company_address TEXT,
-            company_phone TEXT,
-            bank_name TEXT,
-            bank_account TEXT,
-            amount DOUBLE PRECISION NOT NULL,
-            email TEXT NOT NULL,
-            remark TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            reject_reason TEXT,
-            invoice_file_url TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )"#
-    );
-
-    // ── 用户实名 KYC：新增个人/企业详细信息字段 ──
-    once_migration!(pool, done, "user_kyc_detailed_info_fields_v1",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS id_doc_number TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS personal_email TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS personal_phone TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS company_doc_type TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS company_doc_number TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS company_email TEXT",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS company_phone TEXT",
-        "COMMENT ON COLUMN user_kyc.id_doc_number IS '个人证件号码'",
-        "COMMENT ON COLUMN user_kyc.personal_email IS '个人联系邮箱'",
-        "COMMENT ON COLUMN user_kyc.personal_phone IS '个人联系电话'",
-        "COMMENT ON COLUMN user_kyc.company_doc_type IS '企业证件类型：unified_social_credit_code|business_license|organization_code|other'",
-        "COMMENT ON COLUMN user_kyc.company_doc_number IS '企业证件号码'",
-        "COMMENT ON COLUMN user_kyc.company_email IS '企业联系邮箱'",
-        "COMMENT ON COLUMN user_kyc.company_phone IS '企业联系电话'"
-    );
-
-    // ── 用户实名 KYC：解除单用户唯一限制，支持同时拥有多条个人与企业认证 ──
-    once_migration!(pool, done, "user_kyc_multiple_records_v1",
-        "ALTER TABLE user_kyc DROP CONSTRAINT IF EXISTS user_kyc_user_id_key",
-        "DROP INDEX IF EXISTS user_kyc_user_id_key",
-        "CREATE INDEX IF NOT EXISTS idx_user_kyc_user_id ON user_kyc(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_user_kyc_user_type ON user_kyc(user_id, kyc_type)"
-    );
-
-    // ── 用户实名 KYC：新增 is_default 默认实名主体配置与索引 ──
-    once_migration!(pool, done, "user_kyc_add_is_default_v1",
-        "ALTER TABLE user_kyc ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE",
-        "UPDATE user_kyc SET is_default = TRUE WHERE id IN (SELECT MAX(id) FROM user_kyc GROUP BY user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_user_kyc_is_default ON user_kyc(user_id, is_default)",
-        "COMMENT ON COLUMN user_kyc.is_default IS '是否为用户默认实名主体'"
-    );
-
-    // ── 用户实名 KYC：严格确保每个用户只能有且仅有 1 个默认主体（部分唯一索引） ──
-    once_migration!(pool, done, "user_kyc_strictly_one_default_v1",
-        "UPDATE user_kyc SET is_default = FALSE WHERE is_default = TRUE AND id NOT IN (SELECT MAX(id) FROM user_kyc WHERE is_default = TRUE GROUP BY user_id)",
-        "UPDATE user_kyc SET is_default = TRUE WHERE id IN (SELECT MAX(id) FROM user_kyc WHERE user_id NOT IN (SELECT user_id FROM user_kyc WHERE is_default = TRUE) GROUP BY user_id)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_kyc_one_default ON user_kyc(user_id) WHERE is_default = TRUE"
-    );
-
-    // ── 发票申请审核与开票信息扩展字段 ──
-    once_migration!(pool, done, "user_invoice_requests_audit_fields_v1",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS invoice_code TEXT",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS invoice_number TEXT",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS admin_remark TEXT",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS operator_id TEXT",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS operator_name TEXT",
-        "COMMENT ON COLUMN user_invoice_requests.invoice_code IS '发票代码'",
-        "COMMENT ON COLUMN user_invoice_requests.invoice_number IS '发票号码'",
-        "COMMENT ON COLUMN user_invoice_requests.admin_remark IS '财务审核或开具备注'",
-        "COMMENT ON COLUMN user_invoice_requests.issued_at IS '实际开票时间'",
-        "COMMENT ON COLUMN user_invoice_requests.operator_id IS '操作管理员ID'",
-        "COMMENT ON COLUMN user_invoice_requests.operator_name IS '操作管理员用户名/姓名'"
-    );
-
-    // ── 发票申请单号字段 (fp + YYMMDD + 4位以上随机数) ──
-    once_migration!(pool, done, "user_invoice_requests_request_no_v1",
-        "ALTER TABLE user_invoice_requests ADD COLUMN IF NOT EXISTS request_no TEXT",
-        "UPDATE user_invoice_requests SET request_no = 'fp' || to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYMMDD') || LPAD(id::text, 4, '0') WHERE request_no IS NULL",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_invoice_requests_request_no ON user_invoice_requests(request_no)",
-        "COMMENT ON COLUMN user_invoice_requests.request_no IS '发票申请单号 (fp+YYMMDD+随机数)'"
-    );
-
-    // ── recharge_records 新增 order_no 独立字段与索引，并回填历史单号 ──
-    once_migration!(pool, done, "recharge_records_order_no_field_v1",
-        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS order_no TEXT DEFAULT ''",
-        "COMMENT ON COLUMN recharge_records.order_no IS '关联订单号/支付流水号，方便统计分析与对账'",
-        "CREATE INDEX IF NOT EXISTS idx_recharge_records_order_no ON recharge_records (order_no) WHERE order_no != ''",
-        r#"UPDATE recharge_records 
-           SET order_no = (regexp_match(remark, '(?:订单号|Order\s*(?:No|Number|Id)|单号)[\s:：]+([a-zA-Z0-9_-]+)'))[1]
-           WHERE (order_no IS NULL OR order_no = '') 
-             AND remark ~ '(?:订单号|Order\s*(?:No|Number|Id)|单号)[\s:：]+[a-zA-Z0-9_-]+'"#,
-        r#"UPDATE recharge_records 
-           SET order_no = remark 
-           WHERE (order_no IS NULL OR order_no = '') 
-             AND remark ~ '^T\d{14}[A-Za-z0-9_-]+$'"#
-    );
-
-    // ── 上游渠道配置：NewAPI 等上游货币与本站货币单位折算汇率 ──
-    once_migration!(pool, done, "channel_configs_upstream_currency_rate_v1",
-        "ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS upstream_currency TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS site_currency TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS upstream_currency_rate DOUBLE PRECISION NOT NULL DEFAULT 1.0",
-        "COMMENT ON COLUMN channel_configs.upstream_currency IS '上游计价货币单位，如 CNY/USD，空=同本站'",
-        "COMMENT ON COLUMN channel_configs.site_currency IS '本站计价货币单位，如 USD/CNY，空=同系统'",
-        "COMMENT ON COLUMN channel_configs.upstream_currency_rate IS '货币换算汇率(例如 1 USD = 7.2 CNY 时填 7.2)'"
-    );
-
-    // ── 高并发与慢查询优化索引：超大容量表专用异步后台迁移（专属会话内存调优，杜绝启动停机与 I/O 跑满） ──
-    once_heavy_migration!(pool, done, "perf_concurrency_opt_v1",
-        // 1. 用户按类型查询、分页与 COUNT 聚合（全量覆盖，覆盖全历史）
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_action_created ON logs (user_id, action_type, created_at DESC)",
-        // 2. 用户视觉模型日志分页与总数统计（带 user_id 部分索引）
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_vision_created ON logs (user_id, created_at DESC) WHERE (action_type = ANY (ARRAY['图片'::text, '视频'::text, '视频增强'::text, '视觉模型'::text, '视觉'::text]))",
-        // 3. 孤儿任务扫描优化
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_orphan_scan ON logs (created_at) WHERE is_completed = 0 AND status_code = 0",
-        // 4. 高可用插件日志关联索引
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ha_usage_logs_log_id ON ha_usage_logs (log_id)",
-        // 5. 精简确凿冗余索引（已被复合索引最左前缀覆盖，减少写入放大）
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_id",
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_created",
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_is_completed_pending",
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_created_at_new",
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_created_at_new",
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_action_created_stats_new",
-        // 6. 刷新执行计划统计信息
-        "ANALYZE logs",
-        "ANALYZE api_tokens",
-        "ANALYZE ha_usage_logs",
-    );
-
-    // ── 任务在途轮询快照优化索引：forward_rules.eid 专有部分索引（0.1ms 点查，保障热切换轮询零抖动） ──
-    once_migration!(pool, done, "task_poll_forward_rules_eid_v1",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_forward_rules_eid ON forward_rules (eid) WHERE eid != ''",
-        "ANALYZE forward_rules"
-    );
-
-    once_migration!(pool, done, "playground_2026_conversations_v1",
-        r#"CREATE TABLE IF NOT EXISTS playground_2026_conversations (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            title TEXT NOT NULL DEFAULT '',
-            model_mid TEXT NOT NULL DEFAULT '',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )"#,
-        r#"CREATE TABLE IF NOT EXISTS playground_2026_conversation_messages (
-            id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL REFERENCES playground_2026_conversations(id) ON DELETE CASCADE,
-            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )"#,
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_conversations_user_updated ON playground_2026_conversations (user_id, updated_at DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_conversation_messages_conv_created ON playground_2026_conversation_messages (conversation_id, created_at ASC)"
-    );
-
-    once_migration!(pool, done, "playground_2026_conversation_message_parts_v1",
-        "ALTER TABLE playground_2026_conversation_messages ADD COLUMN IF NOT EXISTS parts JSONB"
-    );
-
-    // ── 系统预设模型按业务场景归并原始模型 ID（聚合前端卡片展示） ──
-    once_migration!(pool, done, "preset_models_original_id_grouping_v1",
-        "UPDATE models SET original_id = '视频增强' WHERE mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep')",
-        "UPDATE models SET original_id = '画质增强级联' WHERE mid IN ('dbs-sr', 'dbs-fs')",
-        "UPDATE models SET original_id = 'Doubao Seedance 预设' WHERE mid IN ('310001', '310002', '310003', '310004')"
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_v1",
-        r#"CREATE TABLE IF NOT EXISTS playground_2026_skills (
-            id TEXT PRIMARY KEY,
-            user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-            slug TEXT NOT NULL,
-            name TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            subtitle TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
-            body_md TEXT NOT NULL DEFAULT '',
-            applies_to JSONB NOT NULL DEFAULT '[]'::jsonb,
-            trigger_words JSONB NOT NULL DEFAULT '[]'::jsonb,
-            source TEXT NOT NULL DEFAULT 'user',
-            enabled BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )"#,
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_pg2026_skills_user_slug ON playground_2026_skills (user_id, slug) WHERE user_id IS NOT NULL",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_pg2026_skills_official_slug ON playground_2026_skills (slug) WHERE user_id IS NULL",
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_skills_user_updated ON playground_2026_skills (user_id, updated_at DESC)",
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_skills_source_updated ON playground_2026_skills (source, updated_at DESC)",
-        "ALTER TABLE playground_2026_conversations ADD COLUMN IF NOT EXISTS skill_id TEXT"
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_seed_prompt_rewriter_v1",
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-prompt-rewriter', NULL, 'prompt-rewriter', '提示词改写',
-            '把口语需求整理成可粘贴到图片/视频页的提示词，不会替你出图。',
-            E'你是提示词改写助手。用户用口语描述想生成的图片或视频时，你把它整理成可直接粘贴到生成页的提示词。\n\n规则：\n- 先确认主体、风格、构图、禁忌；信息不足就提问，不要臆造关键细节。\n- 给出一段完整、可复制的提示词（与用户语言一致）。\n- 不要声称你能出图、出视频或调用生成接口。用户需要自己去图片/视频页粘贴并生成。\n- 不要输出网关路径、厂商字段名或工具调用。',
-            '["chat"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'prompt-rewriter' AND user_id IS NULL
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_skill_categories_v1",
-        r#"CREATE TABLE IF NOT EXISTS playground_2026_skill_categories (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            name_en TEXT NOT NULL DEFAULT '',
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            is_system BOOLEAN NOT NULL DEFAULT FALSE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )"#,
-        r#"INSERT INTO playground_2026_skill_categories (id, name, name_en, sort_order, is_system)
-        SELECT v.id, v.name, v.name_en, v.sort_order, TRUE
-        FROM (VALUES
-            ('chat', '聊天', 'Chat', 10),
-            ('image', '图片', 'Image', 20),
-            ('video', '视频', 'Video', 30),
-            ('audio', '声音', 'Audio', 40)
-        ) AS v(id, name, name_en, sort_order)
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skill_categories c WHERE c.id = v.id
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_seed_chat_writing_v1",
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-wenyan', NULL, 'wenyan', '文言文',
-            '把白话改成典雅文言文，专名与术语保持原形。',
-            $wenyan$你是文言文写作助手。用户给出白话、主题或现代文本时，改写成典雅可诵的文言文；若用户直接提问，也用文言作答。
-
-规则：
-- 用文言句式：判断用「…者…也」，因果用「盖」「故」，假设用「若」「倘」，完成用「矣」。删冗词，能省主语则省。
-- 「之乎者也」点到即止，禁止堆砌虚词、网络口语和表情。
-- 人名、地名、产品名、代码与术语保持原形，不强译。
-- 先给正文；用户要对照时再附简短白话释义，不要把释义写进正文。
-- 不要伪造典故出处；拿不准就不用典。$wenyan$,
-            '["chat"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'wenyan' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-gushi', NULL, 'gushi', '古诗',
-            '按主题作近体诗，默认可作七绝；指定体裁则从其请。',
-            $gushi$你是古诗创作助手。按用户主题、情绪或场景作诗。默认近体诗；用户指定诗经体、古风或词牌时再换体。
-
-规则：
-- 未点名体裁时作七言绝句。点名五绝、五律、七律、古风、词牌或诗经体则从其请。
-- 近体诗：一句之内平仄交替，一联之内相对，邻联相粘；律诗中间两联对仗；押平声韵，一韵到底。
-- 用赋比兴：可直陈，可比拟，宜先以草木岁时起兴再落到人事。重章叠句只用于诗经体。
-- 先出诗题与正文；需要时再附格律说明（平仄、韵部）。不要把说明写进诗句。
-- 今事、品牌、网络梗用古典意象转写，不要硬塞进诗。
-- 不要伪称某句出自唐诗宋词。$gushi$,
-            '["chat"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'gushi' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-ad-copy', NULL, 'ad-copy', '广告词',
-            '按产品与媒介写可投放的口号和短文案，不替你投放。',
-            $adcopy$你是广告词写作助手。按用户的产品、对象和媒介写可投放的文案，不替用户投放。
-
-规则：
-- 先确认产品、受众、卖点、媒介（海报口号 / 短视频口播 / 详情页 / 搜索广告）。信息不足就提问，不要臆造关键卖点。
-- 结构用公开文案框架：AIDA（注意-兴趣-欲望-行动）、PAS（问题-放大-解决）；标题对照 4U（有用、紧迫、独特、具体）。
-- 每稿给：主口号（不超过十二字）、一句副句、以及两条备选。口号要能上口、有利益点，避免空洞形容词堆砌。
-- 不写违法承诺、绝对化用语和未经验证的疗效或收益；不确定就改成可核验的表述。
-- 不要输出投放后台字段名，也不要声称已经发布广告。$adcopy$,
-            '["chat"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'ad-copy' AND user_id IS NULL
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_seed_image_video_v1",
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-cinematic-still', NULL, 'cinematic-still', '电影静帧',
-            '电影剧照质感的静帧约束，用于图片生成。',
-            $cinematic_still$电影剧照质感：35mm 镜头，浅景深，胶片颗粒，实用光，构图留白。真实皮肤与材质，不要插画、不要文字水印、不要畸变人脸。$cinematic_still$,
-            '["image"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'cinematic-still' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-product-hero', NULL, 'product-hero', '产品主图',
-            '电商主图约束，用于图片生成。',
-            $product_hero$电商主图：单件产品居中，干净棚拍，柔和立体光，背景简洁。突出材质与边缘，不要手持自拍、不要夸张场景、不要功效承诺文字。$product_hero$,
-            '["image"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'product-hero' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-cinematic-move', NULL, 'cinematic-move', '电影运镜',
-            '电影短镜头运镜约束，用于视频生成。',
-            $cinematic_move$电影短镜头：一条连续动作，缓慢推近或横移，稳定器质感，自然光。不要跳切、不要分镜列表、不要字幕和台标。$cinematic_move$,
-            '["video"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'cinematic-move' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-product-turn', NULL, 'product-turn', '产品展示',
-            '产品展示片约束，用于视频生成。',
-            $product_turn$产品展示片：产品静止或缓慢旋转，灯光匀、背景干净，突出外形与材质。不要剧情故事、不要多场景切换、不要口播字幕。$product_turn$,
-            '["video"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'product-turn' AND user_id IS NULL
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_seed_image_video_audio_v1",
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-kawaii-still', NULL, 'kawaii-still', '可爱插画',
-            '圆润Q版可爱风，可加星星、爱心、蝴蝶结等元素，用于图片生成。',
-            $kawaii_still$圆润Q版可爱风：大眼睛、软萌脸颊，马卡龙或奶油色。可加星星、爱心、蝴蝶结、小动物等可爱元素。插画或轻厚涂，不要写实恐怖、不要血腥、不要文字水印。$kawaii_still$,
-            '["image"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'kawaii-still' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-kawaii-move', NULL, 'kawaii-move', '可爱短片',
-            'Q版角色轻快短镜头，可加星星闪烁、爱心飘散，用于视频生成。',
-            $kawaii_move$可爱短片：圆润Q版角色，动作轻快有弹性，可加星星闪烁、爱心飘散等可爱元素。一条连续动作，镜头平稳。不要跳切、不要恐怖、不要字幕和台标。$kawaii_move$,
-            '["video"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'kawaii-move' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-warm-narration', NULL, 'warm-narration', '温暖旁白',
-            '柔和清晰的旁白声线约束，用于声音生成。',
-            $warm_narration$温暖旁白：声线柔和清晰，语速适中，像对朋友说话。情绪贴合文本，不要播音腔、不要机械音、不要嘈杂背景。$warm_narration$,
-            '["audio"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'warm-narration' AND user_id IS NULL
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_audio_enabled_default_off_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('playground_2026', 'audio_enabled', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#
-    );
-
-    once_migration!(pool, done, "playground_2026_audio_module_rename_v1",
-        "UPDATE playground_2026_skill_categories SET name = '音频', updated_at = NOW() WHERE id = 'audio' AND name <> '音频'",
-        "UPDATE playground_2026_skills SET description = '柔和清晰的旁白声线约束，用于音频生成。' WHERE id = 'pg2026-skill-warm-narration' AND description LIKE '%用于声音生成%'"
-    );
-
-    once_migration!(pool, done, "playground_2026_skills_drop_audio_v1",
-        "DELETE FROM playground_2026_skills WHERE id = 'pg2026-skill-warm-narration' OR (slug = 'warm-narration' AND user_id IS NULL)",
-        r#"DELETE FROM playground_2026_skills
-           WHERE applies_to @> jsonb_build_array('audio')
-             AND jsonb_array_length(applies_to) = 1"#,
-        r#"UPDATE playground_2026_skills
-           SET applies_to = COALESCE((
-                SELECT jsonb_agg(elem)
-                FROM jsonb_array_elements_text(applies_to) AS t(elem)
-                WHERE elem <> 'audio'
-            ), '[]'::jsonb),
-               updated_at = NOW()
-           WHERE applies_to @> jsonb_build_array('audio')"#,
-        r#"UPDATE playground_2026_skills SET applies_to = '["chat"]'::jsonb
-           WHERE applies_to = '[]'::jsonb"#,
-        "DELETE FROM playground_2026_skill_categories WHERE id = 'audio'"
-    );
-
-    // ── 腾讯云 VOD MiniMax 视频生成专属转发规则（支持 OpenAI 与 MiniMax 官方路由） ──
-    once_migration!(pool, done, "tencent_vod_minimax_video_forward_rule_v2",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '腾讯云 VOD MiniMax 视频生成', 'tencent', '将 OpenAI 与 MiniMax 官方视频请求转换为腾讯云点播 AIGC CreateAigcVideoTask 接口。密钥格式：SecretId:SecretKey:SubAppId，模型格式：ModelName@ModelVersion', '{"target_type":"tencent_vod_video","path_rewrite":{"old":"/v1/video/generations","new":"/"},"path_accept":["/v2/video_generation"],"auth_type":"tencent_vod"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 VOD MiniMax 视频生成')"#
-    );
-
-    // ── 站点模型展示排序统一到 models.sort_order（页面排序） ──
-    if !done.contains("unify_model_page_sort_order_v1") {
-        match crate::db::migrations::helpers::model_sort::backfill_models_sort_order_from_plugin_configs(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('unify_model_page_sort_order_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("unify_model_page_sort_order_v1".into());
-                tracing::info!("模型页面排序回填完成，更新 {} 条", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "unify_model_page_sort_order_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    once_migration!(pool, done, "playground_2026_prompt_optimize_category_v1",
-        r#"INSERT INTO playground_2026_skill_categories (id, name, name_en, sort_order, is_system)
-        SELECT 'prompt-optimize', '提示词优化', 'Prompt optimize', 90, TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skill_categories WHERE id = 'prompt-optimize'
-        )"#
-    );
-
-    once_migration!(pool, done, "playground_2026_prompt_optimize_skills_v1",
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-prompt-optimize-image', NULL, 'prompt-optimize-image', '图片提示词优化',
-            '把用户的画面描述扩写成可直接用于文生图的提示词。',
-            $poi$你是图片提示词优化助手。用户给出想生成的画面描述时，把它扩写成更具体、可直接用于文生图的提示词。
-
-规则：
-- 只输出优化后的提示词正文，不要前言、标题、解释或 markdown 围栏。
-- 保留用户的主体、风格与禁忌；信息不足时合理补全构图、光线、材质、镜头，不要改掉核心对象。
-- 与用户语言一致。不要声称你能出图。$poi$,
-            '["prompt-optimize","image"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'prompt-optimize-image' AND user_id IS NULL
-        )"#,
-        r#"INSERT INTO playground_2026_skills (id, user_id, slug, name, description, body_md, applies_to, trigger_words, source, enabled)
-        SELECT 'pg2026-skill-prompt-optimize-video', NULL, 'prompt-optimize-video', '视频提示词优化',
-            '把用户的镜头描述扩写成可直接用于文生视频的提示词。',
-            $pov$你是视频提示词优化助手。用户给出想生成的镜头或动作描述时，把它扩写成更具体、可直接用于文生视频的提示词。
-
-规则：
-- 只输出优化后的提示词正文，不要前言、标题、解释或 markdown 围栏。
-- 保留用户的主体、风格与禁忌；信息不足时合理补全镜头运动、时长感、光影与节奏，不要改掉核心对象。
-- 与用户语言一致。不要声称你能出视频。$pov$,
-            '["prompt-optimize","video"]'::jsonb, '[]'::jsonb, 'official', TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM playground_2026_skills WHERE slug = 'prompt-optimize-video' AND user_id IS NULL
-        )"#
-    );
-
-    if !done.contains("playground_2026_prompt_optimize_llm_v1") {
-        match crate::db::migrations::helpers::prompt_optimize::seed_prompt_optimize_llm_mid(pool).await {
-            Ok(_) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_prompt_optimize_llm_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_prompt_optimize_llm_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_prompt_optimize_llm_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    once_migration!(pool, done, "playground_2026_conversation_message_extra_v1",
-        "ALTER TABLE playground_2026_conversation_messages ADD COLUMN IF NOT EXISTS extra JSONB"
-    );
-
-    // ── 火山方舟聊天转发规则升级：支持 Chat、Responses、Messages 三协议多路径重写 ──
-    once_migration!(pool, done, "volcengine_chat_three_protocols_rewrites_v1",
-        r#"UPDATE forward_rules
-           SET config_json = '{"target_type":"volcengine_chat","path_rewrites":[{"old":"/v1/chat/completions","new":"/api/v3/chat/completions"},{"old":"/v1/responses","new":"/api/v3/responses"},{"old":"/v1/messages","new":"/api/compatible/v1/messages"}],"auth_type":"bearer"}',
-               description = '将标准聊天、Responses及Messages请求转发到火山方舟官方接口，支持/api/v3/chat/completions、/api/v3/responses与/api/compatible/v1/messages',
-               updated_at = CURRENT_TIMESTAMP
-           WHERE name = '火山方舟 聊天' AND is_system = 1"#
-    );
-
-    once_migration!(pool, done, "announcements_flag_expires_at_v1",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS pin_expires_at TIMESTAMPTZ",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS popup_expires_at TIMESTAMPTZ",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS active_expires_at TIMESTAMPTZ",
-        "COMMENT ON COLUMN announcements.pin_expires_at IS '置顶有效期，到期自动取消置顶'",
-        "COMMENT ON COLUMN announcements.popup_expires_at IS '弹窗有效期，到期自动关闭弹窗'",
-        "COMMENT ON COLUMN announcements.active_expires_at IS '上架有效期，到期自动下架'"
-    );
-
-    if !done.contains("playground_2026_chat_business_init_v1") {
-        match crate::db::migrations::helpers::glm_deepseek_chat::seed_playground_2026_glm_deepseek_chat(pool).await {
-            Ok(_) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_chat_business_init_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_chat_business_init_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_chat_business_init_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_voice_library_v1") {
-        match crate::db::migrations::helpers::voice_library::seed_playground_2026_voice_library(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_voice_library_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_voice_library_v1".into());
-                tracing::info!("创作中心2026 音频方案音色库回填完成，更新 {} 条配置", n);
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_voice_library_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    // ── 腾讯云 EdgeOne MiniMax 视频生成专属转发规则（支持 OpenAI 与 MiniMax 官方路由） ──
-    once_migration!(pool, done, "tencent_edgeone_minimax_video_forward_rule_v1",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '腾讯云 EdgeOne MiniMax 视频生成', 'tencent', '通过腾讯云 EdgeOne Makers Model Pro 调用 MiniMax H3 视频生成模型。支持 OpenAI 与 MiniMax 官方路由发起，自动转换并透传多模态 content 数组与 TaskId，轮询 /minimax/query/${task_id}', '{"target_type":"minimax_video","path_rewrites":[{"old":"/v1/video/generations","new":"/minimax/v2/video_generation/tpl-3"},{"old":"/v2/video_generation","new":"/minimax/v2/video_generation/tpl-3"}],"auth_type":"bearer","poll_path":"/minimax/query/${task_id}"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 EdgeOne MiniMax 视频生成')"#
-    );
-
-    // ── 腾讯云 VOD 可灵视频生成专属转发规则（支持 OpenAI 与可灵官方路由） ──
-    once_migration!(pool, done, "tencent_vod_kling_video_forward_rule_v1",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '腾讯云 VOD 可灵视频生成', 'tencent', '将 OpenAI 与可灵官方视频请求（文生/图生/Omni）转换为腾讯云点播 AIGC CreateAigcVideoTask 接口。密钥格式：SecretId:SecretKey:SubAppId，模型格式：ModelName@ModelVersion', '{"target_type":"tencent_vod_video","path_rewrite":{"old":"/v1/video/generations","new":"/"},"auth_type":"tencent_vod"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 VOD 可灵视频生成')"#
-    );
-
-    once_migration!(pool, done, "announcements_display_time_mode_v1",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS display_time_mode VARCHAR(16) NOT NULL DEFAULT 'created'",
-        "COMMENT ON COLUMN announcements.display_time_mode IS '用户端显示时间：created=新建时间, updated=最后修改时间'"
-    );
-
-    // ── OpenAI 聊天转发规则升级：支持 Chat、Responses、Messages 三协议多路径重写 ──
-    once_migration!(pool, done, "openai_chat_three_protocols_rewrites_v1",
-        r#"UPDATE forward_rules
-           SET config_json = '{"path_rewrites":[{"old":"/v1/chat/completions","new":"/v1/chat/completions"},{"old":"/v1/responses","new":"/v1/responses"},{"old":"/v1/messages","new":"/v1/messages"}]}',
-               description = '标准的按路径聊天透传规则，支持/v1/chat/completions、/v1/responses与/v1/messages',
-               updated_at = CURRENT_TIMESTAMP
-           WHERE name = 'OpenAI 兼容原生通道 (聊天)'
-              OR config_json = '{"path_rewrite":{"old":"/v1/chat/completions","new":"/v1/chat/completions"}}'"#
-    );
-
-    // ── 2026-09-15 转发规则与素材索引综合更新：MiniMax三协议、素材索引、阿里百炼聊天合并、腾讯云生图及百炼原生路径去重 ──
-    once_migration!(pool, done, "rules_and_assets_consolidation_20260915_v1",
-        // 1. MiniMax 聊天规则升级：支持 Chat、Responses、Anthropic Messages 多路径重写
-        r#"UPDATE forward_rules
-           SET name = 'MiniMax 聊天',
-               description = 'MiniMax 官方聊天转发规则，支持 /v1/chat/completions、/v1/responses 与 /anthropic/v1/messages 三种协议格式，上游统一 Bearer 鉴权',
-               config_json = '{"path_rewrites":[{"old":"/v1/chat/completions","new":"/v1/chat/completions"},{"old":"/v1/responses","new":"/v1/responses"},{"old":"/anthropic/v1/messages","new":"/anthropic/v1/messages"},{"old":"/v1/messages","new":"/anthropic/v1/messages"}],"auth_type":"bearer"}',
-               updated_at = CURRENT_TIMESTAMP
-           WHERE (name = 'MiniMax 聊天 (Anthropic兼容)' OR name = 'MiniMax 聊天') AND is_system = 1"#,
-
-        // 2. 素材资产管理：为本站关联云端素材建立高能部分索引，确保千万级海量数据下查询恒定毫秒级
-        r#"CREATE INDEX IF NOT EXISTS idx_plugin_assets_ns_has_asset_id
-           ON plugin_assets (plugin_ns, id DESC)
-           WHERE asset_id IS NOT NULL AND asset_id != ''"#,
-
-        // 3. 阿里百炼统一聊天规则：创建新规则并确保配置为 3 端点重写
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '阿里百炼 DashScope 聊天', 'aliyun',
-               '阿里百炼官方聊天转发规则，支持 /v1/chat/completions、/v1/responses 与 /v1/messages（/apps/anthropic/v1/messages）协议格式，上游统一 Bearer 鉴权',
-               '{"path_rewrites":[{"old":"/v1/chat/completions","new":"/compatible-mode/v1/chat/completions"},{"old":"/v1/responses","new":"/compatible-mode/v1/responses"},{"old":"/v1/messages","new":"/apps/anthropic/v1/messages"}],"auth_type":"bearer"}',
-               '聊天', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '阿里百炼 DashScope 聊天')"#,
-        r#"UPDATE forward_rules
-        SET config_json = '{"path_rewrites":[{"old":"/v1/chat/completions","new":"/compatible-mode/v1/chat/completions"},{"old":"/v1/responses","new":"/compatible-mode/v1/responses"},{"old":"/v1/messages","new":"/apps/anthropic/v1/messages"}],"auth_type":"bearer"}',
-            description = '阿里百炼官方聊天转发规则，支持 /v1/chat/completions、/v1/responses 与 /v1/messages（/apps/anthropic/v1/messages）协议格式，上游统一 Bearer 鉴权',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE name = '阿里百炼 DashScope 聊天'"#,
-
-        // 4. 将旧阿里百炼聊天规则(ID 27, 28)的模型自动重定向至新规则，并清理旧规则
-        r#"UPDATE models m
-        SET forward_rule_ids = (
-            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint IN (27, 28) THEN n.id ELSE elem::text::bigint END)::text
-            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
-        ), updated_at = CURRENT_TIMESTAMP
-        FROM (SELECT id FROM forward_rules WHERE name = '阿里百炼 DashScope 聊天' LIMIT 1) n
-        WHERE m.forward_rule_ids::jsonb @> '27'::jsonb OR m.forward_rule_ids::jsonb @> '28'::jsonb"#,
-        r#"DELETE FROM forward_rules WHERE name IN ('阿里百炼 DashScope 聊天 (OpenAI兼容)', '阿里百炼 DashScope 聊天 (Anthropic兼容)')"#,
-
-        // 5. 腾讯云 VOD 生图去重：模型重定向至同步轮询版，清理带 poll_path 规则
-        r#"UPDATE models m
-        SET forward_rule_ids = (
-            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN sync.id ELSE elem::text::bigint END)::text
-            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
-        ), updated_at = CURRENT_TIMESTAMP
-        FROM (
-            SELECT id FROM forward_rules 
-            WHERE category = '图片' AND rule_type IN ('tencent', 'tencent_vod') 
-              AND (config_json::jsonb->>'target_type') = 'tencent_vod_image' AND NOT (config_json::jsonb ? 'poll_path')
-            LIMIT 1
-        ) sync,
-        (
-            SELECT id FROM forward_rules 
-            WHERE category = '图片' AND rule_type IN ('tencent', 'tencent_vod') 
-              AND (config_json::jsonb->>'target_type') = 'tencent_vod_image' AND (config_json::jsonb ? 'poll_path')
-        ) del
-        WHERE m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
-        r#"DELETE FROM forward_rules
-        WHERE category = '图片' AND rule_type IN ('tencent', 'tencent_vod')
-          AND (config_json::jsonb->>'target_type') = 'tencent_vod_image' AND (config_json::jsonb ? 'poll_path')"#,
-
-        // 6. 阿里百炼官方路径(old==new)重复生图与视频规则清理：模型重定向至标准规则，清理冗余规则
-        r#"UPDATE models m
-        SET forward_rule_ids = (
-            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN std.id ELSE elem::text::bigint END)::text
-            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
-        ), updated_at = CURRENT_TIMESTAMP
-        FROM (SELECT id FROM forward_rules WHERE category = '视频' AND rule_type = 'aliyun' AND (config_json::jsonb #>> '{path_rewrite,old}') = '/v1/video/generations' LIMIT 1) std,
-             (SELECT id FROM forward_rules WHERE category = '视频' AND rule_type = 'aliyun' AND (config_json::jsonb #>> '{path_rewrite,old}') = (config_json::jsonb #>> '{path_rewrite,new}') AND (config_json::jsonb #>> '{path_rewrite,old}') LIKE '%/api/v1/services/aigc/%') del
-        WHERE m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
-        r#"UPDATE models m
-        SET forward_rule_ids = (
-            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN std.id ELSE elem::text::bigint END)::text
-            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
-        ), updated_at = CURRENT_TIMESTAMP
-        FROM (SELECT id FROM forward_rules WHERE category = '图片' AND rule_type = 'aliyun' AND (config_json::jsonb #>> '{path_rewrite,old}') = '/v1/images/generations' LIMIT 1) std,
-             (SELECT id FROM forward_rules WHERE category = '图片' AND rule_type = 'aliyun' AND (config_json::jsonb #>> '{path_rewrite,old}') = (config_json::jsonb #>> '{path_rewrite,new}') AND (config_json::jsonb #>> '{path_rewrite,old}') LIKE '%/api/v1/services/aigc/%') del
-        WHERE m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
-        r#"DELETE FROM forward_rules
-        WHERE rule_type = 'aliyun'
-          AND (config_json::jsonb #>> '{path_rewrite,old}') = (config_json::jsonb #>> '{path_rewrite,new}')
-          AND (config_json::jsonb #>> '{path_rewrite,old}') LIKE '%/api/v1/services/aigc/%'"#
-    );
-
-    once_migration!(pool, done, "tencent_enhance_plugin_v1",
-        r#"INSERT INTO plugins (name, title, description, is_enabled, allowed_levels, category)
-           VALUES ('tencent_enhance', '腾讯云增强',
-           '腾讯云增强，仅作为级联阶段二，不预置模型与渠道',
-           0, 'all', 'system')
-           ON CONFLICT (name) DO NOTHING"#,
-        r#"CREATE TABLE IF NOT EXISTS plugin_tencent_enhance_logs (
-            id BIGSERIAL PRIMARY KEY,
-            task_id VARCHAR(128) NOT NULL DEFAULT '',
-            relay_log_id BIGINT,
-            source_type VARCHAR(32) NOT NULL DEFAULT 'cascade',
-            video_url TEXT NOT NULL DEFAULT '',
-            target_resolution VARCHAR(32) NOT NULL DEFAULT '',
-            template_id BIGINT NOT NULL DEFAULT 0,
-            status VARCHAR(32) NOT NULL DEFAULT 'processing',
-            output_url TEXT,
-            error_message TEXT,
-            latency_ms INT NOT NULL DEFAULT 0,
+            price DOUBLE PRECISION NOT NULL DEFAULT 0,
+            sort_order BIGINT NOT NULL DEFAULT 0,
+            is_enabled BIGINT NOT NULL DEFAULT 1,
+            card_role TEXT NOT NULL DEFAULT 'plan',
+            accent TEXT NOT NULL DEFAULT 'plain',
+            badge TEXT NOT NULL DEFAULT '',
+            contact_url TEXT NOT NULL DEFAULT '',
+            features_json TEXT NOT NULL DEFAULT '[]',
+            tier_enabled BIGINT NOT NULL DEFAULT 0,
+            target_group_key TEXT NOT NULL DEFAULT '',
+            tier_duration_mode TEXT NOT NULL DEFAULT 'permanent',
+            tier_duration_days BIGINT NOT NULL DEFAULT 0,
+            upgrade_group_keys TEXT NOT NULL DEFAULT '[]',
+            keep_group_keys TEXT NOT NULL DEFAULT '[]',
+            credit_enabled BIGINT NOT NULL DEFAULT 0,
+            credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            credit_duration_mode TEXT NOT NULL DEFAULT 'permanent',
+            credit_duration_days BIGINT NOT NULL DEFAULT 0,
+            model_ids TEXT NOT NULL DEFAULT '[]',
+            limit_mode TEXT NOT NULL DEFAULT 'none',
+            limit_count BIGINT NOT NULL DEFAULT 0,
+            limit_window_days BIGINT NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )"#,
-        "CREATE INDEX IF NOT EXISTS idx_tencent_enhance_task_id ON plugin_tencent_enhance_logs(task_id)",
-        "CREATE INDEX IF NOT EXISTS idx_tencent_enhance_status ON plugin_tencent_enhance_logs(status)",
-        "CREATE INDEX IF NOT EXISTS idx_tencent_enhance_created_at ON plugin_tencent_enhance_logs(created_at DESC)",
-        "COMMENT ON TABLE plugin_tencent_enhance_logs IS '腾讯云视频增强自测与级联阶段二流水'"
-    );
-    // ── 模型库与上架模型拆分：预置目录独立，更新不污染已上架 ──
-    once_migration!(pool, done, "model_library_table_v1",
-        r#"CREATE TABLE IF NOT EXISTS model_library (
-            id BIGSERIAL PRIMARY KEY,
-            mid TEXT NOT NULL,
-            name TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            original_id TEXT NOT NULL DEFAULT '',
-            model_id_alias TEXT NOT NULL DEFAULT '',
-            provider_id BIGINT,
-            api_provider_id BIGINT,
-            type_id BIGINT,
-            group_ratios TEXT NOT NULL DEFAULT '{"default":1.0}',
-            billing_rule_id BIGINT,
-            pre_deduction DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            forward_rule_ids TEXT,
-            enable_log_content INTEGER NOT NULL DEFAULT 0,
-            site_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-            site_discount_enabled INTEGER NOT NULL DEFAULT 1,
-            global_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-            global_discount_enabled INTEGER NOT NULL DEFAULT 0,
-            logo TEXT,
-            remark TEXT,
-            description TEXT,
-            feature_attributes TEXT DEFAULT '[]',
-            is_system INTEGER NOT NULL DEFAULT 1,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )"#,
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_model_library_mid ON model_library (mid)",
-        "ALTER TABLE models ADD COLUMN IF NOT EXISTS library_mid TEXT",
-        "CREATE INDEX IF NOT EXISTS idx_models_library_mid ON models (library_mid)",
-        "COMMENT ON TABLE model_library IS '系统模型库（预置目录）。上架后复制到 models，目录更新不覆盖已上架模型。'",
-        "COMMENT ON COLUMN models.library_mid IS '来源模型库 mid；空表示自建上架模型'"
-    );
-
-    once_migration!(pool, done, "models_is_listed_v1",
-        "ALTER TABLE models ADD COLUMN IF NOT EXISTS is_listed INTEGER NOT NULL DEFAULT 1",
-        "COMMENT ON COLUMN models.is_listed IS '1=上架（可调用/进渠道/进广场），0=下架（在模型库）'",
-        "CREATE INDEX IF NOT EXISTS idx_models_is_listed ON models (is_listed)"
-    );
-
-    // v1 带 REFERENCES 时，若 providers/types 的 id 仍是 integer，建表会失败；无 FK 再保证能建表。
-    once_migration!(pool, done, "model_library_table_nofk_v1",
-        r#"CREATE TABLE IF NOT EXISTS model_library (
-            id BIGSERIAL PRIMARY KEY,
-            mid TEXT NOT NULL,
-            name TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            original_id TEXT NOT NULL DEFAULT '',
-            model_id_alias TEXT NOT NULL DEFAULT '',
-            provider_id BIGINT,
-            api_provider_id BIGINT,
-            type_id BIGINT,
-            group_ratios TEXT NOT NULL DEFAULT '{"default":1.0}',
-            billing_rule_id BIGINT,
-            pre_deduction DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-            is_active INTEGER NOT NULL DEFAULT 1,
-            forward_rule_ids TEXT,
-            enable_log_content INTEGER NOT NULL DEFAULT 0,
-            site_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-            site_discount_enabled INTEGER NOT NULL DEFAULT 1,
-            global_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-            global_discount_enabled INTEGER NOT NULL DEFAULT 0,
-            logo TEXT,
-            remark TEXT,
-            description TEXT,
-            feature_attributes TEXT DEFAULT '[]',
-            is_system INTEGER NOT NULL DEFAULT 1,
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )"#,
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_model_library_mid ON model_library (mid)"
-    );
-
-    once_migration!(pool, done, "model_library_columns_align_v1",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS provider_id BIGINT",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS api_provider_id BIGINT",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS type_id BIGINT",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS billing_rule_id BIGINT",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS forward_rule_ids TEXT",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS enable_log_content INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS is_system INTEGER NOT NULL DEFAULT 1"
-    );
-
-    once_migration!(pool, done, "model_library_columns_nullable_v1",
-        "ALTER TABLE model_library ALTER COLUMN logo DROP NOT NULL",
-        "ALTER TABLE model_library ALTER COLUMN logo TYPE TEXT",
-        "ALTER TABLE model_library ALTER COLUMN remark DROP NOT NULL",
-        "ALTER TABLE model_library ALTER COLUMN description DROP NOT NULL"
-    );
-
-    if !done.contains("model_library_split_seed_v1") {
-        match crate::db::preset_models::split_listed_and_library(pool).await {
-            Ok(_) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('model_library_split_seed_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("model_library_split_seed_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("model_library_split_seed_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-    if !done.contains("volc_mediakit_image_tools_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await {
-            Ok(()) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_image_tools_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("volc_mediakit_image_tools_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("volc_mediakit_image_tools_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-
-    if !done.contains("volc_mediakit_image_identity_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await {
-            Ok(()) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_image_identity_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("volc_mediakit_image_identity_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("volc_mediakit_image_identity_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-
-    once_migration!(pool, done, "playground_2026_image_edit_enabled_default_off_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('playground_2026', 'image_edit_enabled', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#
-    );
-
-    if !done.contains("pg2026_volc_image_edit_ready_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::activate_for_pg2026_edit(pool).await {
-            Ok(()) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('pg2026_volc_image_edit_ready_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("pg2026_volc_image_edit_ready_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("pg2026_volc_image_edit_ready_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-    // ── 日志与归档表增加上游 request_id 字段（元数据加列秒级完成，保持冷热表对齐） ──
-    once_migration!(pool, done, "logs_add_upstream_request_id_v1",
-        "ALTER TABLE logs ADD COLUMN IF NOT EXISTS upstream_request_id TEXT",
-        "ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS upstream_request_id TEXT",
-        "COMMENT ON COLUMN logs.upstream_request_id IS '上游厂商返回的 request_id（响应头中提取）'",
-        "COMMENT ON COLUMN logs_archive.upstream_request_id IS '上游厂商返回的 request_id（冷归档）'"
-    );
-
-    // ── 大表索引异步后台构建（专属会话内存 + CONCURRENTLY 并发建索引，启动零阻塞，不锁业务读写） ──
-    once_heavy_migration!(pool, done, "logs_upstream_request_id_idx_v1",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_upstream_request_id ON logs (upstream_request_id) WHERE upstream_request_id IS NOT NULL AND upstream_request_id <> ''",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_archive_upstream_request_id ON logs_archive (upstream_request_id) WHERE upstream_request_id IS NOT NULL AND upstream_request_id <> ''",
-        "ANALYZE logs",
-        "ANALYZE logs_archive"
-    );
-
-    once_migration!(pool, done, "volcengine_enhance_tool_logs_v1",
-        r#"CREATE TABLE IF NOT EXISTS plugin_volcengine_enhance_logs (
-            id BIGSERIAL PRIMARY KEY,
-            task_id VARCHAR(128) NOT NULL DEFAULT '',
-            relay_log_id BIGINT,
-            source_type VARCHAR(32) NOT NULL DEFAULT 'cascade',
-            video_url TEXT NOT NULL DEFAULT '',
-            target_resolution VARCHAR(32) NOT NULL DEFAULT '',
-            status VARCHAR(32) NOT NULL DEFAULT 'processing',
-            output_url TEXT,
-            error_message TEXT,
-            latency_ms INT NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )"#,
-        "CREATE INDEX IF NOT EXISTS idx_volc_enhance_tool_task_id ON plugin_volcengine_enhance_logs(task_id)",
-        "CREATE INDEX IF NOT EXISTS idx_volc_enhance_tool_status ON plugin_volcengine_enhance_logs(status)",
-        "CREATE INDEX IF NOT EXISTS idx_volc_enhance_tool_created_at ON plugin_volcengine_enhance_logs(created_at DESC)",
-        "COMMENT ON TABLE plugin_volcengine_enhance_logs IS '火山增强自测与级联阶段二流水'"
-    );
-
-    // ── 控制台仪表盘统计 covering 索引加固（覆盖 token_id 与聚合列，彻底消除回表与 3.15K IOPS 读突刺） ──
-    once_heavy_migration!(pool, done, "logs_dashboard_covering_v2",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_admin_dashboard_covering_v2 ON logs (created_at DESC) INCLUDE (prompt_tokens, completion_tokens, cost, token_id)",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_dashboard_covering_v2 ON logs (user_id, created_at DESC) INCLUDE (prompt_tokens, completion_tokens, cost, token_id)",
-        "ANALYZE logs"
-    );
-
-    // ── 双轨用量统计 covering 索引、logs 复合主键升级与充值订单号自动触发器 ──
-    once_heavy_migration!(pool, done, "logs_and_recharge_opt_v1",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_daily_stats_user_date ON usage_daily_stats (user_id, stat_date) INCLUDE (total_cost, total_pre_deduct_gift)",
-        "ANALYZE usage_daily_stats",
-        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_pkey_composite ON logs (id, created_at)",
-        r#"DO $$ BEGIN
-             IF EXISTS (
-               SELECT 1 FROM pg_index i
-               JOIN pg_class t ON t.oid = i.indrelid
-               WHERE t.relname = 'logs' AND i.indisprimary AND i.indnatts >= 2
-             ) THEN
-               DROP INDEX IF EXISTS idx_logs_pkey_composite;
-               RETURN;
-             END IF;
-
-             ALTER TABLE logs DROP CONSTRAINT IF EXISTS logs_pkey;
-             ALTER TABLE logs ADD CONSTRAINT logs_pkey PRIMARY KEY USING INDEX idx_logs_pkey_composite;
-           EXCEPTION WHEN OTHERS THEN
-             RAISE WARNING 'logs_composite_pkey skip: %', SQLERRM;
-           END $$"#,
-        "ANALYZE logs",
-        r#"UPDATE recharge_records
-           SET order_no = (CASE WHEN wallet_type = 'gift' THEN 'G' ELSE 'T' END)
-               || to_char(COALESCE(created_at, NOW()) AT TIME ZONE 'Asia/Shanghai', 'YYYYMMDDHH24MISS')
-               || 'R' || substring(md5(id::text || COALESCE(created_at::text, '')) from 1 for 8)
-           WHERE order_no IS NULL OR TRIM(order_no) = ''"#,
-        r#"CREATE OR REPLACE FUNCTION trg_recharge_auto_order_no()
-           RETURNS TRIGGER AS $$
-           BEGIN
-               IF NEW.order_no IS NULL OR TRIM(NEW.order_no) = '' THEN
-                   NEW.order_no := (CASE WHEN NEW.wallet_type = 'gift' THEN 'G' ELSE 'T' END)
-                       || to_char(CLOCK_TIMESTAMP() AT TIME ZONE 'Asia/Shanghai', 'YYYYMMDDHH24MISS')
-                       || 'R' || substring(md5(random()::text || clock_timestamp()::text) from 1 for 8);
-               END IF;
-               RETURN NEW;
-           END;
-           $$ LANGUAGE plpgsql;"#,
-        "DROP TRIGGER IF EXISTS trg_recharge_auto_order_no ON recharge_records",
-        "CREATE TRIGGER trg_recharge_auto_order_no BEFORE INSERT ON recharge_records FOR EACH ROW EXECUTE FUNCTION trg_recharge_auto_order_no()"
-    );
-
-    // ── 普通用户邮箱/手机改为限额共享，身份以 UID 唯一区分 ──
-    once_migration!(pool, done, "users_shared_email_mobile_v1",
-        r#"DO $$
-        DECLARE r record;
-        BEGIN
-          FOR r IN
-            SELECT c.conname
-            FROM pg_constraint c
-            JOIN pg_class t ON c.conrelid = t.oid
-            WHERE t.relname = 'users' AND c.contype = 'u'
-              AND pg_get_constraintdef(c.oid) ILIKE '%(email)%'
-          LOOP
-            EXECUTE format('ALTER TABLE users DROP CONSTRAINT IF EXISTS %I', r.conname);
-          END LOOP;
-          FOR r IN
-            SELECT i.relname AS idx
-            FROM pg_index x
-            JOIN pg_class i ON i.oid = x.indexrelid
-            JOIN pg_class t ON t.oid = x.indrelid
-            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (x.indkey)
-            WHERE t.relname = 'users'
-              AND x.indisunique
-              AND NOT x.indisprimary
-              AND a.attname = 'email'
-              AND x.indnkeyatts = 1
-          LOOP
-            EXECUTE format('DROP INDEX IF EXISTS %I', r.idx);
-          END LOOP;
-        END $$"#,
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
-        "CREATE INDEX IF NOT EXISTS idx_users_mobile ON users (mobile) WHERE mobile IS NOT NULL AND btrim(mobile) <> ''",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_placeholder_email_unique ON users (email) WHERE email LIKE '%@tokensbyte.local'"
-    );
-
-    // ── 单条邮箱/手机绑定上限覆盖（站点默认仍走 registration 设置） ──
-    once_migration!(pool, done, "contact_bind_limits_v1",
-        r#"CREATE TABLE IF NOT EXISTS contact_bind_limits (
-            kind TEXT NOT NULL CHECK (kind IN ('email', 'mobile')),
-            value TEXT NOT NULL CHECK (btrim(value) <> ''),
-            max_accounts INTEGER NOT NULL CHECK (max_accounts BETWEEN 1 AND 99),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            PRIMARY KEY (kind, value)
-        )"#
-    );
-
-    // ── 视觉 Tab 部分索引扩展（精确对齐系统固定 4 个视觉类型，对齐 SQL_VISION_ACTION_FILTER） ──
-    once_heavy_migration!(pool, done, "logs_vision_index_include_image_enhance_v1",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_vision_created_at_v2 ON logs (created_at DESC) WHERE (action_type = ANY (ARRAY['图片'::text, '视频'::text, '视频增强'::text, '图像增强'::text]))",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_vision_created_v2 ON logs (user_id, created_at DESC) WHERE (action_type = ANY (ARRAY['图片'::text, '视频'::text, '视频增强'::text, '图像增强'::text]))",
-        "ANALYZE logs"
-    );
-
-    once_migration!(pool, done, "playground_2026_video_edit_workbench_enabled_default_off_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('playground_2026', 'video_edit_workbench_enabled', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#
-    );
-
-    // ── 火山 Seedream 5.0 Pro 仅支持单图文档说明与多语言更新 ──
-    if !done.contains("update_volc_image_doc_pro_single_v1") {
-        let zh_content = include_str!("../../api/plugins/docs_api/default_docs/zh/volc-image.md");
-        let en_content = include_str!("../../api/plugins/docs_api/default_docs/en/volc-image.md");
-        let _ = sqlx::query("UPDATE plugin_docs SET content = $1, updated_at = CURRENT_TIMESTAMP WHERE slug = 'volc-image'")
-            .bind(zh_content)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("UPDATE plugin_docs_intl SET content = $1, updated_at = CURRENT_TIMESTAMP WHERE lang = 'en' AND doc_id IN (SELECT id FROM plugin_docs WHERE slug = 'volc-image')")
-            .bind(en_content)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('update_volc_image_doc_pro_single_v1')")
-            .execute(pool)
-            .await;
-        done.insert("update_volc_image_doc_pro_single_v1".into());
-        tracing::info!("已同步火山 Seedream 5.0 Pro 文档说明至数据库");
-    }
-
-    if !done.contains("volc_enhance_type_unify_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await {
-            Ok(()) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_enhance_type_unify_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("volc_enhance_type_unify_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("volc_enhance_type_unify_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-
-    once_migration!(pool, done, "model_discount_schedule_v1",
-        "ALTER TABLE models ADD COLUMN IF NOT EXISTS discount_schedule TEXT NOT NULL DEFAULT ''",
-        "COMMENT ON COLUMN models.discount_schedule IS '折扣限价与全站折扣的按天时段规划 JSON。enabled=false 时使用统一折扣'",
-        "ALTER TABLE model_library ADD COLUMN IF NOT EXISTS discount_schedule TEXT NOT NULL DEFAULT ''",
-        "COMMENT ON COLUMN model_library.discount_schedule IS '折扣限价与全站折扣的按天时段规划 JSON。enabled=false 时使用统一折扣'"
-    );
-
-    if !done.contains("volc_mediakit_image_billing_pid_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await {
-            Ok(()) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_image_billing_pid_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("volc_mediakit_image_billing_pid_v1".into());
-            }
-            Err(e) => {
-                tracing::warn!("volc_mediakit_image_billing_pid_v1 失败，未标记完成以便重试: {e}");
-            }
-        }
-    }
-
-    once_migration!(
-        pool,
-        done,
-        "ha_plugin_preset_rules_seed_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('high_availability_channel', 'ha_rules', '{"def":"r1","rules":[{"id":"r1","name":"通用对话","retries":3,"budget":900,"ttfb":0,"err":"first","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}},{"id":"r2","name":"图像生成","retries":2,"budget":1200,"ttfb":120,"err":"last","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}},{"id":"r3","name":"深度思考","retries":3,"budget":1200,"ttfb":60,"err":"first","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}},{"id":"r4","name":"音视频长任务","retries":2,"budget":1800,"ttfb":0,"err":"last","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}},{"id":"r5","name":"向量与排序","retries":3,"budget":600,"ttfb":30,"err":"first","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}},{"id":"r6","name":"极速容灾","retries":4,"budget":300,"ttfb":5,"err":"first","melt":{"401":1800,"402":1800,"404":3,"429":60,"5xx":300}}]}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#
-    );
-
-    // ── 腾讯云 VOD 火山视频生成专属转发规则（支持 OpenAI 与火山方舟官方路由） ──
-    once_migration!(pool, done, "tencent_vod_volcengine_video_forward_rule_v1",
-        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-        SELECT '腾讯云 VOD 火山视频生成', 'tencent', '将 OpenAI 与火山方舟官方视频请求转换为腾讯云点播 AIGC CreateAigcVideoTask 接口。密钥格式：SecretId:SecretKey:SubAppId，模型格式：ModelName@ModelVersion', '{"target_type":"tencent_vod_video","path_rewrite":{"old":"/v1/video/generations","new":"/"},"path_accept":["/api/v3/contents/generations/tasks"],"auth_type":"tencent_vod"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 VOD 火山视频生成')"#
-    );
-
-    // ── 视频模型 Token 细分与日统计预聚合字段（has_video 与细分指标） ──
-    once_migration!(pool, done, "logs_has_video_and_stats_columns_v1",
-        "ALTER TABLE logs ADD COLUMN IF NOT EXISTS has_video SMALLINT NOT NULL DEFAULT 0",
-        "ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS has_video SMALLINT NOT NULL DEFAULT 0",
-        "ALTER TABLE usage_daily_stats ADD COLUMN IF NOT EXISTS prompt_tokens BIGINT NOT NULL DEFAULT 0",
-        "ALTER TABLE usage_daily_stats ADD COLUMN IF NOT EXISTS completion_tokens BIGINT NOT NULL DEFAULT 0",
-        "ALTER TABLE usage_daily_stats ADD COLUMN IF NOT EXISTS with_video_tokens BIGINT NOT NULL DEFAULT 0"
-    );
-
-    // ── 实时用量高性能通用覆盖索引（无模型硬编码，避免自定义模型漏索引） ──
-    once_heavy_migration!(pool, done, "idx_logs_stat_covering_v1",
-        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_stat_covering ON logs (created_at DESC) INCLUDE (model, prompt_tokens, completion_tokens, has_video, cost, status_code, is_completed)",
-        "ANALYZE logs"
-    );
-
-    if !done.contains("playground_2026_mark_mask_bbox_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_mark_capabilities(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_mark_mask_bbox_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_mark_mask_bbox_v1".into());
-                tracing::info!(
-                    "创作中心2026 标记蒙版/坐标框回填完成，更新 {} 条配置",
-                    n
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_mark_mask_bbox_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    if !done.contains("playground_2026_mark_mask_exact_v1") {
-        match crate::db::migrations::helpers::playground::restrict_playground_2026_mask_models(pool).await {
-            Ok(n) => {
-                let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_mark_mask_exact_v1')",
-                )
-                .execute(pool)
-                .await;
-                done.insert("playground_2026_mark_mask_exact_v1".into());
-                tracing::info!(
-                    "创作中心2026 蒙版仅保留 gpt-image-2，去掉 {} 条渠道别名",
-                    n
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "playground_2026_mark_mask_exact_v1 失败，未标记完成以便重试: {e}"
-                );
-            }
-        }
-    }
-
-    once_migration!(
-        pool,
-        done,
-        "playground_2026_scratch_objects_v1",
-        r#"CREATE TABLE IF NOT EXISTS playground_2026_scratch_objects (
+        "COMMENT ON TABLE mkt_member_plans IS '营销卡券会员可购买方案'",
+        r#"CREATE TABLE IF NOT EXISTS mkt_member_orders (
             id BIGSERIAL PRIMARY KEY,
             user_id TEXT NOT NULL,
-            object_key TEXT NOT NULL,
-            file_url TEXT NOT NULL DEFAULT '',
-            storage_provider TEXT NOT NULL DEFAULT 'tos',
-            purpose TEXT NOT NULL DEFAULT 'mask',
-            file_size BIGINT NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            expire_at TIMESTAMPTZ NOT NULL
+            plan_id BIGINT NOT NULL,
+            plan_name TEXT NOT NULL DEFAULT '',
+            price_paid DOUBLE PRECISION NOT NULL DEFAULT 0,
+            tier_applied BIGINT NOT NULL DEFAULT 0,
+            tier_from TEXT NOT NULL DEFAULT '',
+            tier_to TEXT NOT NULL DEFAULT '',
+            tier_expires_at TIMESTAMPTZ,
+            tier_reverted BIGINT NOT NULL DEFAULT 0,
+            tier_note TEXT NOT NULL DEFAULT '',
+            credit_id BIGINT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )"#,
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_scratch_expire ON playground_2026_scratch_objects (expire_at)",
-        "CREATE INDEX IF NOT EXISTS idx_pg2026_scratch_user_key ON playground_2026_scratch_objects (user_id, object_key)",
-        "COMMENT ON TABLE playground_2026_scratch_objects IS '创作中心2026笔画蒙版等临时对象，到期或用完即删'"
-    );
-
-    // ── 用户最后活跃 IP，供管理端用户详细展示 ──
-    once_migration!(pool, done, "users_last_active_ip_v1",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_ip TEXT NOT NULL DEFAULT ''"
-    );
-
-    #[cfg(feature = "commercial_plugins")]
-    once_migration!(pool, done, "mobile_app_plugin_v1",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_orders_user_plan ON mkt_member_orders (user_id, plan_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_orders_tier_expiry ON mkt_member_orders (tier_expires_at) WHERE tier_applied = 1 AND tier_reverted = 0",
+        r#"CREATE TABLE IF NOT EXISTS mkt_member_credits (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            order_id BIGINT NOT NULL,
+            plan_id BIGINT NOT NULL,
+            face_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+            remaining DOUBLE PRECISION NOT NULL DEFAULT 0,
+            model_ids TEXT NOT NULL DEFAULT '[]',
+            expires_at TIMESTAMPTZ,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_mkt_credits_user_status ON mkt_member_credits (user_id, status)",
+        r#"CREATE TABLE IF NOT EXISTS mkt_coupon_holds (
+            id BIGSERIAL PRIMARY KEY,
+            credit_id BIGINT NOT NULL,
+            log_id BIGINT NOT NULL,
+            user_id TEXT NOT NULL,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            restored DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_mkt_holds_log ON mkt_coupon_holds (log_id)",
+        r#"CREATE TABLE IF NOT EXISTS mkt_coupon_ledger (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            credit_id BIGINT,
+            order_id BIGINT,
+            kind TEXT NOT NULL DEFAULT '',
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            model_name TEXT NOT NULL DEFAULT '',
+            log_id BIGINT,
+            remark TEXT NOT NULL DEFAULT '',
+            expires_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_mkt_ledger_user ON mkt_coupon_ledger (user_id, id DESC)",
         r#"INSERT INTO plugins (
             name, title, description, is_enabled, allowed_levels, category,
             show_in_admin_menu, admin_menu_sort, admin_menu_title, admin_menu_default_tab
         ) VALUES (
-            'mobile_app', '移动端APP管理',
-            '手机端 App 的版本、维护开关、底部入口和接口目录。App 启动配置只从本插件读取。',
+            'marketing_membership', '营销卡券会员',
+            '购买卡券可以享受快速变更站点等级，模型优惠等。',
             0, 'all', 'user',
-            1, 40, '', 'app_client'
+            0, 50, '', 'plans'
         ) ON CONFLICT (name) DO NOTHING"#
     );
-
-    #[cfg(not(feature = "commercial_plugins"))]
-    once_migration!(pool, done, "mobile_app_plugin_strip_v1",
-        "DELETE FROM plugin_configs WHERE plugin_name = 'mobile_app'",
-        "DELETE FROM plugins WHERE name = 'mobile_app'"
+    once_migration!(
+        pool,
+        done,
+        "model_voucher_redemption_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS code_type TEXT NOT NULL DEFAULT 'balance'",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS allowed_models TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS valid_days BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN redemptions.code_type IS 'balance=余额兑换码, model_voucher=模型卡券兑换码'",
+        "COMMENT ON COLUMN redemptions.allowed_models IS '模型卡券可消耗的模型 ID JSON 数组'",
+        "COMMENT ON COLUMN redemptions.valid_days IS '卡券兑换后可消耗天数，0=长期有效'",
+        r#"CREATE TABLE IF NOT EXISTS user_model_vouchers (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            redemption_id BIGINT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            face_value DOUBLE PRECISION NOT NULL,
+            remaining DOUBLE PRECISION NOT NULL,
+            allowed_models TEXT NOT NULL DEFAULT '[]',
+            redeemed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMPTZ,
+            status BIGINT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_user_model_vouchers_user_fifo ON user_model_vouchers (user_id, redeemed_at, id)",
+        r#"CREATE TABLE IF NOT EXISTS user_model_voucher_holds (
+            id BIGSERIAL PRIMARY KEY,
+            voucher_id BIGINT NOT NULL,
+            log_id BIGINT NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_user_model_voucher_holds_log ON user_model_voucher_holds (log_id)",
+        "ALTER TABLE logs ADD COLUMN IF NOT EXISTS pre_deduct_voucher DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN logs.pre_deduct_voucher IS '本笔最终由模型卡券承担的金额，退款退回卡券，不退进余额'",
+        "ALTER TABLE usage_daily_stats ADD COLUMN IF NOT EXISTS total_pre_deduct_voucher DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN usage_daily_stats.total_pre_deduct_voucher IS '模型卡券计入调用的金额，系统消费统计需扣除，避免与兑换核销重复'"
     );
-
-    // 默认安装写进运营列表的预置副本：mid 与目录 mid 相同。已绑渠道、令牌或产生过调用的留下。
-    once_migration!(pool, done, "preset_models_stay_in_library_v1",
-        r#"DELETE FROM models AS m
-           WHERE m.is_listed = 1
-             AND m.library_mid IS NOT NULL
-             AND m.library_mid <> ''
-             AND m.library_mid = m.mid
-             AND NOT EXISTS (
-               SELECT 1 FROM channels c
-               WHERE position(m.mid in c.models) > 0
-                  OR position(m.mid in c.model_mapping) > 0
-                  OR position(m.model_id in c.models) > 0
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM api_tokens t
-               WHERE position(m.mid in t.allowed_models) > 0
-                  OR position(m.model_id in t.allowed_models) > 0
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM logs l
-               WHERE l.model = m.model_id OR l.model = m.mid
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM logs_archive l
-               WHERE l.model = m.model_id OR l.model = m.mid
-             )"#
+    once_migration!(
+        pool,
+        done,
+        "redemption_activity_id_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS activity_id TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN redemptions.activity_id IS '活动ID，4位数字，同一活动的兑换码共用，不同活动不可重复'"
     );
+    once_migration!(
+        pool,
+        done,
+        "redemption_activity_id_backfill_v1",
+        r#"DO $$
+DECLARE
+  rec RECORD;
+  new_id TEXT;
+  tries INT;
+BEGIN
+  UPDATE redemptions r
+  SET activity_id = src.activity_id
+  FROM (
+    SELECT name, MAX(activity_id) AS activity_id
+    FROM redemptions
+    WHERE activity_id <> ''
+    GROUP BY name
+  ) src
+  WHERE r.name = src.name AND r.activity_id = '';
 
-    // 目录里的 MediaKit 预置模型跟随运营行的激活状态。没有已激活运营行时保持关闭，避免插件一开就占满模型仓库。
-    once_migration!(pool, done, "volc_mediakit_library_active_follows_models_v1",
-        r#"UPDATE model_library AS l
-           SET is_active = CASE
-                 WHEN EXISTS (
-                   SELECT 1 FROM models m WHERE m.mid = l.mid AND m.is_active = 1
-                 ) THEN 1
-                 ELSE 0
-               END,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE l.mid IN (
-             'vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg'
-           )"#
+  FOR rec IN
+    SELECT DISTINCT name FROM redemptions WHERE activity_id = ''
+  LOOP
+    tries := 0;
+    LOOP
+      tries := tries + 1;
+      new_id := lpad((floor(random() * 10000))::int::text, 4, '0');
+      EXIT WHEN NOT EXISTS (SELECT 1 FROM redemptions WHERE activity_id = new_id);
+      IF tries > 200 THEN
+        RAISE EXCEPTION 'redemption activity id exhausted';
+      END IF;
+    END LOOP;
+    UPDATE redemptions SET activity_id = new_id WHERE name = rec.name AND activity_id = '';
+  END LOOP;
+END $$;"#
     );
-
-    if !done.contains("volc_mediakit_library_under_enhance_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::ensure_enhance_library_catalog(pool).await {
-            Ok(()) => {
+    if !done.contains("playground_2026_claude_fable_chat_scheme_v1") {
+        match crate::db::migrations::helpers::claude_fable_chat::seed_playground_2026_claude_fable_chat_scheme(pool).await {
+            Ok(_) => {
                 let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_library_under_enhance_v1')",
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_claude_fable_chat_scheme_v1')",
                 )
                 .execute(pool)
                 .await;
-                done.insert("volc_mediakit_library_under_enhance_v1".into());
+                done.insert("playground_2026_claude_fable_chat_scheme_v1".into());
             }
             Err(e) => {
-                tracing::warn!("volc_mediakit_library_under_enhance_v1 失败，未标记完成以便重试: {e}");
+                tracing::warn!(
+                    "playground_2026_claude_fable_chat_scheme_v1 失败，未标记完成以便重试: {e}"
+                );
             }
         }
     }
 
-    // Seedance 2.5 系统预设补 1080p。只补缺失档，已有自定义 1080p 与时段倍率保持不动。
-    once_migration!(pool, done, "seedance25_official_1080p_rate_v1",
-        r#"UPDATE billing_rules
-        SET extended_config = jsonb_set(
-              extended_config::jsonb,
-              '{resolution_rates,1080p}',
-              '{"with_video":46,"without_video":77}'::jsonb,
-              true
-            )::text,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE is_system = 1
-          AND (name = 'Seedance2.5官方计费' OR pid = '73119')
-          AND jsonb_typeof(extended_config::jsonb -> 'resolution_rates') = 'object'
-          AND NOT (extended_config::jsonb -> 'resolution_rates' ? '1080p')"#
-    );
-
-    once_migration!(pool, done, "announcements_target_module_v1",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS target_module VARCHAR(32) NOT NULL DEFAULT 'console'",
-        "COMMENT ON COLUMN announcements.target_module IS '通知模块：console=控制台，playground_2026=创作中心2026，portal_pro=站点门户增强版'"
-    );
-
-    once_migration!(pool, done, "announcements_target_modules_color_v1",
-        "ALTER TABLE announcements ALTER COLUMN target_module TYPE TEXT",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS banner_bg_color VARCHAR(16)",
-        "COMMENT ON COLUMN announcements.target_module IS '通知模块，逗号分隔可多选：console,playground_2026,portal_pro'",
-        "COMMENT ON COLUMN announcements.banner_bg_color IS '创作中心与门户顶栏背景色，#RRGGBB，空为默认背景'"
-    );
-
-    once_migration!(pool, done, "announcements_split_banner_bg_v1",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS playground_banner_bg VARCHAR(16)",
-        "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS portal_banner_bg VARCHAR(16)",
-        "COMMENT ON COLUMN announcements.playground_banner_bg IS '创作中心顶栏背景色，#RRGGBB，空为默认'",
-        "COMMENT ON COLUMN announcements.portal_banner_bg IS '门户顶栏背景色，#RRGGBB，空为默认'",
-        r#"UPDATE announcements SET playground_banner_bg = banner_bg_color
-           WHERE playground_banner_bg IS NULL AND banner_bg_color IS NOT NULL AND banner_bg_color <> ''
-             AND position('playground_2026' in target_module) > 0"#,
-        r#"UPDATE announcements SET portal_banner_bg = banner_bg_color
-           WHERE portal_banner_bg IS NULL AND banner_bg_color IS NOT NULL AND banner_bg_color <> ''
-             AND position('portal_pro' in target_module) > 0"#
-    );
-
-    once_migration!(pool, done, "playground_2026_site_default_enabled_default_off_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('playground_2026', 'site_default_enabled', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#
-    );
-
-    once_migration!(pool, done, "user_level_commission_basis_v1",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS commission_basis TEXT NOT NULL DEFAULT 'consumption'",
-        "COMMENT ON COLUMN user_levels.commission_basis IS '返佣发放基准: consumption=按系统钱包实际消费, recharge=按充值入账'",
-        "ALTER TABLE commissions ADD COLUMN IF NOT EXISTS source_key TEXT",
-        "COMMENT ON COLUMN commissions.source_key IS '返佣幂等键: log:{logs.id} | recharge:{recharge_records.id} | ark:{id} | arkrefund:{id}'",
-        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_commissions_source_key ON commissions (source_key) WHERE source_key IS NOT NULL"
-    );
-
-    once_migration!(pool, done, "playground_2026_dedicated_token_unique_v1",
-        r#"DELETE FROM api_tokens a
-           WHERE a.only_playground_2026 = 1
-             AND a.name = '创作中心2026'
-             AND EXISTS (
-               SELECT 1 FROM api_tokens b
-               WHERE b.only_playground_2026 = 1
-                 AND b.name = '创作中心2026'
-                 AND b.user_id = a.user_id
-                 AND b.id < a.id
-             )"#,
-        r#"CREATE UNIQUE INDEX IF NOT EXISTS uidx_api_tokens_pg2026_dedicated
-           ON api_tokens (user_id)
-           WHERE only_playground_2026 = 1 AND name = '创作中心2026'"#
-    );
-
-    once_migration!(
-        pool,
-        done,
-        "volcengine_enhance_default_off_v1",
-        r#"UPDATE plugins SET is_enabled = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE name = 'volcengine_enhance'
-             AND NOT EXISTS (
-                 SELECT 1 FROM plugin_configs
-                 WHERE plugin_name = 'volcengine_enhance'
-                   AND config_key = 'keys'
-                   AND config_value IS NOT NULL
-                   AND config_value <> ''
-                   AND config_value <> '[]'
-             )"#
-    );
-
-    once_migration!(
-        pool,
-        done,
-        "playground_2026_default_off_v1",
-        r#"UPDATE plugins SET is_enabled = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE name = 'playground_2026'"#
-    );
-
-    once_migration!(
-        pool,
-        done,
-        "remove_seedance_cascade_enhance_models_v1",
-        "DELETE FROM model_library WHERE mid IN ('dbs-sr', 'dbs-fs') OR model_id IN ('Doubao-seedance-2-0-sr', 'Doubao-seedance-2-0-fast-sr')",
-        "DELETE FROM models WHERE mid IN ('dbs-sr', 'dbs-fs') OR model_id IN ('Doubao-seedance-2-0-sr', 'Doubao-seedance-2-0-fast-sr')"
-    );
-
-    // 八条 MediaKit 预置模型录入模型仓库目录，默认保持关闭（is_active = 0），由管理员在插件配置中按需激活。
-    if !done.contains("volc_mediakit_preset_library_catalog_v1") {
-        match crate::db::migrations::helpers::volc_mediakit_image::ensure_enhance_library_catalog(pool).await {
-            Ok(()) => {
+    if !done.contains("playground_2026_error_mappings_v1") {
+        match crate::db::migrations::helpers::error_mappings::seed_playground_2026_error_mappings(pool).await {
+            Ok(_) => {
                 let _ = sqlx::query(
-                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_preset_library_catalog_v1')",
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_error_mappings_v1')",
                 )
                 .execute(pool)
                 .await;
-                done.insert("volc_mediakit_preset_library_catalog_v1".into());
+                done.insert("playground_2026_error_mappings_v1".into());
             }
             Err(e) => {
                 tracing::warn!(
-                    "volc_mediakit_preset_library_catalog_v1 写入目录失败，未标记完成以便重试: {e}"
+                    "playground_2026_error_mappings_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_error_mappings_v2") {
+        match crate::db::migrations::helpers::error_mappings::reset_playground_2026_error_mappings(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_error_mappings_v2')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_error_mappings_v2".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_error_mappings_v2 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // ── 火山素材转换规则、插件规则与级联视频规则：启用 fast_response 优先快返 ──
+    once_migration!(pool, done, "forward_rules_enable_fast_response_for_asset_rules_v1",
+        r#"UPDATE forward_rules
+           SET config_json = (config_json::jsonb || '{"fast_response": true}'::jsonb)::text
+           WHERE is_active = 1
+             AND (
+               config_json::jsonb ->> 'asset_convert' = 'true'
+               OR config_json::jsonb ->> 'upstream_asset_convert' = 'true'
+               OR config_json::jsonb ->> 'is_cascade' IN ('true', '1')
+             )
+             AND NOT (config_json::jsonb ? 'fast_response')"#
+    );
+
+    // ── Vidu 官方旗舰视频生成内置转发规则 ──
+    once_migration!(pool, done, "system_preset_vidu_forward_rule_v1",
+        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+           SELECT 'Vidu 官方旗舰视频生成', 'vidu', '供 Vidu 官方 Q 系列视频模型（viduq4-preview / viduq3-pro 等）调用的专属转发规则，支持 OpenAI 与 Vidu 官方 2 种方式调用，支持文生视频、首帧图生视频、首尾帧生视频与多主体参考生视频自适应选路，支持音视频直出与异步任务轮询。', '{"target_type":"vidu","path_rewrite":{"old":"/v1/video/generations","new":"/ent/v2/img2video"},"auth_type":"token","poll_path":"/ent/v2/tasks/${task_id}/creations"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+           WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = 'Vidu 官方旗舰视频生成')"#,
+        r#"UPDATE forward_rules SET eid = CASE WHEN eid ~ '^[0-9]+$' THEN eid ELSE '1' || lpad((floor(random() * 10000)::int)::text, 4, '0') END, config_json = '{"target_type":"vidu","path_rewrite":{"old":"/v1/video/generations","new":"/ent/v2/img2video"},"auth_type":"token","poll_path":"/ent/v2/tasks/${task_id}/creations"}', description = '供 Vidu 官方 Q 系列视频模型（viduq4-preview / viduq3-pro 等）调用的专属转发规则，支持 OpenAI 与 Vidu 官方 2 种方式调用，支持文生视频、首帧图生视频、首尾帧生视频与多主体参考生视频自适应选路，支持音视频直出与异步任务轮询。' WHERE name = 'Vidu 官方旗舰视频生成'"#
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "redemption_starts_at_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN redemptions.starts_at IS '兑换码开始生效时间，NULL=生成后立即生效'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_order_no_v1",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS order_no TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_member_orders.order_no IS '卡券购买订单号，C 开头；历史单后缀 L，新单后缀 R'",
+        r#"UPDATE mkt_member_orders
+           SET order_no = 'C' || to_char(created_at AT TIME ZONE 'Asia/Shanghai', 'YYYYMMDDHH24MISS') || 'L' || lpad(id::text, 8, '0')
+           WHERE order_no = ''"#,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_mkt_orders_order_no ON mkt_member_orders (order_no) WHERE order_no <> ''",
+        r#"INSERT INTO recharge_records (user_id, amount, recharge_type, remark, wallet_type, order_no, created_at)
+           SELECT o.user_id, -o.price_paid, 'coupon_purchase', '购买卡券 ' || o.plan_name, 'system', o.order_no, o.created_at
+           FROM mkt_member_orders o
+           JOIN users u ON u.id = o.user_id
+           WHERE o.price_paid > 0
+             AND o.order_no <> ''
+             AND NOT EXISTS (
+               SELECT 1 FROM recharge_records rr
+               WHERE rr.order_no = o.order_no AND rr.recharge_type = 'coupon_purchase'
+             )"#
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_order_pay_status_v1",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS pay_status TEXT NOT NULL DEFAULT 'paid'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS pay_method TEXT NOT NULL DEFAULT 'balance'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS payment_no TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_member_orders.pay_status IS 'unpaid=未付款, paid=已付款, closed=已关闭'",
+        "COMMENT ON COLUMN mkt_member_orders.pay_method IS '余额为 balance，在线支付为渠道名；未付款为空'",
+        "COMMENT ON COLUMN mkt_member_orders.payment_no IS '在线支付对应 orders.out_trade_no，余额支付为空'",
+        "UPDATE mkt_member_orders SET paid_at = created_at WHERE pay_status = 'paid' AND paid_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_orders_user_unpaid ON mkt_member_orders (user_id, plan_id) WHERE pay_status = 'unpaid'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_order_pay_expire_v1",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS pay_expires_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN mkt_member_orders.pay_expires_at IS '未付款订单的支付截止时间，超时自动取消'",
+        "UPDATE mkt_member_orders SET pay_expires_at = created_at + INTERVAL '24 hours' WHERE pay_status = 'unpaid' AND pay_expires_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_orders_unpaid_expiry ON mkt_member_orders (pay_expires_at) WHERE pay_status = 'unpaid'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_order_balance_hold_v1",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS balance_hold DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_orders.balance_hold IS '组合支付时已从现金余额占用、待在线付清差额的金额；取消或超时退回'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_plan_window_hours_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS limit_window_hours BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.limit_window_hours IS '限购窗口小时数；大于 0 时按小时，为 0 时仍用 limit_window_days'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "support_tickets_v1",
+        r#"CREATE TABLE IF NOT EXISTS support_ticket_settings (
+            id BIGINT PRIMARY KEY,
+            auto_close_days BIGINT NOT NULL DEFAULT 7,
+            max_open BIGINT NOT NULL DEFAULT 10,
+            allow_images BIGINT NOT NULL DEFAULT 1,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON COLUMN support_ticket_settings.auto_close_days IS '已解决超过这么多天后自动关闭，0=不自动关闭'",
+        "COMMENT ON COLUMN support_ticket_settings.max_open IS '单用户 new/open/pending 工单上限'",
+        "COMMENT ON COLUMN support_ticket_settings.allow_images IS '1=允许上传图片'",
+        "INSERT INTO support_ticket_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING",
+        r#"CREATE TABLE IF NOT EXISTS support_ticket_categories (
+            id BIGSERIAL PRIMARY KEY,
+            cat_key TEXT NOT NULL UNIQUE,
+            label TEXT NOT NULL,
+            sort_order BIGINT NOT NULL DEFAULT 0,
+            is_enabled BIGINT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        r#"INSERT INTO support_ticket_categories (cat_key, label, sort_order, is_enabled) VALUES
+            ('account', '账户与登录', 10, 1),
+            ('billing', '充值与账单', 20, 1),
+            ('api', 'API 与调用', 30, 1),
+            ('idea', '功能建议', 40, 1),
+            ('other', '其他', 50, 1)
+        ON CONFLICT (cat_key) DO NOTHING"#,
+        r#"CREATE TABLE IF NOT EXISTS support_tickets (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            category_key TEXT NOT NULL DEFAULT '',
+            category_label TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'new',
+            priority BIGINT NOT NULL DEFAULT 1,
+            assignee_id TEXT,
+            solved_at TIMESTAMPTZ,
+            closed_at TIMESTAMPTZ,
+            user_read_event_id BIGINT NOT NULL DEFAULT 0,
+            admin_read_event_id BIGINT NOT NULL DEFAULT 0,
+            last_public_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON COLUMN support_tickets.status IS 'new/open/pending/solved/closed'",
+        "COMMENT ON COLUMN support_tickets.priority IS '0低 1普通 2高 3紧急，仅管理员设置'",
+        "COMMENT ON COLUMN support_tickets.user_read_event_id IS '用户已读到的事件 id，只比较管理员公开回复'",
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_user_public ON support_tickets (user_id, last_public_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated ON support_tickets (status, updated_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_assignee ON support_tickets (assignee_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_solved ON support_tickets (solved_at) WHERE status = 'solved'",
+        r#"CREATE TABLE IF NOT EXISTS support_ticket_events (
+            id BIGSERIAL PRIMARY KEY,
+            ticket_id BIGINT NOT NULL,
+            kind TEXT NOT NULL,
+            actor_id TEXT NOT NULL DEFAULT '',
+            actor_role TEXT NOT NULL DEFAULT '',
+            actor_name TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON COLUMN support_ticket_events.kind IS 'public=双方可见, internal=仅管理员, system=状态与指派'",
+        "CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket ON support_ticket_events (ticket_id, id)",
+        r#"CREATE TABLE IF NOT EXISTS support_ticket_files (
+            id BIGSERIAL PRIMARY KEY,
+            ticket_id BIGINT NOT NULL,
+            event_id BIGINT NOT NULL,
+            file_name TEXT NOT NULL,
+            mime TEXT NOT NULL,
+            size_bytes BIGINT NOT NULL,
+            storage_name TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "CREATE INDEX IF NOT EXISTS idx_support_ticket_files_event ON support_ticket_files (event_id)",
+        "CREATE INDEX IF NOT EXISTS idx_support_ticket_files_ticket ON support_ticket_files (ticket_id)",
+        r#"INSERT INTO plugins (
+            name, title, description, is_enabled, allowed_levels, category,
+            show_in_admin_menu, admin_menu_sort, admin_menu_title, admin_menu_default_tab
+        ) VALUES (
+            'support_tickets', '工单',
+            '用户在顶栏提交工单，管理员在后台回复。公开回复与内部备注分开，解决后可以回访，超时自动关闭。',
+            0, 'all', 'user',
+            0, 60, '', 'inbox'
+        ) ON CONFLICT (name) DO NOTHING"#
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_plan_space_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS space_enabled BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS space_mb BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS space_duration_mode TEXT NOT NULL DEFAULT 'permanent'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS space_duration_days BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.space_mb IS '购买后在创作中心2026基础上增加的存储空间，单位 MB'",
+        "COMMENT ON COLUMN mkt_member_plans.space_duration_mode IS 'permanent=长期增加，days=固定天数后收回增加的部分'",
+        r#"CREATE TABLE IF NOT EXISTS mkt_member_space_grants (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            order_id BIGINT NOT NULL,
+            plan_id BIGINT NOT NULL,
+            space_mb BIGINT NOT NULL DEFAULT 0,
+            expires_at TIMESTAMPTZ,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_member_space_grants IS '已付款卡券发放的创作中心2026空间。多次购买各记一行，配额按未过期行相加'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_space_user_active ON mkt_member_space_grants (user_id) WHERE status = 'active'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_plan_duration_hours_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS tier_duration_hours BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS credit_duration_hours BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS space_duration_hours BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.tier_duration_hours IS '会员等级有效小时。mode=hours 时使用，此时 tier_duration_days 为 0'",
+        "COMMENT ON COLUMN mkt_member_plans.credit_duration_hours IS '消费额度有效小时。mode=hours 时使用，此时 credit_duration_days 为 0'",
+        "COMMENT ON COLUMN mkt_member_plans.space_duration_hours IS '创作空间有效小时。mode=hours 时使用，此时 space_duration_days 为 0'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaigns_v1",
+        r#"CREATE TABLE IF NOT EXISTS mkt_campaigns (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            headline TEXT NOT NULL DEFAULT '',
+            subtitle TEXT NOT NULL DEFAULT '',
+            is_enabled BIGINT NOT NULL DEFAULT 1,
+            template_key TEXT NOT NULL DEFAULT 'cards',
+            placement TEXT NOT NULL DEFAULT 'playground_2026_hot',
+            plan_ids TEXT NOT NULL DEFAULT '[]',
+            sort_order BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_campaigns IS '营销卡券活动。引用已有会员方案，投放到指定页面入口'",
+        "COMMENT ON COLUMN mkt_campaigns.template_key IS '展示模板。cards=卡片列表'",
+        "COMMENT ON COLUMN mkt_campaigns.placement IS '展示位置。playground_2026_hot=创作中心2026顶部热门活动'",
+        "COMMENT ON COLUMN mkt_campaigns.plan_ids IS '参与活动的会员方案 id，JSON 数组，顺序即展示顺序'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_campaigns_placement ON mkt_campaigns (placement, is_enabled, sort_order, id)"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaigns_h_site_template_v1",
+        "COMMENT ON COLUMN mkt_campaigns.template_key IS '展示模板。cards=卡片列表，h_site=H站风格'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaigns_i_site_template_v1",
+        "COMMENT ON COLUMN mkt_campaigns.template_key IS '展示模板。cards=卡片列表，h_site=H站风格，i_site=I站风格'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "commission_lots_v1",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS commissioned_recharge_left DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN users.commissioned_recharge_left IS '已发过充值返佣、尚未被系统钱包支出吃掉的本金'",
+        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS principal_exempt DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN recharge_records.principal_exempt IS '这笔系统钱包支出吃掉的已返充值本金，退款时加回'",
+        r#"CREATE TABLE IF NOT EXISTS commission_lots (
+            id BIGSERIAL PRIMARY KEY,
+            source_key TEXT NOT NULL,
+            inviter_id TEXT NOT NULL,
+            from_user_id TEXT NOT NULL,
+            base_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            awarded DOUBLE PRECISION NOT NULL DEFAULT 0,
+            clawed DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE commission_lots IS '每笔已入账佣金。回冲按这里的邀请人和金额，不看当前等级'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_commission_lots_source ON commission_lots (source_key)",
+        "CREATE INDEX IF NOT EXISTS idx_commission_lots_from ON commission_lots (from_user_id, id DESC)",
+        r#"INSERT INTO commission_lots (source_key, inviter_id, from_user_id, base_amount, awarded, clawed)
+           SELECT c.source_key, c.user_id, c.from_user_id,
+                  CASE WHEN c.ratio > 0 THEN c.amount / c.ratio ELSE c.amount END,
+                  c.amount, 0
+           FROM commissions c
+           WHERE c.amount > 0 AND c.source_key IS NOT NULL AND c.source_key <> ''
+           ON CONFLICT (source_key) DO NOTHING"#,
+        r#"UPDATE users u SET commissioned_recharge_left = GREATEST(0, LEAST(
+               GREATEST(u.balance, 0),
+               COALESCE((
+                   SELECT SUM(rr.amount) FROM recharge_records rr
+                   JOIN commissions c ON c.source_key = 'recharge:' || rr.id::text AND c.amount > 0
+                   WHERE rr.user_id = u.id AND rr.amount > 0
+               ), 0)
+               - COALESCE((
+                   SELECT SUM(GREATEST(-rr.amount, 0)) FROM recharge_records rr
+                   WHERE rr.user_id = u.id AND COALESCE(rr.wallet_type, 'system') = 'system' AND rr.amount < 0
+                     AND rr.recharge_type IN ('coupon_purchase', 'manual', 'ark_video_consume')
+               ), 0)
+               - COALESCE((
+                   SELECT SUM(GREATEST(l.cost - COALESCE(l.pre_deduct_gift, 0) - COALESCE(l.coupon_deduct, 0), 0))
+                   FROM logs l
+                   WHERE l.user_id = u.id AND l.status_code = 200 AND l.cost > 0
+               ), 0)
+           ))
+           WHERE EXISTS (
+               SELECT 1 FROM commissions c
+               JOIN recharge_records rr ON c.source_key = 'recharge:' || rr.id::text
+               WHERE rr.user_id = u.id AND c.amount > 0
+           )"#
+    );
+    once_migration!(
+        pool,
+        done,
+        "commission_refund_split_v1",
+        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS real_cash DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS system_refunded DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN recharge_records.real_cash IS '方舟系统扣款里扣之前余额盖住的现金，信控垫付不在这里'",
+        "COMMENT ON COLUMN recharge_records.system_refunded IS '这笔方舟系统扣款已经退回的金额，含信控垫付'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS principal_hold DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_orders.principal_hold IS '占用余额时吃掉的已返充值本金，释放占用时只加回这个数'"
+    );
+    once_migration!(
+        pool,
+        done,
+        "redemption_commission_exempt_v1",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS redemption_commission_exempt DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN users.redemption_commission_exempt IS '余额兑换码入账后尚未花掉的金额。这段系统余额不参与充值返佣和消费返佣'",
+        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS redemption_exempt DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN recharge_records.redemption_exempt IS '这笔支出吃掉的余额兑换码本金，退款时加回'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS redemption_hold DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_orders.redemption_hold IS '占用余额时吃掉的余额兑换码本金，释放占用时加回'",
+        r#"UPDATE users u SET redemption_commission_exempt = GREATEST(0, LEAST(
+               GREATEST(u.balance, 0),
+               COALESCE((
+                   SELECT SUM(rr.amount) FROM recharge_records rr
+                   WHERE rr.user_id = u.id AND rr.recharge_type = 'redemption' AND rr.amount > 0
+               ), 0)
+               - COALESCE((
+                   SELECT SUM(-rr.amount) FROM recharge_records rr
+                   WHERE rr.user_id = u.id AND rr.recharge_type = 'redemption_refund' AND rr.amount < 0
+               ), 0)
+           ))
+           WHERE EXISTS (
+               SELECT 1 FROM recharge_records rr
+               WHERE rr.user_id = u.id AND rr.recharge_type = 'redemption' AND rr.amount > 0
+           )"#
+    );
+
+    // ── Google Gemini 转发规则收敛：合二为一，仅保留 1 条图片和 1 条聊天，淘汰多余旧规则并平滑迁移关联模型 ──
+    let mig_key = "system_preset_google_forward_rules_consolidation_v1";
+    if !done.contains(mig_key) {
+        let mut tx = pool.begin().await?;
+
+        // 1. 确保主图片规则与主聊天规则存在且配置最新（优先复用已有 ID，避免破坏现有绑定）
+        let rules_def = [
+            ("Google Gemini 原生生图", "图片",
+             r#"{"target_type":"gemini_image","path_rewrites":[{"old":"/v1/images/generations","new":"/v1beta/models/${model}:generateContent"},{"old":"/v1/models/${model}:generateContent","new":"/v1/models/${model}:generateContent"},{"old":"/v1beta/models/${model}:generateContent","new":"/v1beta/models/${model}:generateContent"},{"old":"/v1beta/interactions","new":"/v1beta/interactions"},{"old":"/v1/interactions","new":"/v1/interactions"}],"auth_type":"x-goog-api-key"}"#,
+             "标准生图重定向到 Gemini contents 接口，支持 OpenAI、新官方 /v1/、老官方 /v1beta/ 与 Interactions 多套路由自适应分发"),
+            ("Google Gemini 格式转换 (聊天)", "聊天",
+             r#"{"target_type":"gemini","path_rewrites":[{"old":"/v1/chat/completions","new":"/v1beta/models/${model}:generateContent"},{"old":"/v1/responses","new":"/v1beta/models/${model}:generateContent"},{"old":"/v1/models/${model}:generateContent","new":"/v1/models/${model}:generateContent"},{"old":"/v1/models/${model}:streamGenerateContent","new":"/v1/models/${model}:streamGenerateContent"},{"old":"/v1beta/models/${model}:generateContent","new":"/v1beta/models/${model}:generateContent"},{"old":"/v1beta/models/${model}:streamGenerateContent","new":"/v1beta/models/${model}:streamGenerateContent"},{"old":"/v1beta/interactions","new":"/v1beta/interactions"},{"old":"/v1/interactions","new":"/v1/interactions"}],"auth_type":"x-goog-api-key"}"#,
+             "标准对话重定向到 Gemini contents，支持 OpenAI、Responses、新官方 /v1/、老官方 /v1beta/ 与 Interactions 流式/非流式多套路由"),
+        ];
+
+        let mut target_ids = Vec::with_capacity(2);
+        for (name, category, config, desc) in rules_def {
+            let existing_id: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM forward_rules WHERE (name = $1 OR (name = 'Google Gemini 流式转换 (聊天)' AND $1 = 'Google Gemini 格式转换 (聊天)')) AND category = $2 LIMIT 1"
+            )
+            .bind(name).bind(category).fetch_optional(&mut *tx).await?;
+
+            let id = match existing_id {
+                Some(id) => {
+                    sqlx::query("UPDATE forward_rules SET name = $1, config_json = $2, description = $3 WHERE id = $4")
+                        .bind(name).bind(config).bind(desc).bind(id).execute(&mut *tx).await?;
+                    id
+                }
+                None => {
+                    sqlx::query_scalar(
+                        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+                           VALUES ($1, 'gemini', $2, $3, $4, 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0'))
+                           RETURNING id"#
+                    )
+                    .bind(name).bind(desc).bind(config).bind(category).fetch_one(&mut *tx).await?
+                }
+            };
+            target_ids.push(id);
+        }
+        let (target_img_id, target_chat_id) = (target_ids[0], target_ids[1]);
+
+        // 2. 查出需淘汰的旧系统预设 Google 图片/聊天规则 ID (带 is_system = 1 防御，绝不误删用户自定义规则)
+        let old_img_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM forward_rules WHERE id != $1 AND category = '图片' AND is_system = 1 AND (rule_type IN ('gemini','google') OR name ILIKE '%gemini%' OR name ILIKE '%google%' OR config_json ILIKE '%gemini%')"
+        ).bind(target_img_id).fetch_all(&mut *tx).await.unwrap_or_default();
+
+        let old_chat_ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM forward_rules WHERE id != $1 AND category = '聊天' AND is_system = 1 AND (rule_type IN ('gemini','google') OR name ILIKE '%gemini%' OR name ILIKE '%google%' OR config_json ILIKE '%gemini%')"
+        ).bind(target_chat_id).fetch_all(&mut *tx).await.unwrap_or_default();
+
+        // 3. 关联模型平滑迁移：替换旧规则 ID 并去重更新
+        if !old_img_ids.is_empty() || !old_chat_ids.is_empty() {
+            let models: Vec<(i64, Option<String>)> = sqlx::query_as(
+                "SELECT id, forward_rule_ids FROM models WHERE forward_rule_ids IS NOT NULL AND forward_rule_ids != '[]'"
+            ).fetch_all(&mut *tx).await.unwrap_or_default();
+
+            let mut update_models: Vec<(i64, String)> = Vec::new();
+            for (id, ids_json) in models {
+                if let Ok(mut ids) = serde_json::from_str::<Vec<i64>>(&ids_json.unwrap_or_default()) {
+                    let mut changed = false;
+                    for r_id in &mut ids {
+                        if old_img_ids.contains(r_id) { *r_id = target_img_id; changed = true; }
+                        else if old_chat_ids.contains(r_id) { *r_id = target_chat_id; changed = true; }
+                    }
+                    if changed {
+                        let mut seen = HashSet::new();
+                        ids.retain(|x| seen.insert(*x));
+                        update_models.push((id, serde_json::to_string(&ids).unwrap_or_default()));
+                    }
+                }
+            }
+
+            if !update_models.is_empty() {
+                let (pks, new_jsons): (Vec<i64>, Vec<String>) = update_models.into_iter().unzip();
+                sqlx::query(
+                    r#"UPDATE models AS m SET forward_rule_ids = u.new_ids
+                       FROM unnest($1::bigint[], $2::text[]) AS u(id, new_ids) WHERE m.id = u.id"#
+                )
+                .bind(&pks).bind(&new_jsons).execute(&mut *tx).await?;
+            }
+
+            // 4. 批量删除被淘汰的旧规则
+            let mut to_delete = old_img_ids;
+            to_delete.extend(old_chat_ids);
+            sqlx::query("DELETE FROM forward_rules WHERE id = ANY($1::bigint[])")
+                .bind(&to_delete).execute(&mut *tx).await?;
+        }
+
+        // 5. 记录完成并提交事务
+        sqlx::query("INSERT INTO sys_migration_history (id) VALUES ($1) ON CONFLICT (id) DO NOTHING")
+            .bind(mig_key).execute(&mut *tx).await?;
+        tx.commit().await?;
+        done.insert(mig_key.to_string());
+    }
+
+    // ── 清理老旧可灵视频转发规则，自动重定向已绑定的模型与模型库并安全下线旧规则 ──
+    once_migration!(
+        pool,
+        done,
+        "cleanup_legacy_kling_video_forward_rules_v1",
+        // 1. 将绑定了老规则「可灵 视频生成 (文/图/多图)」的模型重定向至「可灵视频 3.0（文/图·推荐）」
+        r#"UPDATE models m
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '可灵视频 3.0（文/图·推荐）' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '可灵 视频生成 (文/图/多图)' LIMIT 1) del
+        WHERE m.forward_rule_ids IS NOT NULL
+          AND m.forward_rule_ids LIKE '[%]'
+          AND m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        // 2. 将绑定了老规则「可灵 Omni 视频 (kling-v3-omni/video-o1)」的模型重定向至「可灵 Omni 视频 3.0（推荐）」
+        r#"UPDATE models m
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '可灵 Omni 视频 3.0（推荐）' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '可灵 Omni 视频 (kling-v3-omni/video-o1)' LIMIT 1) del
+        WHERE m.forward_rule_ids IS NOT NULL
+          AND m.forward_rule_ids LIKE '[%]'
+          AND m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        // 3. 将 model_library 模型库同理重定向
+        r#"UPDATE model_library ml
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(ml.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '可灵视频 3.0（文/图·推荐）' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '可灵 视频生成 (文/图/多图)' LIMIT 1) del
+        WHERE ml.forward_rule_ids IS NOT NULL
+          AND ml.forward_rule_ids LIKE '[%]'
+          AND ml.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        r#"UPDATE model_library ml
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(ml.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '可灵 Omni 视频 3.0（推荐）' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '可灵 Omni 视频 (kling-v3-omni/video-o1)' LIMIT 1) del
+        WHERE ml.forward_rule_ids IS NOT NULL
+          AND ml.forward_rule_ids LIKE '[%]'
+          AND ml.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        // 4. 彻底删除老旧可灵视频转发规则
+        r#"DELETE FROM forward_rules
+        WHERE name IN ('可灵 视频生成 (文/图/多图)', '可灵 Omni 视频 (kling-v3-omni/video-o1)')
+           OR (category = '视频' AND (config_json::jsonb->>'target_type') = 'kling' AND (config_json::jsonb #>> '{path_rewrite,new}') LIKE '%/v1/videos/%')"#,
+        // 5. 将可灵视频推荐规则统一归类：rule_type 设为 kling（与可灵图片规则归在一起便于管理），target_type 保持为 kling_video 协议
+        r#"UPDATE forward_rules
+        SET rule_type = 'kling',
+            config_json = replace(config_json, '"target_type":"kling"', '"target_type":"kling_video"')
+        WHERE name IN ('可灵视频 3.0（文/图·推荐）', '可灵 Omni 视频 3.0（推荐）')
+           OR rule_type = 'kling_video'"#
+    );
+
+    if !done.contains("playground_2026_grok_4_6_chat_scheme_v1") {
+        match crate::db::migrations::helpers::grok_4_6_chat::seed_playground_2026_grok_4_6_chat_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_grok_4_6_chat_scheme_v1')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_grok_4_6_chat_scheme_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_grok_4_6_chat_scheme_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_drop_generic_chat_schemes_v1") {
+        match crate::db::migrations::helpers::glm_deepseek_chat::drop_playground_2026_generic_chat_schemes(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_drop_generic_chat_schemes_v1')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_drop_generic_chat_schemes_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_drop_generic_chat_schemes_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // ── 腾讯云 VOD Vidu 视频生成专属转发规则（支持 OpenAI 与 Vidu 官方路由） ──
+    once_migration!(
+        pool,
+        done,
+        "tencent_vod_vidu_video_forward_rule_v1",
+        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+        SELECT '腾讯云 VOD Vidu 视频生成', 'tencent', '将 OpenAI 与 Vidu 官方视频请求转换为腾讯云点播 AIGC CreateAigcVideoTask 接口。密钥格式：SecretId:SecretKey:SubAppId，模型格式：ModelName@ModelVersion', '{"target_type":"tencent_vod_video","path_rewrite":{"old":"/v1/video/generations","new":"/"},"path_accept":["/ent/v2/text2video","/ent/v2/img2video","/ent/v2/start-end2video","/ent/v2/reference2video"],"auth_type":"tencent_vod"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 VOD Vidu 视频生成')"#,
+        r#"UPDATE forward_rules
+        SET eid = CASE WHEN eid ~ '^[0-9]+$' THEN eid ELSE '1' || lpad((floor(random() * 10000)::int)::text, 4, '0') END,
+            config_json = '{"target_type":"tencent_vod_video","path_rewrite":{"old":"/v1/video/generations","new":"/"},"path_accept":["/ent/v2/text2video","/ent/v2/img2video","/ent/v2/start-end2video","/ent/v2/reference2video"],"auth_type":"tencent_vod"}',
+            description = '将 OpenAI 与 Vidu 官方视频请求转换为腾讯云点播 AIGC CreateAigcVideoTask 接口。密钥格式：SecretId:SecretKey:SubAppId，模型格式：ModelName@ModelVersion'
+        WHERE name = '腾讯云 VOD Vidu 视频生成'"#
+    );
+    once_migration!(
+        pool,
+        done,
+        "mkt_offer_kind_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS offer_kind TEXT NOT NULL DEFAULT 'pack'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_member_plans.offer_kind IS 'pack=一次性加油包，subscription=按周期可续费订阅'",
+        "COMMENT ON COLUMN mkt_member_plans.billing_cycle IS '订阅周期。month=30天，quarter=90天，year=365天。加油包为空'",
+        "ALTER TABLE mkt_campaigns ADD COLUMN IF NOT EXISTS offer_kind TEXT NOT NULL DEFAULT 'pack'",
+        "COMMENT ON COLUMN mkt_campaigns.offer_kind IS '活动类型，必须和引用的方案一致。pack=一次性加油包，subscription=订阅'",
+        r#"CREATE TABLE IF NOT EXISTS mkt_member_subscriptions (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            plan_id BIGINT NOT NULL,
+            billing_cycle TEXT NOT NULL DEFAULT 'month',
+            expires_at TIMESTAMPTZ,
+            last_order_id BIGINT NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_member_subscriptions IS '订阅到期锚点。续费从这里未过期的到期时间往后加一个周期'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_mkt_sub_user_plan ON mkt_member_subscriptions (user_id, plan_id)"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_credit_grant_mode_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS credit_grant_mode TEXT NOT NULL DEFAULT 'per_cycle'",
+        "COMMENT ON COLUMN mkt_member_plans.credit_grant_mode IS '订阅消费额度。per_cycle=每期发放，once=新开通时发放一次。加油包忽略'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_cycle_prices_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS price_month DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS price_quarter DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS price_year DOUBLE PRECISION",
+        "COMMENT ON COLUMN mkt_member_plans.price_month IS '订阅按月价格。空表示不卖月付。0 表示这个周期免费'",
+        "COMMENT ON COLUMN mkt_member_plans.price_quarter IS '订阅按季价格。空表示不卖季付'",
+        "COMMENT ON COLUMN mkt_member_plans.price_year IS '订阅按年价格。空表示不卖年付'",
+        "UPDATE mkt_member_plans SET price_month = price WHERE offer_kind = 'subscription' AND billing_cycle = 'month' AND price_month IS NULL",
+        "UPDATE mkt_member_plans SET price_quarter = price WHERE offer_kind = 'subscription' AND billing_cycle = 'quarter' AND price_quarter IS NULL",
+        "UPDATE mkt_member_plans SET price_year = price WHERE offer_kind = 'subscription' AND billing_cycle = 'year' AND price_year IS NULL",
+        "UPDATE mkt_member_plans SET price_month = price WHERE offer_kind = 'subscription' AND price_month IS NULL AND price_quarter IS NULL AND price_year IS NULL",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS billing_cycle TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_member_orders.billing_cycle IS '这一笔购买的周期。month/quarter/year。加油包为空'",
+        "UPDATE mkt_member_orders o SET billing_cycle = p.billing_cycle FROM mkt_member_plans p WHERE o.plan_id = p.id AND o.billing_cycle = '' AND p.offer_kind = 'subscription' AND p.billing_cycle IN ('month', 'quarter', 'year')"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "user_level_purchasable_v1",
+        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS purchasable BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN user_levels.purchasable IS '1=可以在会员卡券方案里被选为升级目标。0=方案里选不到'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_list_price_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS list_price DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS list_price_month DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS list_price_quarter DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS list_price_year DOUBLE PRECISION",
+        "COMMENT ON COLUMN mkt_member_plans.list_price IS '加油包原价。空表示不展示划线价。扣款用 price'",
+        "COMMENT ON COLUMN mkt_member_plans.list_price_month IS '订阅按月原价。空表示这个周期不展示划线价。扣款用 price_month'",
+        "COMMENT ON COLUMN mkt_member_plans.list_price_quarter IS '订阅按季原价。扣款用 price_quarter'",
+        "COMMENT ON COLUMN mkt_member_plans.list_price_year IS '订阅按年原价。扣款用 price_year'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS list_price DOUBLE PRECISION",
+        "COMMENT ON COLUMN mkt_member_orders.list_price IS '下单时的原价，只用于展示。扣款用 price_paid'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_plan_placements_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS placements_json TEXT NOT NULL DEFAULT '[]'",
+        "COMMENT ON COLUMN mkt_member_plans.placements_json IS '方案勾选的用户前台位置。playground_2026_hot=创作中心2026顶部热门活动'",
+        "UPDATE mkt_member_plans p SET placements_json = '[\"playground_2026_hot\"]' WHERE placements_json = '[]' AND EXISTS (SELECT 1 FROM mkt_campaigns c WHERE c.placement = 'playground_2026_hot' AND c.plan_ids::jsonb @> to_jsonb(p.id))"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_renew_price_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS renew_price_month DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS renew_price_quarter DOUBLE PRECISION",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS renew_price_year DOUBLE PRECISION",
+        "COMMENT ON COLUMN mkt_member_plans.renew_price_month IS '订阅未过期时的按月续费价。空表示按 price_month。0 表示这个周期续费免费'",
+        "COMMENT ON COLUMN mkt_member_plans.renew_price_quarter IS '订阅未过期时的按季续费价。空表示按 price_quarter'",
+        "COMMENT ON COLUMN mkt_member_plans.renew_price_year IS '订阅未过期时的按年续费价。空表示按 price_year'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaign_plan_select_v1",
+        "ALTER TABLE mkt_campaigns ADD COLUMN IF NOT EXISTS plan_select_mode TEXT NOT NULL DEFAULT 'manual'",
+        "COMMENT ON COLUMN mkt_campaigns.plan_select_mode IS 'all_enabled=所有启用中的会员方案都参与。manual=只展示 plan_ids 里选中的方案。已有活动保持 manual'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaign_placements_v1",
+        "ALTER TABLE mkt_campaigns ADD COLUMN IF NOT EXISTS placements_json TEXT NOT NULL DEFAULT '[]'",
+        "COMMENT ON COLUMN mkt_campaigns.placements_json IS '活动展示位置，可多选。playground_2026_hot=创作中心2026热门活动，console_nav_coupon=控制台顶部卡券订阅'",
+        "UPDATE mkt_campaigns SET placements_json = json_build_array(placement)::text WHERE placements_json = '[]' AND placement <> ''"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_gift_space_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS gift_space_mb BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS gift_space_duration_mode TEXT NOT NULL DEFAULT 'permanent'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS gift_space_duration_days BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS gift_space_duration_hours BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.gift_space_mb IS '赠送的创作中心2026空间，单位 MB。0 表示不赠送'",
+        "COMMENT ON COLUMN mkt_member_plans.gift_space_duration_mode IS '赠送空间有效期。permanent=长期，days=按天，hours=按小时'",
+        "ALTER TABLE mkt_member_space_grants ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'space'",
+        "COMMENT ON COLUMN mkt_member_space_grants.kind IS 'space=扩容空间，gift=赠送扩容空间。订阅续费只改 space'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_coupon_fund_type_v1",
+        r#"UPDATE recharge_records AS rr
+           SET recharge_type = CASE
+               WHEN o.billing_cycle IN ('month', 'quarter', 'year') OR p.offer_kind = 'subscription' THEN 'coupon_subscription'
+               ELSE 'coupon_pack'
+           END
+           FROM mkt_member_orders AS o
+           LEFT JOIN mkt_member_plans AS p ON p.id = o.plan_id
+           WHERE rr.recharge_type = 'coupon_purchase'
+             AND rr.order_no <> ''
+             AND rr.order_no = o.order_no"#
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "channel_configs_category_ids_v1",
+        "ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS category_ids TEXT NOT NULL DEFAULT '[]'",
+        "COMMENT ON COLUMN channel_configs.category_ids IS '上游分类ID列表(JSON数组字符串，支持多选)'",
+        "UPDATE channel_configs SET category_ids = json_build_array(category_id)::text WHERE (category_ids = '[]' OR category_ids IS NULL) AND category_id IS NOT NULL"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_plan_offer_snapshot_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS content_rev BIGINT NOT NULL DEFAULT 1",
+        "COMMENT ON COLUMN mkt_member_plans.content_rev IS '售价或权益变化时加一。停用、排序、角标不加'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS benefit_snapshot TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_member_orders.benefit_snapshot IS '下单时的权益快照。付款按这份发放，不跟后来改过的方案'",
+        "ALTER TABLE mkt_member_space_grants ADD COLUMN IF NOT EXISTS next_space_mb BIGINT",
+        "ALTER TABLE mkt_member_space_grants ADD COLUMN IF NOT EXISTS next_space_at TIMESTAMPTZ",
+        "ALTER TABLE mkt_member_space_grants ADD COLUMN IF NOT EXISTS held_order_id BIGINT",
+        "COMMENT ON COLUMN mkt_member_space_grants.next_space_mb IS '续费后要换成的空间 MB。到 next_space_at 才生效，已付周期仍用 space_mb'",
+        "COMMENT ON COLUMN mkt_member_space_grants.next_space_at IS '新空间开始生效的时间，等于续费前的订阅到期时间'",
+        "COMMENT ON COLUMN mkt_member_space_grants.held_order_id IS '当前 space_mb 是哪一笔订单付的。作废续费订单时把空间退回到这一期'",
+        "ALTER TABLE mkt_member_credits ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN mkt_member_credits.starts_at IS '下一期额度的开始时间。到点前 status=scheduled，不计入当前周期'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS tier_starts_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN mkt_member_orders.tier_starts_at IS '下一期会员等级的开始时间。到点才改用户等级，当前周期的等级保持不变'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "redemption_logs_refunded_v1",
+        "ALTER TABLE redemption_logs ADD COLUMN IF NOT EXISTS refunded BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN redemption_logs.refunded IS '0=这一次兑换尚未退换，1=已退换这一次。整码退换时一并标成 1'",
+        "UPDATE redemption_logs AS l SET refunded = 1 FROM redemptions AS r WHERE l.redemption_id = r.id AND r.status = -2 AND l.refunded = 0"
+    );
+
+    if !done.contains("playground_2026_gemini_nano_banana_21_scheme_v1") {
+        match crate::db::migrations::helpers::gemini_nano_banana_21::seed_playground_2026_gemini_nano_banana_21_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gemini_nano_banana_21_scheme_v1')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_gemini_nano_banana_21_scheme_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_gemini_nano_banana_21_scheme_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // v1 已在像素尺寸版本上记过完成。这里再跑一遍，把仍是 WxH 的尺寸表改成 1K/2K/4K。
+    if !done.contains("playground_2026_gemini_nano_banana_21_scheme_v2") {
+        match crate::db::migrations::helpers::gemini_nano_banana_21::seed_playground_2026_gemini_nano_banana_21_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_gemini_nano_banana_21_scheme_v2')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_gemini_nano_banana_21_scheme_v2".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_gemini_nano_banana_21_scheme_v2 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_error_mappings_v3") {
+        match crate::db::migrations::helpers::error_mappings::ensure_playground_2026_error_mapping_codes(
+            pool,
+            &["need_image"],
+        )
+        .await
+        {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_error_mappings_v3')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_error_mappings_v3".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_error_mappings_v3 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_error_mappings_v4") {
+        match crate::db::migrations::helpers::error_mappings::sync_playground_2026_error_mapping_copy(
+            pool,
+            &["need_image"],
+        )
+        .await
+        {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_error_mappings_v4')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_error_mappings_v4".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_error_mappings_v4 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_viduq4_preview_scheme_v1") {
+        match crate::db::migrations::helpers::viduq4_preview::seed_playground_2026_viduq4_preview_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_viduq4_preview_scheme_v1')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_viduq4_preview_scheme_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_viduq4_preview_scheme_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // v1 写入时分辨率含计费未开通的 540p，且未标记禁止文生。再跑一遍。
+    if !done.contains("playground_2026_viduq4_preview_scheme_v2") {
+        match crate::db::migrations::helpers::viduq4_preview::seed_playground_2026_viduq4_preview_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_viduq4_preview_scheme_v2')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_viduq4_preview_scheme_v2".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_viduq4_preview_scheme_v2 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    if !done.contains("playground_2026_viduq3_schemes_v1") {
+        match crate::db::migrations::helpers::viduq3::seed_playground_2026_viduq3_schemes(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_viduq3_schemes_v1')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_viduq3_schemes_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_viduq3_schemes_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // v2 把分辨率改成了计费表里的 480p。官方是 540p/720p/1080p/2K/4K，这里改回。
+    if !done.contains("playground_2026_viduq4_preview_scheme_v3") {
+        match crate::db::migrations::helpers::viduq4_preview::seed_playground_2026_viduq4_preview_scheme(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_viduq4_preview_scheme_v3')",
+                )
+                .execute(pool)
+                .await;
+                done.insert("playground_2026_viduq4_preview_scheme_v3".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "playground_2026_viduq4_preview_scheme_v3 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // ── 大表慢任务收拢至更新最末尾：保证前面主线程所有表的 once_migration 全部串行成功落地后，才在后台无锁构建 ──
+    // 1. 请求日志大表 logs 谓词与核心用量覆盖索引 后台并发无锁重建（零启动等待、1024MB 内存、零锁表、全并发读写）
+    once_heavy_migration!(
+        pool,
+        done,
+        "logs_table_pending_indexes_rebuild_v2",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_is_completed_pending ON logs (id DESC) WHERE is_completed = 0",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_pending_poll ON logs (id ASC) WHERE is_completed = 0 AND status_code = 200",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_inflight_user_action ON logs (user_id, action_type) WHERE is_completed = 0 AND status_code IN (0, 200)",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_orphan_scan ON logs (created_at) WHERE is_completed = 0 AND status_code = 0",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_stat_covering ON logs (created_at DESC) INCLUDE (model, prompt_tokens, completion_tokens, has_video, cost, status_code, is_completed)",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_dashboard_covering_v2 ON logs (user_id, created_at DESC) INCLUDE (prompt_tokens, completion_tokens, cost, token_id)",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_action_created_stats ON logs (action_type, created_at DESC) INCLUDE (cost, status_code, pre_deduct_gift)"
+    );
+
+    // 2. 冷归档日志大表 logs_archive 全面升级整型字段为 BIGINT / INT8 (i64)，独立单语句动态重写（1024MB 内存）
+    once_heavy_migration!(
+        pool,
+        done,
+        "logs_archive_table_to_bigint_v1",
+        r#"DO $$
+DECLARE
+    alter_clauses text;
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'logs_archive') THEN
+        ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS has_video BIGINT NOT NULL DEFAULT 0;
+
+        SELECT string_agg('ALTER COLUMN ' || quote_ident(column_name) || ' TYPE BIGINT', ', ')
+        INTO alter_clauses
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'logs_archive'
+          AND column_name IN (
+              'prompt_tokens', 'completion_tokens', 'cached_tokens', 'latency_ms',
+              'status_code', 'is_stream', 'is_ha', 'is_completed', 'has_video',
+              'channel_config_id', 'commission_posted'
+          )
+          AND data_type IN ('integer', 'smallint');
+
+        IF alter_clauses IS NOT NULL AND alter_clauses <> '' THEN
+            PERFORM set_config('maintenance_work_mem', '1024MB', true);
+            PERFORM set_config('max_parallel_maintenance_workers', '2', true);
+            EXECUTE 'ALTER TABLE logs_archive ' || alter_clauses;
+        END IF;
+    END IF;
+END $$;"#
+    );
+
+    // 3. 请求日志与统计大表索引终极优化与瘦身清理（解决 3.5s/44s 首屏聚合慢查询与 32s 僵死轮询，剔除冗余索引消除写放大）
+    once_heavy_migration!(
+        pool,
+        done,
+        "logs_and_stats_indexes_optimize_and_prune_v3",
+        // ── 【加法：终极覆盖索引】 ──
+        // 管理端日志大盘统计与首屏分页全覆盖（覆盖全部聚合计算列与 id，0 回表 Index Only Scan）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_stat_covering_v3 ON logs (created_at DESC) INCLUDE (id, cost, pre_deduct_gift, status_code, is_completed, prompt_tokens, completion_tokens, has_video, action_type, model)",
+        // 用户端个人中心日志大盘统计与首屏分页全覆盖（一网打尽所有按 user_id + created_at 范围的查询）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_user_stat_covering_v3 ON logs (user_id, created_at DESC) INCLUDE (id, cost, pre_deduct_gift, status_code, is_completed, prompt_tokens, completion_tokens, has_video, action_type, model)",
+        // 异步任务轮询与超期退款终极二分部分索引（将 created_at 纳入索引前缀，超期扫描 0ms 二分命中）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_pending_poll_v3 ON logs (created_at ASC, id ASC) WHERE is_completed = 0 AND status_code = 200",
+        // Playground 画布 loading 状态部分索引（消除对大文本 TOAST 字段的 LIKE 全表解压扫描）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_playground_projects_loading ON playground_projects (id) WHERE is_deleted = 0 AND canvas_data LIKE '%\"status\":\"loading\"%'",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_playground_2026_workflows_loading ON playground_2026_workflows (id) WHERE is_deleted = 0 AND canvas_data LIKE '%\"status\":\"loading\"%'",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_playground_2026_projects_loading ON playground_2026_projects (id) WHERE is_deleted = 0 AND canvas_data LIKE '%\"status\":\"loading\"%'",
+        // 日用量统计表全覆盖索引（消除个人累计消耗与模型大盘统计的回表）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_daily_stats_user_covering_v2 ON usage_daily_stats (user_id, stat_date) INCLUDE (total_cost, total_pre_deduct_gift, total_requests, success_count)",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_daily_stats_date_model_covering ON usage_daily_stats (stat_date, model) INCLUDE (total_requests, total_tokens, total_cost)",
+        // ── 【减法：安全无锁卸载多余废弃/残缺旧索引，降低 50% 写入放大】 ──
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_stat_covering",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_dashboard_covering_v2",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_dashboard_covering",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_action_created",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_vision_created_v2",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_vision_created_at_v2",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_pending_poll",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_is_completed_pending",
+        // 清理本地与存量环境的历史单列/冗余残留索引
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_id",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_user_created",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_created_at",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_created_at_agg",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_channel_created",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_model_created",
+        "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_token_created",
+        // ── 【刷新统计信息】 ──
+        "ANALYZE logs",
+        "ANALYZE usage_daily_stats",
+        "ANALYZE playground_projects",
+    );
+
+    // ── 腾讯云 MPS AI 换装规则收敛与火山方舟语音合成参考谷歌多路由整理 ──
+    once_migration!(
+        pool,
+        done,
+        "consolidate_tencent_tryon_and_volc_tts_forward_rules_v1",
+        // 1. 火山方舟语音合成升级为多路由自适应规则（参考 Google 范式注入 path_rewrites）
+        r#"UPDATE forward_rules
+        SET name = '火山方舟 语音合成', category = '音频', rule_type = 'volcengine',
+            description = 'OpenAI 语音合成（/v1/audio/speech）转火山方舟 TTS V3 SSE，支持官方原生 /api/v3/tts/unidirectional(sse) 自适应透传。渠道地址: openspeech.bytedance.com，密钥为 X-Api-Key，模型ID通过 X-Api-Resource-Id 传递',
+            config_json = '{"target_type":"volcengine_tts","auth_type":"volcengine_tts","path_rewrites":[{"old":"/v1/audio/speech","new":"/api/v3/tts/unidirectional/sse"},{"old":"/api/v3/tts/unidirectional/sse","new":"/api/v3/tts/unidirectional/sse"},{"old":"/api/v3/tts/unidirectional","new":"/api/v3/tts/unidirectional"}]}'
+        WHERE name IN ('火山方舟 语音合成', '火山方舟 语音合成 (TTS V3)') AND category = '音频' AND is_system = 1"#,
+        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+        SELECT '火山方舟 语音合成', 'volcengine',
+               'OpenAI 语音合成（/v1/audio/speech）转火山方舟 TTS V3 SSE，支持官方原生 /api/v3/tts/unidirectional(sse) 自适应透传。渠道地址: openspeech.bytedance.com，密钥为 X-Api-Key，模型ID通过 X-Api-Resource-Id 传递',
+               '{"target_type":"volcengine_tts","auth_type":"volcengine_tts","path_rewrites":[{"old":"/v1/audio/speech","new":"/api/v3/tts/unidirectional/sse"},{"old":"/api/v3/tts/unidirectional/sse","new":"/api/v3/tts/unidirectional/sse"},{"old":"/api/v3/tts/unidirectional","new":"/api/v3/tts/unidirectional"}]}',
+               '音频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '火山方舟 语音合成' AND category = '音频')"#,
+        // 2. 关联模型重定向（将旧换装与旧 Chunked 规则平滑指向新规则）
+        r#"UPDATE models m
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '腾讯云 MPS AI 换装 (同步轮询)' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '腾讯云 MPS AI 换装' LIMIT 1) del
+        WHERE m.forward_rule_ids IS NOT NULL AND m.forward_rule_ids LIKE '[%]' AND m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        r#"UPDATE models m
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(m.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '火山方舟 语音合成' AND category = '音频' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '火山方舟 语音合成 (TTS V3 Chunked)' LIMIT 1) del
+        WHERE m.forward_rule_ids IS NOT NULL AND m.forward_rule_ids LIKE '[%]' AND m.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        // 3. 模型库重定向（model_library 同步对齐）
+        r#"UPDATE model_library ml
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(ml.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '腾讯云 MPS AI 换装 (同步轮询)' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '腾讯云 MPS AI 换装' LIMIT 1) del
+        WHERE ml.forward_rule_ids IS NOT NULL AND ml.forward_rule_ids LIKE '[%]' AND ml.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        r#"UPDATE model_library ml
+        SET forward_rule_ids = (
+            SELECT json_agg(DISTINCT CASE WHEN elem::text::bigint = del.id THEN n.id ELSE elem::text::bigint END)::text
+            FROM jsonb_array_elements_text(ml.forward_rule_ids::jsonb) AS elem
+        ), updated_at = CURRENT_TIMESTAMP
+        FROM (SELECT id FROM forward_rules WHERE name = '火山方舟 语音合成' AND category = '音频' LIMIT 1) n,
+             (SELECT id FROM forward_rules WHERE name = '火山方舟 语音合成 (TTS V3 Chunked)' LIMIT 1) del
+        WHERE ml.forward_rule_ids IS NOT NULL AND ml.forward_rule_ids LIKE '[%]' AND ml.forward_rule_ids::jsonb @> to_jsonb(del.id)"#,
+        // 4. 彻底删除已淘汰的老旧系统规则
+        "DELETE FROM forward_rules WHERE name IN ('腾讯云 MPS AI 换装', '火山方舟 语音合成 (TTS V3 Chunked)') AND is_system = 1"
+    );
+
+    // ── 腾讯云 TokenHub 混元生图 3.0 与 3.5 转发规则 ──
+    once_migration!(
+        pool,
+        done,
+        "tencent_tokenhub_hunyuan_image_v3_and_v35_forward_rules_v1",
+        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+        SELECT '腾讯云 TokenHub 混元生图 3.0', 'tencent',
+               '腾讯云 TokenHub 混元生图 3.0（hy-image-v3）同步文生图/参考生图原生通道。渠道地址: tokenhub.tencentmaas.com，鉴权头: Authorization: Bearer YOUR_API_KEY',
+               '{"target_type":"tencent_tokenhub_image","auth_type":"bearer","path_rewrites":[{"old":"/v1/images/generations","new":"/v1/wand/hunyuan-image/v3-generation"},{"old":"/v1/wand/hunyuan-image/v3-generation","new":"/v1/wand/hunyuan-image/v3-generation"}]}',
+               '图片', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 TokenHub 混元生图 3.0' AND category = '图片')"#,
+        r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+        SELECT '腾讯云 TokenHub 混元生图 3.5', 'tencent',
+               '腾讯云 TokenHub 混元生图 3.5（hy-image-v3.5-preview）同步生图/多轮编辑/4K原生通道。渠道地址: tokenhub.tencentmaas.com，鉴权头: Authorization: Bearer YOUR_API_KEY',
+               '{"target_type":"tencent_tokenhub_v35_image","auth_type":"bearer","path_rewrites":[{"old":"/v1/images/generations","new":"/v1/wand/hunyuan-image/v35-generation"},{"old":"/v1/wand/hunyuan-image/v35-generation","new":"/v1/wand/hunyuan-image/v35-generation"}]}',
+               '图片', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+        WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = '腾讯云 TokenHub 混元生图 3.5' AND category = '图片')"#
+    );
+
+    // ── 归档日志冷表字段全量对齐、排查索引补充与系统内置插件注册 ──
+    once_heavy_migration!(
+        pool,
+        done,
+        "logs_archive_plugin_and_indexes_v1",
+        // 1. 字段对齐（在建索引之前）：补齐 logs 历史追加缺失字段
+        "ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS commission_posted BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS coupon_deduct DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE logs_archive ADD COLUMN IF NOT EXISTS pre_deduct_voucher DOUBLE PRECISION NOT NULL DEFAULT 0",
+        // 2. 补建冷库高频排查索引（无锁并发建立，消除全表扫描）
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_archive_log_id ON logs_archive (log_id) WHERE log_id IS NOT NULL AND log_id <> ''",
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_logs_archive_task_id ON logs_archive (task_id) WHERE task_id IS NOT NULL AND task_id <> ''",
+        // 3. 注册 logs_archive 系统内置插件
+        r#"INSERT INTO plugins (name, title, description, is_enabled, allowed_levels, category, show_in_admin_menu, admin_menu_sort, admin_menu_title, admin_menu_default_tab, created_at, updated_at)
+        VALUES (
+            'logs_archive',
+            '归档日志',
+            '系统冷归档日志管理中心。专为历史超期请求日志（logs_archive）提供高性能查询、多维过滤、明细审计与对账分析，保护热表性能的同时杜绝历史数据断层。',
+            1,
+            'admin',
+            'system_builtin',
+            1,
+            88,
+            '归档日志',
+            'archive_list',
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (name) DO UPDATE SET
+            category = 'system_builtin',
+            title = EXCLUDED.title,
+            description = EXCLUDED.description;"#
+    );
+
+    // ── 火山 MediaKit 转发规则合并、多路由兼容与所属分类统一为「画质增强」 ──
+    if !done.contains("volc_mediakit_forward_rules_unify_v1") {
+        match crate::db::migrations::helpers::volc_mediakit_image::sync_mediakit_forward_rules(pool)
+            .await
+        {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_forward_rules_unify_v1') ON CONFLICT DO NOTHING",
+                )
+                .execute(pool)
+                .await;
+                done.insert("volc_mediakit_forward_rules_unify_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "volc_mediakit_forward_rules_unify_v1 失败，未标记完成以便重试: {e}"
+                );
+            }
+        }
+    }
+
+    // ── Google Gemini 预设转发规则幂等追加 /v1beta/interactions 与 /v1/interactions 直达映射 ──
+    let mig_key = "google_gemini_interactions_forward_rules_v1";
+    if !done.contains(mig_key) {
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, config_json FROM forward_rules WHERE name IN ('Google Gemini 原生生图', 'Google Gemini 格式转换 (聊天)')",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        for (id, cfg_str) in rows {
+            if let Ok(mut cfg) = serde_json::from_str::<serde_json::Value>(&cfg_str) {
+                if let Some(arr) = cfg.get_mut("path_rewrites").and_then(|v| v.as_array_mut()) {
+                    let mut changed = false;
+                    for path in ["/v1beta/interactions", "/v1/interactions"] {
+                        if !arr
+                            .iter()
+                            .any(|r| r.get("old").and_then(|v| v.as_str()) == Some(path))
+                        {
+                            arr.push(serde_json::json!({ "old": path, "new": path }));
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        if let Ok(new_cfg) = serde_json::to_string(&cfg) {
+                            let _ = sqlx::query(
+                                "UPDATE forward_rules SET config_json = $1 WHERE id = $2",
+                            )
+                            .bind(new_cfg)
+                            .bind(id)
+                            .execute(pool)
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = sqlx::query(
+            "INSERT INTO sys_migration_history (id) VALUES ($1) ON CONFLICT DO NOTHING",
+        )
+        .bind(mig_key)
+        .execute(pool)
+        .await;
+        done.insert(mig_key.into());
+    }
+
+    once_migration!(
+        pool,
+        done,
+        "playground_2026_space_grants_v1",
+        r#"CREATE TABLE IF NOT EXISTS playground_2026_space_grants (
+            id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            redemption_id BIGINT NOT NULL REFERENCES redemptions(id) ON DELETE RESTRICT,
+            redemption_log_id BIGINT NOT NULL REFERENCES redemption_logs(id) ON DELETE RESTRICT,
+            space_mb BIGINT NOT NULL,
+            expires_at TIMESTAMPTZ,
+            status BIGINT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE playground_2026_space_grants IS '创作空间兑换码发放的创作中心2026存储。单位 MB。status 1=生效，0=已收回。到期看 expires_at'",
+        "COMMENT ON COLUMN playground_2026_space_grants.space_mb IS '这一次兑换增加的存储空间，单位 MB'",
+        "COMMENT ON COLUMN playground_2026_space_grants.status IS '1=计入配额，0=已收回。过期仍保持 1，由 expires_at 判断'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_pg2026_space_grants_log ON playground_2026_space_grants (redemption_log_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pg2026_space_grants_redemption ON playground_2026_space_grants (redemption_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pg2026_space_grants_user_active ON playground_2026_space_grants (user_id) WHERE status = 1"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "redemption_eligibility_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS condition_match BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS cond_min_balance DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS cond_month_spend DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS cond_total_spend DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS cond_month_recharge DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS cond_total_recharge DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN redemptions.condition_match IS '0=已启用的兑换条件全部满足，1=满足其中一项。金额为 0 的条件不启用'",
+        "COMMENT ON COLUMN redemptions.cond_min_balance IS '兑换前系统余额需达到的金额。0=不要求。不含赠送余额'",
+        "COMMENT ON COLUMN redemptions.cond_month_spend IS '站点时区当月已结算消费需达到的金额。0=不要求'",
+        "COMMENT ON COLUMN redemptions.cond_total_spend IS '累计已结算消费需达到的金额。0=不要求'",
+        "COMMENT ON COLUMN redemptions.cond_month_recharge IS '站点时区当月充值需达到的金额。0=不要求。只算在线支付和管理员充入系统余额'",
+        "COMMENT ON COLUMN redemptions.cond_total_recharge IS '累计充值需达到的金额。0=不要求。口径与当月充值相同'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "user_model_vouchers_log_id_v1",
+        "ALTER TABLE user_model_vouchers ADD COLUMN IF NOT EXISTS redemption_log_id BIGINT",
+        "COMMENT ON COLUMN user_model_vouchers.redemption_log_id IS '关联 redemption_logs.id，用于按单次兑换作废与核销明细状态同步'",
+        r#"WITH v_ranked AS (
+            SELECT id, redemption_id, user_id,
+                   ROW_NUMBER() OVER (PARTITION BY redemption_id, user_id ORDER BY id ASC) AS rn
+            FROM user_model_vouchers
+            WHERE redemption_log_id IS NULL
+        ),
+        l_ranked AS (
+            SELECT id, redemption_id, user_id,
+                   ROW_NUMBER() OVER (PARTITION BY redemption_id, user_id ORDER BY id ASC) AS rn
+            FROM redemption_logs
+        )
+        UPDATE user_model_vouchers AS v
+        SET redemption_log_id = l.id
+        FROM v_ranked vr
+        JOIN l_ranked l ON l.redemption_id = vr.redemption_id AND l.user_id = vr.user_id AND l.rn = vr.rn
+        WHERE v.id = vr.id"#,
+        "UPDATE redemption_logs AS l SET refunded = 1 FROM user_model_vouchers AS v WHERE v.redemption_log_id = l.id AND v.status <> 1 AND l.refunded = 0",
+        "CREATE INDEX IF NOT EXISTS idx_user_model_vouchers_log_id ON user_model_vouchers (redemption_log_id)",
+        "CREATE INDEX IF NOT EXISTS idx_user_model_vouchers_redemption_id ON user_model_vouchers (redemption_id)"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "redemptions_desc_and_remark_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS remark TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN redemptions.description IS '活动简介/广告语，发放与用户兑换时展示说明'",
+        "COMMENT ON COLUMN redemptions.remark IS '管理员备注说明，仅后台管理者可见，支持在兑换管理列表快速编辑'"
+    );
+
+    if !done.contains("volc_mediakit_encapsulation_unify_v1") {
+        match crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await {
+            Ok(_) => {
+                let _ = sqlx::query(
+                    "INSERT INTO sys_migration_history (id) VALUES ('volc_mediakit_encapsulation_unify_v1') ON CONFLICT DO NOTHING",
+                )
+                .execute(pool)
+                .await;
+                done.insert("volc_mediakit_encapsulation_unify_v1".into());
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "volc_mediakit_encapsulation_unify_v1 失败，未标记完成以便重试: {e}"
                 );
             }
         }
@@ -1591,75 +1494,398 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     once_migration!(
         pool,
         done,
-        "volc_mediakit_preset_models_default_off_v1",
-        r#"UPDATE model_library
-           SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg')"#,
-        r#"UPDATE models
-           SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg')
-              OR library_mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg')"#
+        "mkt_plan_offer_snapshot_v2",
+        "ALTER TABLE mkt_member_credits ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN mkt_member_credits.starts_at IS '下一期额度的开始时间。到点前 status=scheduled，不计入当前周期'",
+        "ALTER TABLE mkt_member_orders ADD COLUMN IF NOT EXISTS tier_starts_at TIMESTAMPTZ",
+        "COMMENT ON COLUMN mkt_member_orders.tier_starts_at IS '下一期会员等级的开始时间。到点才改用户等级，当前周期的等级保持不变'"
     );
 
-    // 画质增强模型默认全部留在模型仓库，不可预先塞入运营模型列表。未绑渠道/令牌/日志的预置行与重复上架副本全部清除。
     once_migration!(
         pool,
         done,
-        "volc_mediakit_models_library_only_by_default_v1",
-        r#"DELETE FROM models m
-           WHERE (
-               m.mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg')
-               OR (m.library_mid IN ('vve-sd', 'vve-pf', 'vve-ft', 'vve-gt', 'vvs-er', 'vvs-ep', 'vie-en', 'vir-bg') AND m.is_listed = 1)
-           )
-             AND NOT EXISTS (
-               SELECT 1 FROM channels c
-               WHERE position(m.mid in c.models) > 0
-                  OR position(m.mid in c.model_mapping) > 0
-                  OR position(m.model_id in c.models) > 0
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM api_tokens t
-               WHERE position(m.mid in t.allowed_models) > 0
-                  OR position(m.model_id in t.allowed_models) > 0
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM logs l
-               WHERE l.model = m.model_id OR l.model = m.mid
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM logs_archive l
-               WHERE l.model = m.model_id OR l.model = m.mid
-             )"#
+        "marketing_games_plugin_v1",
+        r#"INSERT INTO plugins (
+            name, title, description, is_enabled, allowed_levels, category,
+            show_in_admin_menu, admin_menu_sort, admin_menu_title, admin_menu_default_tab
+        ) VALUES (
+            'marketing_games', '营销小游戏',
+            '配置3D大转盘等互动抽奖游戏活动，支持多页面延时弹窗、360°立体旋转视角、卡券与余额奖品自用或分享好友兑换。',
+            0, 'all', 'user',
+            0, 48, '', 'campaigns'
+        ) ON CONFLICT (name) DO NOTHING"#,
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_campaigns (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            game_type TEXT NOT NULL DEFAULT 'lucky_wheel',
+            theme_style TEXT NOT NULL DEFAULT 'cartoon_vibrant',
+            headline TEXT NOT NULL DEFAULT '',
+            subtitle TEXT NOT NULL DEFAULT '',
+            rules_text TEXT NOT NULL DEFAULT '',
+            is_enabled BIGINT NOT NULL DEFAULT 1,
+            placements_json TEXT NOT NULL DEFAULT '["playground_2026"]',
+            popup_delay_seconds BIGINT NOT NULL DEFAULT 10,
+            popup_frequency TEXT NOT NULL DEFAULT 'once_per_day',
+            show_floating_entry BIGINT NOT NULL DEFAULT 1,
+            daily_free_spins BIGINT NOT NULL DEFAULT 1,
+            total_free_spins BIGINT NOT NULL DEFAULT 0,
+            share_reward_spins BIGINT NOT NULL DEFAULT 1,
+            share_reward_daily_limit BIGINT NOT NULL DEFAULT 3,
+            condition_match BIGINT NOT NULL DEFAULT 0,
+            cond_min_balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cond_month_spend DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cond_total_spend DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cond_month_recharge DOUBLE PRECISION NOT NULL DEFAULT 0,
+            cond_total_recharge DOUBLE PRECISION NOT NULL DEFAULT 0,
+            starts_at TIMESTAMPTZ,
+            expires_at TIMESTAMPTZ,
+            sort_order BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_campaigns IS '营销小游戏活动配置表（如3D大转盘）'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_campaigns_enabled_sort ON mkt_game_campaigns (is_enabled, sort_order DESC, id DESC)",
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_prizes (
+            id BIGSERIAL PRIMARY KEY,
+            campaign_id BIGINT NOT NULL REFERENCES mkt_game_campaigns(id) ON DELETE CASCADE,
+            slot_index BIGINT NOT NULL DEFAULT 0,
+            name TEXT NOT NULL DEFAULT '',
+            badge_text TEXT NOT NULL DEFAULT '',
+            color_hex TEXT NOT NULL DEFAULT '',
+            icon_key TEXT NOT NULL DEFAULT 'gift',
+            prize_type TEXT NOT NULL DEFAULT 'none',
+            member_plan_id BIGINT NOT NULL DEFAULT 0,
+            member_plan_cycle TEXT NOT NULL DEFAULT '',
+            redemption_group_name TEXT NOT NULL DEFAULT '',
+            quota_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            space_mb BIGINT NOT NULL DEFAULT 0,
+            allowed_models TEXT NOT NULL DEFAULT '[]',
+            valid_days BIGINT NOT NULL DEFAULT 0,
+            extra_spins BIGINT NOT NULL DEFAULT 1,
+            custom_instructions TEXT NOT NULL DEFAULT '',
+            probability_weight BIGINT NOT NULL DEFAULT 100,
+            total_stock BIGINT NOT NULL DEFAULT -1,
+            used_stock BIGINT NOT NULL DEFAULT 0,
+            per_user_win_limit BIGINT NOT NULL DEFAULT -1,
+            allow_share BIGINT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_prizes IS '营销小游戏大转盘扇区奖品表'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_prizes_campaign ON mkt_game_prizes (campaign_id, slot_index ASC, id ASC)",
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_records (
+            id BIGSERIAL PRIMARY KEY,
+            campaign_id BIGINT NOT NULL,
+            campaign_name TEXT NOT NULL DEFAULT '',
+            prize_id BIGINT NOT NULL,
+            slot_index BIGINT NOT NULL DEFAULT 0,
+            winner_user_id TEXT NOT NULL,
+            prize_name TEXT NOT NULL DEFAULT '',
+            prize_type TEXT NOT NULL DEFAULT 'none',
+            prize_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            claim_code TEXT NOT NULL DEFAULT '',
+            claim_status TEXT NOT NULL DEFAULT 'none',
+            allow_share BIGINT NOT NULL DEFAULT 1,
+            claimed_by_user_id TEXT NOT NULL DEFAULT '',
+            claimed_at TIMESTAMPTZ,
+            share_rewarded BIGINT NOT NULL DEFAULT 0,
+            is_bonus_spin BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_records IS '营销小游戏抽奖中奖记录与奖品兑换码核销表'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_records_campaign_user ON mkt_game_records (campaign_id, winner_user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_records_claimed_by ON mkt_game_records (claimed_by_user_id, claimed_at DESC)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_mkt_game_records_claim_code ON mkt_game_records (claim_code) WHERE claim_code <> ''",
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_bonus_spins (
+            id BIGSERIAL PRIMARY KEY,
+            campaign_id BIGINT NOT NULL,
+            user_id TEXT NOT NULL,
+            spins_granted BIGINT NOT NULL DEFAULT 1,
+            spins_used BIGINT NOT NULL DEFAULT 0,
+            source_type TEXT NOT NULL DEFAULT 'extra_spin',
+            source_record_id BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_bonus_spins IS '营销小游戏用户额外获赠抽奖次数（再来一次/好友核销裂变奖励）'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_bonus_spins_campaign_user ON mkt_game_bonus_spins (campaign_id, user_id, created_at DESC)"
     );
 
-    // 用户端资产素材菜单默认关闭；已保存的菜单文案「资产充值」改为「资产素材」
-    once_migration!(pool, done, "asset_manager_user_menu_default_off_v1",
-        r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
-           VALUES ('asset_manager', 'user_asset_menu_enabled', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-           ON CONFLICT (plugin_name, config_key) DO NOTHING"#,
-        r#"UPDATE settings SET value = replace(
-            replace(value, '"label_zh":"资产充值"', '"label_zh":"资产素材"'),
-            '"label_zh": "资产充值"', '"label_zh": "资产素材"'
-        ) WHERE key = 'menu_config_settings'"#
+    // ── 余额兑换码支持赠送金余额面值（gift_quota / gift_amount） ──
+    once_migration!(
+        pool,
+        done,
+        "redemptions_gift_quota_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS gift_quota DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE redemption_logs ADD COLUMN IF NOT EXISTS gift_amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN redemptions.gift_quota IS '余额兑换码的赠送金余额面值（计入 users.gift_balance）'",
+        "COMMENT ON COLUMN redemption_logs.gift_amount IS '本次兑换入账的赠送金余额金额'"
     );
 
-    once_migration!(pool, done, "commission_transfer_limits_daily_v1",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS commission_transfer_min DOUBLE PRECISION NOT NULL DEFAULT 0",
-        "ALTER TABLE user_levels ADD COLUMN IF NOT EXISTS commission_transfer_max DOUBLE PRECISION NOT NULL DEFAULT 0",
-        "COMMENT ON COLUMN user_levels.commission_transfer_min IS '佣金钱包单次划转下限，0 为不限制'",
-        "COMMENT ON COLUMN user_levels.commission_transfer_max IS '佣金钱包单次划转上限，0 为不限制'",
-        "ALTER TABLE logs ADD COLUMN IF NOT EXISTS commission_posted INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS commission_posted INTEGER NOT NULL DEFAULT 0",
-        "COMMENT ON COLUMN logs.commission_posted IS '消费返佣是否已计入当日汇总，1 为已计入'",
-        "COMMENT ON COLUMN recharge_records.commission_posted IS '该流水的返佣是否已计入当日汇总，1 为已计入'"
+    // ── 营销小游戏增量补齐字段（兼容已执行早期 marketing_games_plugin_v1 的数据库） ──
+    once_migration!(
+        pool,
+        done,
+        "marketing_games_plugin_v2",
+        "ALTER TABLE mkt_game_records ADD COLUMN IF NOT EXISTS is_bonus_spin BIGINT NOT NULL DEFAULT 0",
+        "ALTER TABLE mkt_game_bonus_spins ADD COLUMN IF NOT EXISTS spins_used BIGINT NOT NULL DEFAULT 0"
     );
 
-    once_migration!(pool, done, "commission_wallet_unmirror_gift_v1",
-        "COMMENT ON COLUMN users.commission_balance IS '佣金钱包。返佣只进此余额。调用扣费不使用它，用户可划转到系统钱包。'",
-        r#"UPDATE users SET commission_balance = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE commission_balance <> 0"#
+    // ── 营销小游戏 v3：游戏券套餐与购买记录完整闭环 ──
+    once_migration!(
+        pool,
+        done,
+        "marketing_games_plugin_v3",
+        "ALTER TABLE mkt_game_campaigns ADD COLUMN IF NOT EXISTS allow_ticket_purchase BIGINT NOT NULL DEFAULT 1",
+        "COMMENT ON COLUMN mkt_game_campaigns.allow_ticket_purchase IS '1=允许使用账户系统余额购买游戏券增加抽奖次数，0=关闭购券'",
+        "ALTER TABLE mkt_game_records ADD COLUMN IF NOT EXISTS ticket_order_id BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_game_records.ticket_order_id IS '若使用游戏券抽奖(is_bonus_spin=2)，关联 mkt_game_ticket_orders.id'",
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_ticket_packages (
+            id BIGSERIAL PRIMARY KEY,
+            campaign_id BIGINT NOT NULL DEFAULT 0,
+            name TEXT NOT NULL DEFAULT '',
+            badge_text TEXT NOT NULL DEFAULT '',
+            price DOUBLE PRECISION NOT NULL DEFAULT 10,
+            spins_count BIGINT NOT NULL DEFAULT 20,
+            valid_days BIGINT NOT NULL DEFAULT 0,
+            per_user_limit BIGINT NOT NULL DEFAULT -1,
+            total_stock BIGINT NOT NULL DEFAULT -1,
+            sold_count BIGINT NOT NULL DEFAULT 0,
+            sort_order BIGINT NOT NULL DEFAULT 10,
+            is_enabled BIGINT NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_ticket_packages IS '营销小游戏游戏券套餐表（campaign_id=0为通用套餐，>0为指定活动专属套餐；valid_days=0长期有效，>0为购买后N天有效）'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_ticket_packages_campaign ON mkt_game_ticket_packages (campaign_id, is_enabled, sort_order DESC, id ASC)",
+        r#"CREATE TABLE IF NOT EXISTS mkt_game_ticket_orders (
+            id BIGSERIAL PRIMARY KEY,
+            order_no TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            package_id BIGINT NOT NULL DEFAULT 0,
+            package_name TEXT NOT NULL DEFAULT '',
+            campaign_id BIGINT NOT NULL DEFAULT 0,
+            source_campaign_id BIGINT NOT NULL DEFAULT 0,
+            campaign_name TEXT NOT NULL DEFAULT '',
+            price_paid DOUBLE PRECISION NOT NULL DEFAULT 0,
+            spins_granted BIGINT NOT NULL DEFAULT 1,
+            spins_used BIGINT NOT NULL DEFAULT 0,
+            valid_days BIGINT NOT NULL DEFAULT 0,
+            expires_at TIMESTAMPTZ,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE mkt_game_ticket_orders IS '营销小游戏用户游戏券购买订单与剩余次数表（仅扣减账户系统余额 users.balance）'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_mkt_game_ticket_orders_order_no ON mkt_game_ticket_orders (order_no) WHERE order_no <> ''",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_ticket_orders_user_active ON mkt_game_ticket_orders (user_id, campaign_id, status, expires_at ASC)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_game_ticket_orders_created ON mkt_game_ticket_orders (created_at DESC, id DESC)",
+        r#"INSERT INTO mkt_game_ticket_packages (campaign_id, name, badge_text, price, spins_count, valid_days, per_user_limit, total_stock, sort_order, is_enabled)
+        SELECT 0, '畅玩游戏券 · 20次', '热门体验', 10, 20, 0, -1, -1, 30, 1
+        WHERE NOT EXISTS (SELECT 1 FROM mkt_game_ticket_packages LIMIT 1)"#,
+        r#"INSERT INTO mkt_game_ticket_packages (campaign_id, name, badge_text, price, spins_count, valid_days, per_user_limit, total_stock, sort_order, is_enabled)
+        SELECT 0, '超值游戏券 · 100次', '热销推荐', 50, 100, 0, -1, -1, 20, 1
+        WHERE (SELECT COUNT(*) FROM mkt_game_ticket_packages) = 1"#,
+        r#"INSERT INTO mkt_game_ticket_packages (campaign_id, name, badge_text, price, spins_count, valid_days, per_user_limit, total_stock, sort_order, is_enabled)
+        SELECT 0, '至尊游戏券 · 300次', '多送100次·钜惠', 100, 300, 0, -1, -1, 10, 1
+        WHERE (SELECT COUNT(*) FROM mkt_game_ticket_packages) = 2"#
+    );
+
+    // ── 营销小游戏 v4：单活动玩一次消耗游戏券张数 (tickets_per_spin) 与游戏券张数语义升级 ──
+    once_migration!(
+        pool,
+        done,
+        "marketing_games_plugin_v4",
+        "ALTER TABLE mkt_game_campaigns ADD COLUMN IF NOT EXISTS tickets_per_spin BIGINT NOT NULL DEFAULT 1",
+        "COMMENT ON COLUMN mkt_game_campaigns.tickets_per_spin IS '玩一次该小游戏需要消耗的游戏券张数（BIGINT，默认 1 张/次）'",
+        "UPDATE mkt_game_ticket_packages SET name = REPLACE(name, '· 20次', '· 20张') WHERE name LIKE '%· 20次%'",
+        "UPDATE mkt_game_ticket_packages SET name = REPLACE(name, '· 100次', '· 100张') WHERE name LIKE '%· 100次%'",
+        "UPDATE mkt_game_ticket_packages SET name = REPLACE(name, '· 300次', '· 300张'), badge_text = REPLACE(badge_text, '多送100次', '多送100张') WHERE name LIKE '%· 300次%' OR badge_text LIKE '%多送100次%'"
+    );
+
+    // ── 上游渠道配置预设服务商字典表 (channel_providers) 与存量 provider_type 回填 ──
+    once_migration!(
+        pool,
+        done,
+        "channel_providers_v1",
+        r#"CREATE TABLE IF NOT EXISTS channel_providers (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            name_en TEXT NOT NULL DEFAULT '',
+            sort_order BIGINT NOT NULL DEFAULT 0,
+            is_active BIGINT NOT NULL DEFAULT 1,
+            is_system BIGINT NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE channel_providers IS '上游渠道配置预设服务商字典表'",
+        r#"INSERT INTO channel_providers (name, name_en, sort_order, is_active, is_system)
+           SELECT DISTINCT BTRIM(provider_type), '', 0, 1, 0
+           FROM channel_configs
+           WHERE provider_type IS NOT NULL
+             AND BTRIM(provider_type) <> ''
+             AND BTRIM(provider_type) <> 'high_availability_group'
+           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO channel_providers (name, name_en, sort_order, is_active, is_system)
+           SELECT 'openai', 'OpenAI', 20, 1, 0
+           WHERE NOT EXISTS (SELECT 1 FROM channel_providers LIMIT 1)"#,
+        r#"INSERT INTO channel_providers (name, name_en, sort_order, is_active, is_system)
+           SELECT 'custom', 'Custom', 10, 1, 0
+           WHERE (SELECT COUNT(*) FROM channel_providers) = 1
+             AND NOT EXISTS (SELECT 1 FROM channel_providers WHERE name = 'custom')"#
+    );
+
+    // ── 上游渠道配置分组倍率同步历史记录表 ──
+    once_migration!(
+        pool,
+        done,
+        "channel_config_sync_logs_v1",
+        r#"CREATE TABLE IF NOT EXISTS channel_config_sync_logs (
+            id BIGSERIAL PRIMARY KEY,
+            config_id BIGINT NOT NULL,
+            upstream_system TEXT NOT NULL DEFAULT 'newapi',
+            upstream_group TEXT NOT NULL DEFAULT '',
+            upstream_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+            rate_add DOUBLE PRECISION NOT NULL DEFAULT 0,
+            upstream_currency TEXT NOT NULL DEFAULT '',
+            site_currency TEXT NOT NULL DEFAULT '',
+            currency_rate DOUBLE PRECISION NOT NULL DEFAULT 1,
+            previous_rate DOUBLE PRECISION NOT NULL DEFAULT 1,
+            applied_rate DOUBLE PRECISION NOT NULL DEFAULT 1,
+            sync_interval_minutes BIGINT NOT NULL DEFAULT 0,
+            trigger_type TEXT NOT NULL DEFAULT 'auto',
+            status BIGINT NOT NULL DEFAULT 1,
+            error_message TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"#,
+        "COMMENT ON TABLE channel_config_sync_logs IS '上游渠道配置分组倍率同步历史记录表'",
+        "CREATE INDEX IF NOT EXISTS idx_channel_config_sync_logs_config_created ON channel_config_sync_logs (config_id, created_at DESC, id DESC)"
+    );
+
+    // ── 营销卡券会员：消费额度面额价值（展示价值）与卡券模型折扣价格 ──
+    once_migration!(
+        pool,
+        done,
+        "marketing_membership_credit_worth_discount_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS credit_worth DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.credit_worth IS '消费额度面额价值（展示价值，0=不单独展示，实际可消费金额仍为 credit_amount）'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS credit_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0",
+        "COMMENT ON COLUMN mkt_member_plans.credit_discount IS '卡券有效期内消耗该卡券面值时可享的默认模型折扣倍率（1.0=原价）'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS credit_model_discounts TEXT NOT NULL DEFAULT '{}'",
+        "COMMENT ON COLUMN mkt_member_plans.credit_model_discounts IS '卡券指定模型单独折扣倍率 JSON({\"mid\": 0.7})，优先于 credit_discount，受模型最低限价兜底约束'",
+        "ALTER TABLE mkt_member_credits ADD COLUMN IF NOT EXISTS worth_value DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_credits.worth_value IS '卡券发放时的面额价值（展示价值），实际可消费面额仍为 face_value'",
+        "ALTER TABLE mkt_member_credits ADD COLUMN IF NOT EXISTS credit_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0",
+        "COMMENT ON COLUMN mkt_member_credits.credit_discount IS '卡券有效期内且剩余面值大于 0 时可享的默认模型折扣倍率'",
+        "ALTER TABLE mkt_member_credits ADD COLUMN IF NOT EXISTS model_discounts TEXT NOT NULL DEFAULT '{}'",
+        "COMMENT ON COLUMN mkt_member_credits.model_discounts IS '卡券有效期内且剩余面值大于 0 时指定模型的单独折扣倍率 JSON({\"mid\": 0.7})'"
+    );
+
+    // ── 模型卡券兑换码：面额价值（展示价值）与卡券模型折扣价格 ──
+    once_migration!(
+        pool,
+        done,
+        "model_voucher_redemption_worth_discount_v1",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS worth_quota DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN redemptions.worth_quota IS '模型卡券兑换码的面额价值（展示价值，0=不单独展示，实际可消费金额仍为 quota）'",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS voucher_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0",
+        "COMMENT ON COLUMN redemptions.voucher_discount IS '模型卡券有效期内消耗该卡券面值时可享的默认模型折扣倍率（1.0=原价）'",
+        "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS model_discounts TEXT NOT NULL DEFAULT '{}'",
+        "COMMENT ON COLUMN redemptions.model_discounts IS '模型卡券指定固定模型的单独折扣倍率 JSON({\"mid\": 0.7})，优先于 voucher_discount，受模型最低限价兜底约束'",
+        "ALTER TABLE user_model_vouchers ADD COLUMN IF NOT EXISTS worth_value DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN user_model_vouchers.worth_value IS '兑换卡券发放时的面额价值（展示价值），实际可消费面额仍为 face_value'",
+        "ALTER TABLE user_model_vouchers ADD COLUMN IF NOT EXISTS credit_discount DOUBLE PRECISION NOT NULL DEFAULT 1.0",
+        "COMMENT ON COLUMN user_model_vouchers.credit_discount IS '兑换卡券有效期内且剩余面值大于 0 时可享的默认模型折扣倍率'",
+        "ALTER TABLE user_model_vouchers ADD COLUMN IF NOT EXISTS model_discounts TEXT NOT NULL DEFAULT '{}'",
+        "COMMENT ON COLUMN user_model_vouchers.model_discounts IS '兑换卡券有效期内且剩余面值大于 0 时指定模型的单独折扣倍率 JSON({\"mid\": 0.7})'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaign_plan_sorts_v1",
+        "ALTER TABLE mkt_campaigns ADD COLUMN IF NOT EXISTS plan_sorts_json TEXT NOT NULL DEFAULT '{}'",
+        "COMMENT ON COLUMN mkt_campaigns.plan_sorts_json IS '手动选择参与方案时的页面排序映射(JSON对象: plan_id -> sort_order)'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_campaign_description_v1",
+        "ALTER TABLE mkt_campaigns ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''",
+        "COMMENT ON COLUMN mkt_campaigns.description IS '活动详细说明描述'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "marketing_games_plugin_v5",
+        "ALTER TABLE mkt_game_campaigns ADD COLUMN IF NOT EXISTS multi_spin_counts_json TEXT NOT NULL DEFAULT '[5,10,20]'",
+        "COMMENT ON COLUMN mkt_game_campaigns.multi_spin_counts_json IS '多次连抽档位配置 JSON 数组（默认 [5,10,20] 表示 5连抽/10连抽/20连抽，空数组 [] 表示关闭连抽）'"
+    );
+
+    once_migration!(
+        pool,
+        done,
+        "mkt_member_plan_sale_limits_v1",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS sale_limit_total BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.sale_limit_total IS '方案全站总销售次数限制（0=不限）'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS sale_limit_daily BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.sale_limit_daily IS '方案全站单日销售次数限制（自然日每日 00:00 重置，0=不限）'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS sale_limit_window_days BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.sale_limit_window_days IS '方案全站 N 天销售限制窗口天数 N（0=不开启）'",
+        "ALTER TABLE mkt_member_plans ADD COLUMN IF NOT EXISTS sale_limit_window_count BIGINT NOT NULL DEFAULT 0",
+        "COMMENT ON COLUMN mkt_member_plans.sale_limit_window_count IS '方案全站近 N 天内销售次数限制（0=不限）'",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_orders_plan_paid_at ON mkt_member_orders (plan_id, COALESCE(paid_at, created_at) DESC) WHERE pay_status = 'paid'"
+    );
+
+    // ── 移除菜单配置中已废弃的用户端「资产素材」(/assets) 与「素材资产管理国际版」(/assets-intl) ──
+    once_migration!(
+        pool,
+        done,
+        "remove_user_asset_menus_from_menu_config_v1",
+        r#"UPDATE settings SET value = (
+              SELECT COALESCE(
+                jsonb_set(
+                  value::jsonb,
+                  '{items}',
+                  COALESCE((
+                    SELECT jsonb_agg(elem)
+                    FROM jsonb_array_elements(COALESCE(value::jsonb->'items', '[]'::jsonb)) elem
+                    WHERE elem->>'key' NOT IN ('/assets', '/assets-intl')
+                  ), '[]'::jsonb)
+                )::text,
+                value
+              )
+            )
+            WHERE key = 'menu_config_settings'
+              AND value IS NOT NULL
+              AND value <> ''
+              AND (
+                value::jsonb->'items' @> '[{"key":"/assets"}]'::jsonb
+                OR value::jsonb->'items' @> '[{"key":"/assets-intl"}]'::jsonb
+              )"#
+    );
+
+    // ── 微信多账号共享绑定上限支持（contact_bind_limits 放行 wechat，补齐 users.wechat_id 索引） ──
+    once_migration!(
+        pool,
+        done,
+        "contact_bind_limits_wechat_v1",
+        "ALTER TABLE contact_bind_limits DROP CONSTRAINT IF EXISTS contact_bind_limits_kind_check",
+        "ALTER TABLE contact_bind_limits ADD CONSTRAINT contact_bind_limits_kind_check CHECK (kind IN ('email', 'mobile', 'wechat'))",
+        "CREATE INDEX IF NOT EXISTS idx_users_wechat_id ON users (wechat_id) WHERE wechat_id IS NOT NULL AND btrim(wechat_id) <> ''"
+    );
+
+    // ── 同步管理后台普通用户备注(admin_remark)与推广用户备注(remark)存量数据 ──
+    once_migration!(
+        pool,
+        done,
+        "sync_users_admin_remark_and_remark_v1",
+        r#"UPDATE users
+           SET admin_remark = COALESCE(NULLIF(btrim(COALESCE(admin_remark, '')), ''), NULLIF(btrim(COALESCE(remark, '')), ''), ''),
+               remark = COALESCE(NULLIF(btrim(COALESCE(admin_remark, '')), ''), NULLIF(btrim(COALESCE(remark, '')), ''))
+           WHERE COALESCE(btrim(admin_remark), '') <> COALESCE(btrim(remark), '')"#
     );
 
     Ok(())
 }
-

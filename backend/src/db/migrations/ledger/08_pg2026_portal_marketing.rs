@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── 创作中心2026：独立插件注册 + 独立表（与 playground 无共享） ──
@@ -80,14 +80,20 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 站点门户增强版（商业插件，与 site_portal 配置/静态目录隔离）──
-    once_migration!(pool, done, "init_site_portal_pro_v1",
+    once_migration!(
+        pool,
+        done,
+        "init_site_portal_pro_v1",
         r#"INSERT INTO plugins (name, title, description, is_enabled, category)
            VALUES ('site_portal_pro', '站点门户增强版', '提供站点内容的基本介绍，支持生成静态HTML页面用于SEO/GEO优化（商业增强版，与站点门户独立）', 0, 'user')
            ON CONFLICT (name) DO NOTHING"#
     );
 
     // ── 站点门户：默认改用经典科技风格接管首页（旧默认 apply_to_homepage=false 走托管页）──
-    once_migration!(pool, done, "portal_default_classic_style_homepage_v1",
+    once_migration!(
+        pool,
+        done,
+        "portal_default_classic_style_homepage_v1",
         r#"UPDATE plugin_configs
            SET config_value = jsonb_set(config_value::jsonb, '{apply_to_homepage}', 'true', true)::text,
                updated_at = CURRENT_TIMESTAMP
@@ -107,7 +113,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 站点门户增强版独立 DOCS 文档表初始化 ──
-    once_migration!(pool, done, "site_portal_pro_docs_init_v1",
+    once_migration!(
+        pool,
+        done,
+        "site_portal_pro_docs_init_v1",
         r#"CREATE TABLE IF NOT EXISTS site_portal_pro_docs (
             id SERIAL PRIMARY KEY,
             parent_id INTEGER NULL REFERENCES site_portal_pro_docs(id) ON DELETE CASCADE,
@@ -160,7 +169,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 将仍未归属的根文档挂到「API 参考」（兼容迁移后才导入的旧数据）
-    once_migration!(pool, done, "site_portal_pro_docs_backfill_api_category_v1",
+    once_migration!(
+        pool,
+        done,
+        "site_portal_pro_docs_backfill_api_category_v1",
         r#"INSERT INTO site_portal_pro_doc_categories (name, sort_order)
            SELECT 'API 参考', 10
            WHERE NOT EXISTS (
@@ -175,7 +187,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 合并同名分类（忽略大小写和所有空格），并加唯一约束防止再插入
-    once_migration!(pool, done, "site_portal_pro_doc_categories_dedupe_v1",
+    once_migration!(
+        pool,
+        done,
+        "site_portal_pro_doc_categories_dedupe_v1",
         r#"UPDATE site_portal_pro_docs d
            SET category_id = keep.id
            FROM site_portal_pro_doc_categories dup
@@ -194,7 +209,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 确保 site_portal_pro 「使用指南」分类存在并置为首位 (sort_order = 1)
-    once_migration!(pool, done, "site_portal_pro_doc_categories_user_guide_v2",
+    once_migration!(
+        pool,
+        done,
+        "site_portal_pro_doc_categories_user_guide_v2",
         r#"INSERT INTO site_portal_pro_doc_categories (name, sort_order)
            SELECT '使用指南', 1
            WHERE NOT EXISTS (
@@ -210,7 +228,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 新增「商务合作」分类，并将原挂在 API 参考下的商务合作文档迁入
-    once_migration!(pool, done, "site_portal_pro_doc_categories_business_coop_v1",
+    once_migration!(
+        pool,
+        done,
+        "site_portal_pro_doc_categories_business_coop_v1",
         r#"UPDATE site_portal_pro_doc_categories
            SET name = '商务合作', sort_order = 40, updated_at = CURRENT_TIMESTAMP
            WHERE name = '商务支持'
@@ -246,7 +267,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 级联支持 480p 目标：补默认 res_mul（已有 key 不覆盖）──
-    once_migration!(pool, done, "cascade_480p_target_v1",
+    once_migration!(
+        pool,
+        done,
+        "cascade_480p_target_v1",
         r#"UPDATE forward_rules
            SET config_json = jsonb_set(
              COALESCE(config_json::jsonb, '{}'::jsonb),
@@ -259,7 +283,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 团队营销：主题推广落地页 ──
-    once_migration!(pool, done, "theme_promotions_v1",
+    once_migration!(
+        pool,
+        done,
+        "theme_promotions_v1",
         r#"CREATE TABLE IF NOT EXISTS theme_promotions (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -280,7 +307,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 主题推广：INTEGER → BIGINT，与全局 i64 约定对齐 ──
-    once_migration!(pool, done, "theme_promotions_bigint_v1",
+    once_migration!(
+        pool,
+        done,
+        "theme_promotions_bigint_v1",
         "ALTER TABLE theme_promotions ALTER COLUMN status TYPE BIGINT",
         "ALTER TABLE theme_promotions ALTER COLUMN is_permanent TYPE BIGINT"
     );
@@ -352,7 +382,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = 'MiniMax 视频生成')"#,
         "UPDATE forward_rules SET eid = '1' || lpad((floor(random() * 10000)::int)::text, 4, '0') WHERE eid IS NULL OR eid = ''"
     );
-
 
     Ok(())
 }

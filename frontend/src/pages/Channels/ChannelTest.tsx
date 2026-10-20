@@ -7,13 +7,25 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Card, Table, Typography, Tag, Button, Space, message, Row, Col, Divider, Select, Tooltip } from 'antd';
-import { SyncOutlined, ArrowLeftOutlined, CalculatorOutlined } from '@ant-design/icons';
+import { Card, Table, Typography, Tag, Button, Space, message, Row, Col, Divider, Select, Tooltip, Modal, Input } from 'antd';
+import { SyncOutlined, ArrowLeftOutlined, CalculatorOutlined, SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import request from '../../utils/request';
 import type { Channel } from '../../types';
 import { ChannelBillingSimulator } from './components/ChannelBillingSimulator';
 import { channelEditPath, channelListPath } from './channelPaths';
+
+const isVolcImageToolMid = (mid: string | null | undefined): boolean =>
+  mid === 'vie-en' || mid === 'vir-bg';
+const isVolcImageToolModel = (
+  m: { mid?: string; model_id?: string } | null | undefined,
+): boolean =>
+  Boolean(
+    m &&
+      (isVolcImageToolMid(m.mid) ||
+        m.model_id === 'volc_image_enhance' ||
+        m.model_id === 'volc_image_remove_bg'),
+  );
 
 const { Title, Text } = Typography;
 
@@ -26,7 +38,88 @@ interface TestResult {
   response_data?: any;
   curl_command?: string;
   timestamp?: string;
+  matched_rule?: {
+    eid?: string;
+    target_type?: string;
+    upstream_path?: string;
+    auth_type?: string;
+    is_cascade?: boolean;
+    cascade_engine?: string;
+    asset_convert?: boolean;
+    fast_response?: boolean;
+  };
+  cascade_preflight?: {
+    engine?: string;
+    ready?: boolean;
+    message?: string;
+    crop_480p?: boolean;
+    crop_timing?: string;
+  };
+  entry_path?: string;
+  scenario?: string;
 }
+
+const SCENARIO_LABELS: Record<string, string> = {
+  default: '默认场景',
+  stream: '流式对话 (SSE)',
+  anthropic_messages: 'Anthropic 原生',
+  gemini_native: 'Gemini 原生',
+  openai_responses: 'Responses 协议',
+  image_i2i: '图生图',
+  video_720p: '文生视频 (720p)',
+  video_i2v: '图生视频',
+  stt: '语音转录 (STT)',
+};
+
+const SCENARIOS_BY_CATEGORY: Record<string, { label: string; value: string }[]> = {
+  图片: [
+    { label: '文生图 (T2I)', value: 'default' },
+    { label: '图生图 (I2I/素材转换)', value: 'image_i2i' },
+  ],
+  视频: [
+    { label: '文生视频 (480p)', value: 'default' },
+    { label: '文生视频 (720p)', value: 'video_720p' },
+    { label: '图生视频 (I2V/素材转换)', value: 'video_i2v' },
+  ],
+  封装: [
+    { label: '文生视频 (480p)', value: 'default' },
+    { label: '文生视频 (720p)', value: 'video_720p' },
+    { label: '图生视频 (I2V/素材转换)', value: 'video_i2v' },
+  ],
+  音频: [
+    { label: '语音合成 (TTS)', value: 'default' },
+    { label: '语音转录 (STT)', value: 'stt' },
+  ],
+  向量: [{ label: '向量嵌入 (Embedding)', value: 'default' }],
+  排序: [{ label: '文本重排 (Rerank)', value: 'default' }],
+};
+
+const DEFAULT_CHAT_SCENARIOS = [
+  { label: '常规对话 (Chat)', value: 'default' },
+  { label: '流式对话 (SSE)', value: 'stream' },
+  { label: 'Anthropic 原生 (/v1/messages)', value: 'anthropic_messages' },
+  { label: 'Gemini 原生 (/v1beta)', value: 'gemini_native' },
+  { label: 'Responses 协议 (/v1/responses)', value: 'openai_responses' },
+];
+
+const getAvailableScenarios = (category: string = '聊天') => SCENARIOS_BY_CATEGORY[category] || DEFAULT_CHAT_SCENARIOS;
+
+const isImageToolModel = (gModel?: any, rawKey?: string) =>
+  isVolcImageToolModel(gModel) ||
+  isVolcImageToolMid(gModel?.library_mid) ||
+  isVolcImageToolMid(rawKey);
+
+const resolveTestCategory = (gModel?: any, rawKey?: string, ruleCategory?: string) => {
+  const cat = ruleCategory || gModel?.type_name || '聊天';
+  return cat === '封装' && isImageToolModel(gModel, rawKey) ? '图片' : cat;
+};
+
+const PAYLOAD_PLACEHOLDERS: Record<string, string> = {
+  图片: '{\n  "prompt": "一只可爱的小猫，高清画质",\n  "size": "1024x1024"\n}',
+  视频: '{\n  "prompt": "海浪拍打沙滩，夕阳西下",\n  "resolution": "480p",\n  "duration": 5\n}',
+  封装: '{\n  "prompt": "海浪拍打沙滩，夕阳西下",\n  "resolution": "480p",\n  "duration": 5\n}',
+  音频: '{\n  "input": "欢迎使用TokensByte系统",\n  "voice": "alloy"\n}',
+};
 
 const ChannelTest: React.FC = () => {
     const { t } = useTranslation();
@@ -47,6 +140,9 @@ const ChannelTest: React.FC = () => {
     const [globalModels, setGlobalModels] = useState<Record<string, any>>({});
     const [forwardRules, setForwardRules] = useState<Record<number, any>>({});
     const [selectedRules, setSelectedRules] = useState<Record<string, number>>({});
+    const [selectedScenarios, setSelectedScenarios] = useState<Record<string, string>>({});
+    const [customPayloads, setCustomPayloads] = useState<Record<string, string>>({});
+    const [editingPayloadModel, setEditingPayloadModel] = useState<string | null>(null);
     
     const [activeModelLog, setActiveModelLog] = useState<string | null>(null);
     const [batchTesting, setBatchTesting] = useState(false);
@@ -97,8 +193,24 @@ const ChannelTest: React.FC = () => {
                         try {
                             parsed = target.config ? (typeof target.config === 'string' ? JSON.parse(target.config) : target.config) : {};
                         } catch {}
-                        const subIds = parsed.sub_channels || [];
-                        subChs = (configsResp.data || []).filter(c => subIds.includes(c.id));
+                        const subIds: number[] = Array.isArray(parsed.sub_channels) ? parsed.sub_channels.map(Number) : [];
+                        const overrides = parsed.upstream_overrides && typeof parsed.upstream_overrides === 'object' ? parsed.upstream_overrides : {};
+                        subChs = (configsResp.data || [])
+                            .filter((c: any) => subIds.includes(Number(c.id)))
+                            .map((c: any) => {
+                                const ov = overrides[String(c.id)];
+                                const effPriority = ov && typeof ov.priority === 'number' && Number.isFinite(ov.priority) ? ov.priority : Number(c.priority ?? 0);
+                                const effWeight = ov && typeof ov.weight === 'number' && Number.isFinite(ov.weight) && ov.weight >= 1 ? ov.weight : Math.max(1, Number(c.weight ?? 1));
+                                return {
+                                    ...c,
+                                    priority: effPriority,
+                                    weight: effWeight,
+                                };
+                            })
+                            .sort((a: any, b: any) => {
+                                if (b.priority !== a.priority) return b.priority - a.priority;
+                                return subIds.indexOf(Number(a.id)) - subIds.indexOf(Number(b.id));
+                            });
                         setSubChannels(subChs);
                     }
                     
@@ -151,19 +263,68 @@ const ChannelTest: React.FC = () => {
         try {
             const gModel = globalModels[String(model)];
             const actualModelId = gModel ? gModel.model_id : model;
+            const scenario = selectedScenarios[model];
+            const customStr = customPayloads[model];
+            let custom_body: any = undefined;
+            if (customStr && customStr.trim()) {
+                try {
+                    custom_body = JSON.parse(customStr);
+                } catch {
+                    message.warning('自定义请求体非合法 JSON，已按默认场景发送');
+                }
+            }
 
-            const payload: any = { model: actualModelId, forward_rule_id: ruleId };
+            const payload: any = { 
+                model: actualModelId, 
+                forward_rule_id: ruleId,
+                scenario: scenario && scenario !== 'default' ? scenario : undefined,
+                custom_body: custom_body,
+            };
             if (subChannelId) payload.sub_channel_id = subChannelId;
-            const resp = await (request.post(`/channels/${channelId}/test`, payload) as unknown as Promise<{ success: boolean; err_msg?: string; latency?: number; request_data?: any; response_data?: any; curl_command?: string }>);
+            const resp = await (request.post(`/channels/${channelId}/test`, payload) as unknown as Promise<{ 
+                success: boolean; 
+                err_msg?: string; 
+                latency?: number; 
+                request_data?: any; 
+                response_data?: any; 
+                curl_command?: string;
+                matched_rule?: any;
+                cascade_preflight?: any;
+                entry_path?: string;
+                scenario?: string;
+            }>);
             if (resp.success) {
                 setTestStatuses(prev => ({ 
                     ...prev, 
-                    [key]: { status: 'success', latency: resp.latency, request_data: resp.request_data, response_data: resp.response_data, curl_command: resp.curl_command, timestamp: new Date().toISOString() } 
+                    [key]: { 
+                        status: 'success', 
+                        latency: resp.latency, 
+                        request_data: resp.request_data, 
+                        response_data: resp.response_data, 
+                        curl_command: resp.curl_command, 
+                        matched_rule: resp.matched_rule,
+                        cascade_preflight: resp.cascade_preflight,
+                        entry_path: resp.entry_path,
+                        scenario: resp.scenario,
+                        timestamp: new Date().toISOString() 
+                    } 
                 }));
             } else {
                 setTestStatuses(prev => ({ 
                     ...prev, 
-                    [key]: { status: 'error', message: resp.err_msg, latency: resp.latency, request_data: resp.request_data, response_data: resp.response_data, curl_command: resp.curl_command, timestamp: new Date().toISOString() } 
+                    [key]: { 
+                        status: 'error', 
+                        message: resp.err_msg, 
+                        latency: resp.latency, 
+                        request_data: resp.request_data, 
+                        response_data: resp.response_data, 
+                        curl_command: resp.curl_command, 
+                        matched_rule: resp.matched_rule,
+                        cascade_preflight: resp.cascade_preflight,
+                        entry_path: resp.entry_path,
+                        scenario: resp.scenario,
+                        timestamp: new Date().toISOString() 
+                    } 
                 }));
             }
         } catch (e: any) {
@@ -258,7 +419,10 @@ const ChannelTest: React.FC = () => {
                     type="primary"
                     icon={<CalculatorOutlined />}
                     onClick={() => {
-                        setSimModel(activeModelLog ? activeModelLog.split('_')[0] : undefined);
+                        const targetModel = displayLogTarget
+                            ? (globalModels[displayLogTarget]?.model_id || displayLogTarget)
+                            : undefined;
+                        setSimModel(targetModel);
                         setSimulatorOpen(true);
                     }}
                 >
@@ -443,11 +607,15 @@ const ChannelTest: React.FC = () => {
                                     key: 'action',
                                     render: (_, record) => {
                                         const gModel = globalModels[String(record.model)];
+                                        const curRuleId = selectedRules[record.model];
+                                        const category = resolveTestCategory(gModel, record.model, curRuleId ? forwardRules[curRuleId]?.category : undefined);
+                                        const scenarioOptions = getAvailableScenarios(category);
+
                                         let ruleOptions: {label: string, value: number}[] = [];
                                         if (gModel && gModel.forward_rule_ids) {
                                             try {
-                                                const rIds = JSON.parse(gModel.forward_rule_ids);
-                                                ruleOptions = rIds.map((rid: number) => {
+                                                const rIds = typeof gModel.forward_rule_ids === 'string' ? JSON.parse(gModel.forward_rule_ids) : gModel.forward_rule_ids;
+                                                ruleOptions = (Array.isArray(rIds) ? rIds : []).map((rid: number) => {
                                                     const r = forwardRules[rid];
                                                     return r ? { label: `${r.category}: ${r.name}`, value: rid } : null;
                                                 }).filter(Boolean) as {label: string, value: number}[];
@@ -459,18 +627,53 @@ const ChannelTest: React.FC = () => {
                                             : testStatuses[record.model]?.status === 'testing';
 
                                         return (
-                                            <Space direction="horizontal" size="small">
+                                            <Space direction="horizontal" size="small" wrap>
+                                                {/* 1. 先定转发规则：明晰调用协议与网关链路 */}
                                                 {ruleOptions.length > 0 && (
+                                                    <Tooltip title="选择拨测所匹配的转发规则（决定调用协议与网关链路）">
+                                                        <Select
+                                                            size="small"
+                                                            style={{ minWidth: 160 }}
+                                                            placeholder="选择转发规则"
+                                                            value={curRuleId || undefined}
+                                                            onChange={(val) => {
+                                                                setSelectedRules({ ...selectedRules, [record.model]: val });
+                                                                const nextCat = resolveTestCategory(gModel, record.model, val ? forwardRules[val]?.category : undefined);
+                                                                const nextScenarios = getAvailableScenarios(nextCat);
+                                                                if (!nextScenarios.some(s => s.value === selectedScenarios[record.model])) {
+                                                                    setSelectedScenarios(prev => ({ ...prev, [record.model]: 'default' }));
+                                                                }
+                                                            }}
+                                                            options={ruleOptions}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        />
+                                                    </Tooltip>
+                                                )}
+                                                {/* 2. 再选规则分类下的业务场景预设 */}
+                                                <Tooltip title={`当前「${category}」分类业务场景预设`}>
                                                     <Select
                                                         size="small"
-                                                        style={{ minWidth: 160 }}
-                                                        placeholder="默认拨号"
-                                                        value={selectedRules[record.model] || undefined}
-                                                        onChange={(val) => setSelectedRules({...selectedRules, [record.model]: val})}
-                                                        options={ruleOptions}
+                                                        style={{ minWidth: 140 }}
+                                                        placeholder="场景预设"
+                                                        value={selectedScenarios[record.model] || 'default'}
+                                                        onChange={(val) => setSelectedScenarios({ ...selectedScenarios, [record.model]: val })}
+                                                        options={scenarioOptions}
                                                         onClick={(e) => e.stopPropagation()}
                                                     />
-                                                )}
+                                                </Tooltip>
+                                                {/* 3. 微调请求入参 */}
+                                                <Tooltip title={customPayloads[record.model] ? '已配置自定义入参 (点击修改)' : '微调请求入参报文 (JSON)'}>
+                                                    <Button
+                                                        size="small"
+                                                        type={customPayloads[record.model] ? 'primary' : 'default'}
+                                                        icon={<SettingOutlined />}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setEditingPayloadModel(record.model);
+                                                        }}
+                                                    />
+                                                </Tooltip>
+                                                {/* 4. 发起拨测 */}
                                                 <Button 
                                                     size="small" 
                                                     type="dashed"
@@ -533,6 +736,61 @@ const ChannelTest: React.FC = () => {
 
                                 {(activeLogData?.status === 'success' || activeLogData?.status === 'error') && (
                                     <>
+                                        {/* 命中的转发规则元信息徽章 */}
+                                        {activeLogData.matched_rule && (
+                                            <div style={{ marginBottom: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                                <Tag color="purple">协议: {activeLogData.matched_rule.target_type || 'openai'}</Tag>
+                                                <Tag color="cyan">鉴权: {activeLogData.matched_rule.auth_type || 'bearer'}</Tag>
+                                                {activeLogData.entry_path && (
+                                                    <Tag color="geekblue">入口: {activeLogData.entry_path}</Tag>
+                                                )}
+                                                {activeLogData.matched_rule.upstream_path && (
+                                                    <Tag color="blue">上游: {activeLogData.matched_rule.upstream_path}</Tag>
+                                                )}
+                                                {activeLogData.matched_rule.is_cascade && (
+                                                    <Tag color="magenta">级联: {activeLogData.matched_rule.cascade_engine}</Tag>
+                                                )}
+                                                {activeLogData.matched_rule.asset_convert && (
+                                                    <Tag color="orange">素材转换开启</Tag>
+                                                )}
+                                                {activeLogData.scenario && (
+                                                    <Tag color="green">场景: {SCENARIO_LABELS[activeLogData.scenario] || activeLogData.scenario}</Tag>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* 级联阶段二预检提示 */}
+                                        {activeLogData.cascade_preflight && (
+                                            <div style={{
+                                                marginBottom: 12,
+                                                padding: '6px 12px',
+                                                borderRadius: 6,
+                                                background: activeLogData.cascade_preflight.ready ? 'rgba(82, 196, 26, 0.15)' : 'rgba(250, 173, 20, 0.15)',
+                                                border: `1px solid ${activeLogData.cascade_preflight.ready ? '#52c41a' : '#faad14'}`
+                                            }}>
+                                                <div style={{ fontSize: 12, color: activeLogData.cascade_preflight.ready ? '#73d13d' : '#ffc53d', fontWeight: 600 }}>
+                                                    {activeLogData.cascade_preflight.ready ? '✓' : '⚠'} 级联超分预检: {activeLogData.cascade_preflight.message}
+                                                </div>
+                                                <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>
+                                                    裁剪 480p: {activeLogData.cascade_preflight.crop_480p ? '开启' : '关闭'} | 时机: {activeLogData.cascade_preflight.crop_timing}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* 排查诊断建议 */}
+                                        {activeLogData.status === 'error' && (
+                                            <div style={{ marginTop: 8, marginBottom: 16, padding: '8px 12px', borderRadius: 6, background: 'rgba(245, 34, 45, 0.15)', border: '1px solid #ff4d4f' }}>
+                                                <div style={{ color: '#ff7875', fontWeight: 'bold', fontSize: 12, marginBottom: 4 }}>💡 拨测诊断建议:</div>
+                                                <div style={{ color: '#ffccc7', fontSize: 12 }}>
+                                                    {activeLogData.response_data?._upstream_status === 404 && 'HTTP 404: 上游未命中该请求路径。请检查转发规则中的路径重写 (path_rewrite) 是否匹配上游官方文档，或尝试切换场景为特定原生协议。'}
+                                                    {activeLogData.response_data?._upstream_status === 401 && 'HTTP 401: 鉴权失败。请检查渠道的 API Key 是否有效，或转发规则配置的鉴权模式 (auth_type) 是否匹配。'}
+                                                    {activeLogData.response_data?._upstream_status === 400 && 'HTTP 400: 入参不合法。可能是上游需要的入参格式不一致，请检查下方构造的请求报文，或尝试切换测试场景/自定义入参微调。'}
+                                                    {activeLogData.response_data?._upstream_status === 403 && 'HTTP 403: 权限不足或被云厂商风控拦截。请检查上游账号额度、IP 白名单或免审核策略设置。'}
+                                                    {(!activeLogData.response_data?._upstream_status || ![400, 401, 403, 404].includes(activeLogData.response_data?._upstream_status)) && (activeLogData.message || '网关上游未正常响应，请查看下方代理回包快照详情')}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         <div style={{ color: '#9cdcfe', marginTop: 8 }}>### [OUTGOING] 构造的请求报文 (Request Config) ###</div>
                                         <div style={{ borderLeft: '3px solid #569cd6', marginTop: 8, marginBottom: 24, background: '#252526', padding: 12 }}>
                                            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
@@ -547,6 +805,16 @@ const ChannelTest: React.FC = () => {
                                                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                                          {activeLogData.curl_command}
                                                    </pre>
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {/* 流式聚合文本展示 */}
+                                        {activeLogData.response_data?.stream && activeLogData.response_data?.text && (
+                                            <>
+                                                <div style={{ color: '#6a9955', marginTop: 8 }}>### [STREAM] 流式聚合回答文本 ###</div>
+                                                <div style={{ borderLeft: '3px solid #6a9955', marginTop: 8, marginBottom: 16, background: '#252526', padding: 12, color: '#ececec', whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto' }}>
+                                                    {activeLogData.response_data.text}
                                                 </div>
                                             </>
                                         )}
@@ -579,6 +847,48 @@ const ChannelTest: React.FC = () => {
                 channelData={channel}
                 initialModel={simModel}
             />
+
+            <Modal
+                title={`微调测试报文 - ${editingPayloadModel || ''}`}
+                open={!!editingPayloadModel}
+                onOk={() => {
+                    if (editingPayloadModel) {
+                        const val = customPayloads[editingPayloadModel];
+                        if (val && val.trim()) {
+                            try {
+                                JSON.parse(val);
+                            } catch {
+                                message.error('请输入合法的 JSON 格式字符串');
+                                return;
+                            }
+                        }
+                    }
+                    setEditingPayloadModel(null);
+                }}
+                onCancel={() => setEditingPayloadModel(null)}
+                okText="确定并保存"
+                cancelText="取消"
+                destroyOnClose
+            >
+                <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                    支持在此输入覆盖或新增的 JSON 字段（例如自定义 prompt、size、duration、resolution、image 等），拨测将以深层合并方式组装并提交上游：
+                </div>
+                <Input.TextArea
+                    rows={8}
+                    placeholder={editingPayloadModel ? (PAYLOAD_PLACEHOLDERS[resolveTestCategory(
+                        globalModels[editingPayloadModel],
+                        editingPayloadModel,
+                        selectedRules[editingPayloadModel] ? forwardRules[selectedRules[editingPayloadModel]]?.category : undefined
+                    )] || '{\n  "messages": [\n    {"role": "user", "content": "你好"}\n  ],\n  "temperature": 0.7\n}') : ''}
+                    value={editingPayloadModel ? customPayloads[editingPayloadModel] || '' : ''}
+                    onChange={(e) => {
+                        if (editingPayloadModel) {
+                            setCustomPayloads({ ...customPayloads, [editingPayloadModel]: e.target.value });
+                        }
+                    }}
+                    style={{ fontFamily: 'monospace', fontSize: 12 }}
+                />
+            </Modal>
         </Card>
     );
 };

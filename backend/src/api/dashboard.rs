@@ -127,9 +127,12 @@ pub async fn get_stats(
         .get("x-timezone")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let tz =
-        crate::api::date_helper::resolve_user_timezone(&state.db, is_admin, user_id, header_tz)
-            .await?;
+    let tz = if is_admin {
+        crate::api::date_helper::resolve_site_operation_timezone(&state.db).await
+    } else {
+        crate::api::date_helper::resolve_user_timezone(&state.db, false, user_id, header_tz)
+            .await?
+    };
 
     let cache_key = if is_admin {
         format!(
@@ -371,7 +374,6 @@ async fn query_logs_rollup(
         count: i64,
         tokens: i64,
         cost: f64,
-        distinct_tokens: i64,
         is_total: bool,
     }
 
@@ -382,13 +384,13 @@ async fn query_logs_rollup(
     let mut active_tokens = 0i64;
 
     for r_slice in slices.realtime_slices() {
+        // 模型 Rollup 查询仅聚合 model/count/tokens/cost，100% 覆盖于 idx_logs_stat_covering_v3，实现 0 回表 Index-Only Scan
         let sql = if is_admin {
             format!(
                 "SELECT model, \
                  COUNT(*)::bigint AS count, \
                  (COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0))::bigint AS tokens, \
                  COALESCE(SUM(cost), 0)::float8 AS cost, \
-                 COUNT(DISTINCT token_id)::bigint AS distinct_tokens, \
                  (GROUPING(model) = 1) AS is_total \
                  FROM logs WHERE {} \
                  GROUP BY GROUPING SETS ((model), ())",
@@ -400,7 +402,6 @@ async fn query_logs_rollup(
                  COUNT(*)::bigint AS count, \
                  (COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0))::bigint AS tokens, \
                  COALESCE(SUM(cost), 0)::float8 AS cost, \
-                 COUNT(DISTINCT token_id)::bigint AS distinct_tokens, \
                  (GROUPING(model) = 1) AS is_total \
                  FROM logs WHERE user_id = ? AND {} \
                  GROUP BY GROUPING SETS ((model), ())",
@@ -408,26 +409,52 @@ async fn query_logs_rollup(
             )
         };
         let formatted = state.db.format_query(&sql);
-        let rows: Vec<RollupRow> = if is_admin {
-            sqlx::query_as(&formatted)
-                .bind(&r_slice.start)
-                .bind(&r_slice.end)
-                .fetch_all(&state.db.pool)
-                .await?
+
+        // 活跃令牌去重数独立极速统计（单流去重，无 GROUP BY model，走索引覆盖毫秒返回）
+        let active_sql = if is_admin {
+            format!(
+                "SELECT COUNT(DISTINCT token_id)::bigint FROM logs WHERE {} AND token_id != -1",
+                r_slice.sql_cond("created_at")
+            )
         } else {
-            sqlx::query_as(&formatted)
-                .bind(user_id)
-                .bind(&r_slice.start)
-                .bind(&r_slice.end)
-                .fetch_all(&state.db.pool)
-                .await?
+            format!(
+                "SELECT COUNT(DISTINCT token_id)::bigint FROM logs WHERE user_id = ? AND {} AND token_id != -1",
+                r_slice.sql_cond("created_at")
+            )
         };
+        let formatted_active = state.db.format_query(&active_sql);
+
+        let (rows, distinct_toks): (Vec<RollupRow>, Option<i64>) = if is_admin {
+            tokio::try_join!(
+                sqlx::query_as(&formatted)
+                    .bind(&r_slice.start)
+                    .bind(&r_slice.end)
+                    .fetch_all(&state.db.pool),
+                sqlx::query_scalar(&formatted_active)
+                    .bind(&r_slice.start)
+                    .bind(&r_slice.end)
+                    .fetch_one(&state.db.pool)
+            )?
+        } else {
+            tokio::try_join!(
+                sqlx::query_as(&formatted)
+                    .bind(user_id)
+                    .bind(&r_slice.start)
+                    .bind(&r_slice.end)
+                    .fetch_all(&state.db.pool),
+                sqlx::query_scalar(&formatted_active)
+                    .bind(user_id)
+                    .bind(&r_slice.start)
+                    .bind(&r_slice.end)
+                    .fetch_one(&state.db.pool)
+            )?
+        };
+
         for row in rows {
             if row.is_total {
                 total_requests += row.count;
                 total_tokens += row.tokens;
                 total_cost += row.cost;
-                active_tokens = active_tokens.max(row.distinct_tokens);
                 continue;
             }
             let Some(model) = row.model else {
@@ -438,6 +465,8 @@ async fn query_logs_rollup(
             entry.1 += row.cost;
             entry.2 += row.tokens;
         }
+
+        active_tokens = active_tokens.max(distinct_toks.unwrap_or(0));
     }
 
     Ok((
@@ -905,9 +934,12 @@ pub async fn get_model_stats_30d(
         .get("x-timezone")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let tz =
-        crate::api::date_helper::resolve_user_timezone(&state.db, is_admin, user_id, header_tz)
-            .await?;
+    let tz = if is_admin {
+        crate::api::date_helper::resolve_site_operation_timezone(&state.db).await
+    } else {
+        crate::api::date_helper::resolve_user_timezone(&state.db, false, user_id, header_tz)
+            .await?
+    };
 
     let bounds = crate::api::date_helper::get_timezone_time_bounds(tz);
     let trend_cache_key = format!(
@@ -1028,7 +1060,11 @@ pub async fn get_model_stats_30d(
         let yesterday_slices = crate::api::date_helper::logs_calendar_day_slice(yesterday_date, tz);
         crate::relay::usage_stats::query_model_stats_by_slices(
             &state.db,
-            if is_admin { None } else { Some(user_id.as_str()) },
+            if is_admin {
+                None
+            } else {
+                Some(user_id)
+            },
             &yesterday_slices,
         )
         .await

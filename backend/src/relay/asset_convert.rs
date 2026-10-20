@@ -90,9 +90,7 @@ fn derive_create_asset_name(url: &str, asset_type: &str) -> String {
 }
 
 /// 收集待转换项：(json_pointer, asset_type, url, url_short)；兼容 content[]、腾讯云 FileInfos[] 与 LastFrameUrl
-fn collect_media_convert_tasks(
-    body: &serde_json::Value,
-) -> Vec<(String, String, String, String)> {
+fn collect_media_convert_tasks(body: &serde_json::Value) -> Vec<(String, String, String, String)> {
     let mut tasks = Vec::new();
 
     // 1. 火山方舟/百度云/Portrait 协议的 content 数组
@@ -102,11 +100,16 @@ fn collect_media_convert_tasks(
                 Some(t) => t,
                 None => continue,
             };
-            let (url_key, asset_type) = match URL_TYPE_MAP.iter().find(|(t, _, _)| *t == item_type) {
+            let (url_key, asset_type) = match URL_TYPE_MAP.iter().find(|(t, _, _)| *t == item_type)
+            {
                 Some((_, uk, at)) => (*uk, *at),
                 None => continue,
             };
-            let url_val = match item.get(url_key).and_then(|u| u.get("url")).and_then(|u| u.as_str()) {
+            let url_val = match item
+                .get(url_key)
+                .and_then(|u| u.get("url"))
+                .and_then(|u| u.as_str())
+            {
                 Some(u) => u,
                 None => continue,
             };
@@ -125,11 +128,18 @@ fn collect_media_convert_tasks(
     // 2. 腾讯云 VOD 协议的 FileInfos 数组
     if let Some(fi_arr) = body.get("FileInfos").and_then(|c| c.as_array()) {
         for (idx, item) in fi_arr.iter().enumerate() {
-            let url_val = item.get("Url").or_else(|| item.get("Base64")).and_then(|u| u.as_str()).unwrap_or("");
+            let url_val = item
+                .get("Url")
+                .or_else(|| item.get("Base64"))
+                .and_then(|u| u.as_str())
+                .unwrap_or("");
             if url_val.is_empty() || url_val.starts_with("asset://") {
                 continue;
             }
-            let asset_type = item.get("Category").and_then(|c| c.as_str()).unwrap_or("Image");
+            let asset_type = item
+                .get("Category")
+                .and_then(|c| c.as_str())
+                .unwrap_or("Image");
             tasks.push((
                 format!("/FileInfos/{}/Url", idx),
                 asset_type.to_string(),
@@ -167,8 +177,14 @@ fn push_convert_ok(
     if let Some(target) = body.pointer_mut(ptr) {
         *target = serde_json::Value::String(format!("asset://{}", asset_id));
     }
-    if let Some(fi_idx) = ptr.strip_prefix("/FileInfos/").and_then(|s| s.strip_suffix("/Url")) {
-        if let Some(item) = body.pointer_mut(&format!("/FileInfos/{}", fi_idx)).and_then(|v| v.as_object_mut()) {
+    if let Some(fi_idx) = ptr
+        .strip_prefix("/FileInfos/")
+        .and_then(|s| s.strip_suffix("/Url"))
+    {
+        if let Some(item) = body
+            .pointer_mut(&format!("/FileInfos/{}", fi_idx))
+            .and_then(|v| v.as_object_mut())
+        {
             item.insert("Type".to_string(), serde_json::json!("Url"));
             item.remove("Base64");
         }
@@ -196,6 +212,10 @@ pub async fn convert_content_urls(
 ) -> (Vec<String>, Vec<String>) {
     let mut logs: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+
+    if !crate::api::plugins::is_plugin_compiled(plugin_ns) {
+        return (logs, errors);
+    }
 
     // 检查对应的素材资产管理插件是否启用
     let plugin_enabled: bool = sqlx::query_scalar::<_, i64>(
@@ -321,15 +341,7 @@ pub async fn convert_content_urls(
     match futures::future::try_join_all(futures).await {
         Ok(results) => {
             for (ptr, asset_type, url_short, aid, cached) in results {
-                push_convert_ok(
-                    body,
-                    &mut logs,
-                    &ptr,
-                    &asset_type,
-                    &url_short,
-                    &aid,
-                    cached,
-                );
+                push_convert_ok(body, &mut logs, &ptr, &asset_type, &url_short, &aid, cached);
             }
         }
         Err((asset_type, url_short, reason)) => {
@@ -452,7 +464,11 @@ where
         .upload_file(
             &tmp_object_key,
             bytes,
-            &format!("{}/{}", asset_type.to_lowercase(), ext),
+            &format!(
+                "{}/{}",
+                asset_type.to_lowercase(),
+                if ext == "jpg" { "jpeg" } else { &ext }
+            ),
             None,
         )
         .await
@@ -1111,10 +1127,13 @@ pub async fn convert_content_urls_via_upstream(
         base_url: Option<String>,
         api_key: Option<String>,
         #[sqlx(default)]
-        config_status: Option<i32>,
+        config_status: Option<i64>,
     }
 
     // 以 plugins 为主表一次取出启用状态与绑定/渠道，语义与「先查插件再查绑定」一致
+    if !crate::api::plugins::is_plugin_compiled(uac::PLUGIN_NAME) {
+        return (logs, errors);
+    }
     let row: Option<BindingRow> = sqlx::query_as(&state.db.format_query(
         "SELECT p.is_enabled AS plugin_enabled, b.id AS binding_found, b.is_active, \
                 b.asset_base_path, b.group_id, COALESCE(b.asset_protocol, 'ark_action') AS asset_protocol, \
@@ -1199,7 +1218,12 @@ pub async fn convert_content_urls_via_upstream(
                 return (logs, errors);
             }
         }
-    } else if !is_tencent && group_id_opt.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+    } else if !is_tencent
+        && group_id_opt
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+    {
         match ensure_upstream_group_id(state, &call_ctx, binding_id).await {
             Ok(gid) => group_id_opt = Some(gid),
             Err(e) => {
@@ -1214,47 +1238,55 @@ pub async fn convert_content_urls_via_upstream(
     let group_id = group_id_opt.unwrap_or_default();
 
     // 并发处理所有素材转换任务，大幅缩短多资源场景总耗时
-    let futs = tasks.into_iter().map(|(target, asset_type, url_val, url_short)| {
-        let gid = &group_id;
-        let pns = &plugin_ns;
-        let tos = &tos_config;
-        async move {
-            let res = if is_http_media_url(&url_val) {
-                convert_url_via_binding(state, &call_ctx, gid, &url_val, &asset_type, protocol).await
-            } else if is_base64_media(&url_val) {
-                convert_base64_with_create(
-                    state,
-                    tos,
-                    user_id,
-                    pns,
-                    uac::LOG_SOURCE,
-                    &url_val,
-                    &asset_type,
-                    |tmp_url| {
-                        let at = asset_type.clone();
-                        async move {
-                            match protocol {
-                                uac::PROTOCOL_PORTRAIT_REST => {
-                                    create_asset_via_portrait(&call_ctx, gid, &tmp_url, &at).await
+    let futs = tasks
+        .into_iter()
+        .map(|(target, asset_type, url_val, url_short)| {
+            let gid = &group_id;
+            let pns = &plugin_ns;
+            let tos = &tos_config;
+            async move {
+                let res = if is_http_media_url(&url_val) {
+                    convert_url_via_binding(state, &call_ctx, gid, &url_val, &asset_type, protocol)
+                        .await
+                } else if is_base64_media(&url_val) {
+                    convert_base64_with_create(
+                        state,
+                        tos,
+                        user_id,
+                        pns,
+                        uac::LOG_SOURCE,
+                        &url_val,
+                        &asset_type,
+                        |tmp_url| {
+                            let at = asset_type.clone();
+                            async move {
+                                match protocol {
+                                    uac::PROTOCOL_PORTRAIT_REST => {
+                                        create_asset_via_portrait(&call_ctx, gid, &tmp_url, &at)
+                                            .await
+                                    }
+                                    uac::PROTOCOL_TENCENT_VOD => {
+                                        create_asset_via_tencent_vod(&call_ctx, gid, &tmp_url, &at)
+                                            .await
+                                    }
+                                    _ => {
+                                        create_asset_via_upstream(&call_ctx, gid, &tmp_url, &at)
+                                            .await
+                                    }
                                 }
-                                uac::PROTOCOL_TENCENT_VOD => {
-                                    create_asset_via_tencent_vod(&call_ctx, gid, &tmp_url, &at).await
-                                }
-                                _ => create_asset_via_upstream(&call_ctx, gid, &tmp_url, &at).await,
                             }
-                        }
-                    },
-                )
-                .await
-            } else {
-                Err("不支持的格式".to_string())
-            };
-            match res {
-                Ok((aid, cached)) => Ok((target, asset_type, url_short, aid, cached)),
-                Err(err) => Err((asset_type, url_short, err)),
+                        },
+                    )
+                    .await
+                } else {
+                    Err("不支持的格式".to_string())
+                };
+                match res {
+                    Ok((aid, cached)) => Ok((target, asset_type, url_short, aid, cached)),
+                    Err(err) => Err((asset_type, url_short, err)),
+                }
             }
-        }
-    });
+        });
 
     // Fail-Fast: 任一素材转换失败立即短路退出并取消其余未完成任务
     match futures::future::try_join_all(futs).await {
@@ -1330,8 +1362,12 @@ async fn convert_url_via_binding(
     }
 
     let asset_id = match protocol {
-        uac::PROTOCOL_PORTRAIT_REST => create_asset_via_portrait(ctx, group_id, url, asset_type).await?,
-        uac::PROTOCOL_TENCENT_VOD => create_asset_via_tencent_vod(ctx, group_id, url, asset_type).await?,
+        uac::PROTOCOL_PORTRAIT_REST => {
+            create_asset_via_portrait(ctx, group_id, url, asset_type).await?
+        }
+        uac::PROTOCOL_TENCENT_VOD => {
+            create_asset_via_tencent_vod(ctx, group_id, url, asset_type).await?
+        }
         _ => create_asset_via_upstream(ctx, group_id, url, asset_type).await?,
     };
 
@@ -1471,10 +1507,7 @@ async fn poll_upstream_asset_active(
     }
 
     Err(if let Some(e) = last_err {
-        format!(
-            "素材处理超时({}s): {}, 错误: {}",
-            max_wait_secs, url, e
-        )
+        format!("素材处理超时({}s): {}, 错误: {}", max_wait_secs, url, e)
     } else {
         format!("素材处理超时({}s): {}", max_wait_secs, url)
     })

@@ -28,8 +28,11 @@ interface RuntimeInfo {
   status: string;
   role: string;
   cpu_percent: number;
+  cpu_cores?: number;
   memory_percent: number;
+  memory_total_bytes?: number;
   disk_percent: number;
+  disk_total_bytes?: number;
   platform: string;
   started_at: string;
 }
@@ -42,6 +45,24 @@ const formatPct = (v: number) => {
   if (!Number.isFinite(v)) return '0%';
   const rounded = Math.round(v * 10) / 10;
   return `${rounded}%`;
+};
+
+/** 容量按 1024 进位，10 G 及以上取整，更小则保留一位。 */
+const formatCapacity = (bytes?: number): string => {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return '';
+  const g = bytes / (1024 ** 3);
+  if (g >= 10) return `${Math.round(g)}G`;
+  if (g >= 1) {
+    const rounded = Math.round(g * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}G`;
+  }
+  const m = bytes / (1024 ** 2);
+  return `${Math.max(1, Math.round(m))}M`;
+};
+
+const cpuCoreLabel = (cores?: number): string => {
+  if (!cores || !Number.isFinite(cores) || cores <= 0) return '';
+  return `${Math.round(cores)}核`;
 };
 
 const formatTimeWithTz = (raw?: string | null, fallbackTz?: string): string => {
@@ -85,27 +106,30 @@ const MetricRing: React.FC<{
   percent: number;
   isLight: boolean;
   label?: string;
+  detail?: string;
   stacked?: boolean;
-}> = ({ percent, isLight, label, stacked }) => {
+}> = ({ percent, isLight, label, detail, stacked }) => {
   const pct = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
   return (
-    <div className={stacked ? 'flex flex-col items-center gap-1' : 'flex items-center gap-1.5'}>
+    <div className={stacked ? 'flex flex-col items-center gap-1' : 'flex items-center'}>
       {label && (
         <span className="text-[10px] text-muted-foreground leading-none">{label}</span>
       )}
-      <div className={stacked ? 'flex flex-col items-center gap-0.5' : 'flex items-center gap-1.5'}>
+      <div className="flex items-center gap-1.5">
         <Progress
           type="circle"
           percent={pct}
-          size={stacked ? 30 : 22}
-          strokeWidth={10}
+          size={stacked ? 48 : 44}
+          strokeWidth={8}
           strokeColor={ringStroke(pct, isLight)}
           trailColor={isLight ? '#e2e8f0' : 'rgba(255,255,255,0.1)'}
-          format={() => null}
+          format={() => (
+            detail ? (
+              <span className="text-[11px] font-medium leading-none text-foreground">{detail}</span>
+            ) : null
+          )}
         />
-        <span className={`tabular-nums text-foreground ${stacked ? 'text-[11px] font-medium' : 'text-xs'}`}>
-          {formatPct(pct)}
-        </span>
+        <span className="text-[11px] font-medium tabular-nums leading-none text-foreground">{formatPct(pct)}</span>
       </div>
     </div>
   );
@@ -170,13 +194,13 @@ const RuntimePanel: React.FC<{ runtime: RuntimeInfo; isLight: boolean }> = ({ ru
 
           <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-border">
             <div className={`rounded-md border border-border py-1.5 ${SITE_SURFACE}`}>
-              <MetricRing percent={runtime.cpu_percent} isLight={isLight} label="CPU" stacked />
+              <MetricRing percent={runtime.cpu_percent} isLight={isLight} label="CPU" detail={cpuCoreLabel(runtime.cpu_cores)} stacked />
             </div>
             <div className={`rounded-md border border-border py-1.5 ${SITE_SURFACE}`}>
-              <MetricRing percent={runtime.memory_percent} isLight={isLight} label="内存" stacked />
+              <MetricRing percent={runtime.memory_percent} isLight={isLight} label="内存" detail={formatCapacity(runtime.memory_total_bytes)} stacked />
             </div>
             <div className={`rounded-md border border-border py-1.5 ${SITE_SURFACE}`}>
-              <MetricRing percent={runtime.disk_percent} isLight={isLight} label="存储" stacked />
+              <MetricRing percent={runtime.disk_percent} isLight={isLight} label="存储" detail={formatCapacity(runtime.disk_total_bytes)} stacked />
             </div>
           </div>
 
@@ -238,13 +262,13 @@ const RuntimePanel: React.FC<{ runtime: RuntimeInfo; isLight: boolean }> = ({ ru
                   <Badge variant="outline">{runtime.role || 'master'}</Badge>
                 </td>
                 <td className="px-2.5 py-2 whitespace-nowrap">
-                  <MetricRing percent={runtime.cpu_percent} isLight={isLight} />
+                  <MetricRing percent={runtime.cpu_percent} isLight={isLight} detail={cpuCoreLabel(runtime.cpu_cores)} />
                 </td>
                 <td className="px-2.5 py-2 whitespace-nowrap">
-                  <MetricRing percent={runtime.memory_percent} isLight={isLight} />
+                  <MetricRing percent={runtime.memory_percent} isLight={isLight} detail={formatCapacity(runtime.memory_total_bytes)} />
                 </td>
                 <td className="px-2.5 py-2 whitespace-nowrap">
-                  <MetricRing percent={runtime.disk_percent} isLight={isLight} />
+                  <MetricRing percent={runtime.disk_percent} isLight={isLight} detail={formatCapacity(runtime.disk_total_bytes)} />
                 </td>
                 <td className="px-2.5 py-2 text-xs font-mono text-foreground whitespace-nowrap">
                   {runtime.platform || '-'}

@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── 火山方舟视频监控插件：主账号、Endpoint绑定、视频任务、分账账单 ──
@@ -106,21 +106,33 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_enabled INTEGER NOT NULL DEFAULT 1"
     );
 
-    once_migration!(pool, done, "add_channel_config_id_to_logs_v1",
+    once_migration!(
+        pool,
+        done,
+        "add_channel_config_id_to_logs_v1",
         "ALTER TABLE logs ADD COLUMN IF NOT EXISTS channel_config_id INTEGER"
     );
 
-    once_migration!(pool, done, "add_yid_to_logs_v1",
+    once_migration!(
+        pool,
+        done,
+        "add_yid_to_logs_v1",
         "ALTER TABLE logs ADD COLUMN IF NOT EXISTS yid TEXT DEFAULT ''",
         "COMMENT ON COLUMN logs.yid IS '上游渠道对应的内部标识(由服务商或底层平台侧生成)'"
     );
 
     // 子配快照统一用 channel_config_id；展示 YID 由 JOIN channel_configs 得到
-    once_migration!(pool, done, "drop_logs_yid_v1",
+    once_migration!(
+        pool,
+        done,
+        "drop_logs_yid_v1",
         "ALTER TABLE logs DROP COLUMN IF EXISTS yid"
     );
 
-    once_migration!(pool, done, "add_ha_meltdown_whitelist_v1",
+    once_migration!(
+        pool,
+        done,
+        "add_ha_meltdown_whitelist_v1",
         r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
            VALUES ('high_availability_channel', 'ha_meltdown_whitelist', '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT (plugin_name, config_key) DO NOTHING"#
@@ -138,26 +150,38 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 为历史遗留的缺失注释的数据库字段补齐备注 ──
-    once_migration!(pool, done, "comment_missing_db_fields_v1",
+    once_migration!(
+        pool,
+        done,
+        "comment_missing_db_fields_v1",
         "COMMENT ON COLUMN users.credit_limit IS '用户信用额度限制(元)'",
         "COMMENT ON COLUMN users.pay_enabled IS '是否启用支付扣费与额度限制(0=禁用, 1=启用)'",
         "COMMENT ON COLUMN logs.channel_config_id IS '关联渠道配置表的ID'"
     );
 
     // ── 火山方舟视频监控插件增加调试日志启用默认配置 ──
-    once_migration!(pool, done, "add_volc_ark_monitor_debug_log_config_v1",
+    once_migration!(
+        pool,
+        done,
+        "add_volc_ark_monitor_debug_log_config_v1",
         r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
            VALUES ('volcengine_ark_monitor', 'enable_debug_log', 'false', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT (plugin_name, config_key) DO NOTHING"#
     );
 
     // ── 删除已废弃的智能路由插件 ──
-    once_migration!(pool, done, "remove_router_flow_plugin_v1",
+    once_migration!(
+        pool,
+        done,
+        "remove_router_flow_plugin_v1",
         "DELETE FROM plugins WHERE name = 'router_flow'"
     );
 
     // ── 删除已废弃的火山卡池和GPT卡池插件 ──
-    once_migration!(pool, done, "remove_pools_plugins_v3",
+    once_migration!(
+        pool,
+        done,
+        "remove_pools_plugins_v3",
         "DELETE FROM plugins WHERE name IN ('volcengine_pool', 'gptimage_pool')"
     );
 
@@ -207,7 +231,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "ALTER TABLE api_tokens DROP CONSTRAINT IF EXISTS api_tokens_name_check",
         "ALTER TABLE api_tokens ADD CONSTRAINT chk_api_tokens_name CHECK (char_length(name) <= 36 AND name ~ '^[[:alnum:]_[:space:]-]+$')"
     );
-
 
     Ok(())
 }

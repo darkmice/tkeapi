@@ -210,7 +210,10 @@ fn merge_gpt_size_maps(isp: &mut Value) -> bool {
         return false;
     };
     let mut changed = ensure_section_object(isp, "image_size");
-    let existing = isp["image_size"].get("size_map").cloned().unwrap_or(json!({}));
+    let existing = isp["image_size"]
+        .get("size_map")
+        .cloned()
+        .unwrap_or(json!({}));
     let mut out = if existing.is_object() {
         existing
     } else {
@@ -280,15 +283,30 @@ fn ensure_gpt_image_2_image_special(scheme: &mut Value) -> bool {
             isp["image_size"]["enabled"] = json!(true);
             changed = true;
         }
-        if isp["aspect_ratio"].get("key").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        if isp["aspect_ratio"]
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
             isp["aspect_ratio"]["key"] = official["aspect_ratio"]["key"].clone();
             changed = true;
         }
-        if isp["resolution"].get("key").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        if isp["resolution"]
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
             isp["resolution"]["key"] = official["resolution"]["key"].clone();
             changed = true;
         }
-        if isp["image_size"].get("key").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        if isp["image_size"]
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
             isp["image_size"]["key"] = official["image_size"]["key"].clone();
             changed = true;
         }
@@ -361,18 +379,33 @@ fn ensure_gpt_image_2_image_special(scheme: &mut Value) -> bool {
             changed = true;
         }
 
-        let custom = isp["image_size"].get("custom").cloned().unwrap_or(json!({}));
-        let max_px = custom.get("max_pixels").and_then(|v| v.as_u64()).unwrap_or(0);
-        let min_px = custom.get("min_pixels").and_then(|v| v.as_u64()).unwrap_or(0);
+        let custom = isp["image_size"]
+            .get("custom")
+            .cloned()
+            .unwrap_or(json!({}));
+        let max_px = custom
+            .get("max_pixels")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let min_px = custom
+            .get("min_pixels")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let step = custom.get("step").and_then(|v| v.as_i64()).unwrap_or(0);
-        let aspect_wide = custom.get("max_aspect").and_then(|v| v.as_str()).unwrap_or("");
+        let aspect_wide = custom
+            .get("max_aspect")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if !custom.is_object()
             || max_px != GPT_MAX_PIXELS
             || min_px != GPT_MIN_PIXELS
             || step != 16
             || aspect_wide != "3:1"
         {
-            let enabled = custom.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let enabled = custom
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             isp["image_size"]["custom"] = json!({
                 "enabled": enabled,
                 "min_pixels": GPT_MIN_PIXELS,
@@ -413,9 +446,10 @@ fn ensure_gpt_image_2_io(scheme: &mut Value) -> bool {
         changed = true;
     }
     if let Some(inputs) = scheme.get_mut("inputs").and_then(|v| v.as_array_mut()) {
-        if let Some(port) = inputs.iter_mut().find(|p| {
-            p.get("key").and_then(|v| v.as_str()) == Some("reference_images")
-        }) {
+        if let Some(port) = inputs
+            .iter_mut()
+            .find(|p| p.get("key").and_then(|v| v.as_str()) == Some("reference_images"))
+        {
             let max = port.get("max").and_then(|v| v.as_u64()).unwrap_or(0);
             if max == 1 {
                 port["max"] = json!(16);
@@ -501,16 +535,24 @@ pub fn gpt_image_2_scheme() -> Value {
 
 /// 确保列表中有 gpt-image-2 方案；若已存在则去掉与图片专用参数重复的项，并同步变体/画质文案
 pub fn seed_gpt_image_2_scheme(schemes: &mut Vec<Value>) -> bool {
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(GPT_IMAGE_2_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(GPT_IMAGE_2_SCHEME_ID))
+    {
         let mut changed = false;
-        if let Some(params) = schemes[pos].get_mut("params").and_then(|v| v.as_array_mut()) {
+        if let Some(params) = schemes[pos]
+            .get_mut("params")
+            .and_then(|v| v.as_array_mut())
+        {
             if strip_redundant_params(params) {
                 changed = true;
             }
             for p in params.iter_mut() {
-                let key = p.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let key = p
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 match key.as_str() {
                     "variations" => {
                         if p.get("label").and_then(|v| v.as_str()) != Some("变体数量") {
@@ -521,11 +563,15 @@ pub fn seed_gpt_image_2_scheme(schemes: &mut Vec<Value>) -> bool {
                             p["group"] = json!("更多选项");
                             changed = true;
                         }
-                        if p.get("hint").and_then(|v| v.as_str()) != Some("单次生成的图片变体数量 (1-4)") {
+                        if p.get("hint").and_then(|v| v.as_str())
+                            != Some("单次生成的图片变体数量 (1-4)")
+                        {
                             p["hint"] = json!("单次生成的图片变体数量 (1-4)");
                             changed = true;
                         }
-                        if p.get("default").and_then(|v| v.as_i64()) == Some(4) || p.get("default").is_none() {
+                        if p.get("default").and_then(|v| v.as_i64()) == Some(4)
+                            || p.get("default").is_none()
+                        {
                             p["default"] = json!(1);
                             changed = true;
                         }
@@ -568,7 +614,8 @@ pub fn seed_gpt_image_2_scheme(schemes: &mut Vec<Value>) -> bool {
         if ensure_gpt_image_2_io(&mut schemes[pos]) {
             changed = true;
         }
-        if schemes[pos].get("description").and_then(|v| v.as_str()) != Some(GPT_IMAGE_2_DESCRIPTION) {
+        if schemes[pos].get("description").and_then(|v| v.as_str()) != Some(GPT_IMAGE_2_DESCRIPTION)
+        {
             let desc = schemes[pos]
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -582,13 +629,13 @@ pub fn seed_gpt_image_2_scheme(schemes: &mut Vec<Value>) -> bool {
     }
 
     let scheme = gpt_image_2_scheme();
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some("openai_image")
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some("openai_image"))
+    {
         schemes.insert(pos + 1, scheme);
     } else {
         schemes.push(scheme);
     }
     true
 }
-

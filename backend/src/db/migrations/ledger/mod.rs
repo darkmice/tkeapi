@@ -5,8 +5,8 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
 use sqlx::PgPool;
+use std::collections::HashSet;
 
 #[path = "01_bootstrap.rs"]
 mod m01_bootstrap;
@@ -28,6 +28,16 @@ mod m08_pg2026_portal_marketing;
 mod m09_data_sync_forward_rules;
 #[path = "10_comfyui_tail.rs"]
 mod m10_comfyui_tail;
+#[path = "11_models_kyc_invoices.rs"]
+mod m11_models_kyc_invoices;
+#[path = "12_playground_skills_voice.rs"]
+mod m12_playground_skills_voice;
+#[path = "13_model_library_enhance_logs.rs"]
+mod m13_model_library_enhance_logs;
+#[path = "14_marketing_affiliate_portal_articles.rs"]
+mod m14_marketing_affiliate_portal_articles;
+#[path = "15_system_modules_bigint_int8.rs"]
+mod m15_system_modules_bigint_int8;
 
 pub async fn run_all(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     m01_bootstrap::run(pool, done).await?;
@@ -40,5 +50,10 @@ pub async fn run_all(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Resul
     m08_pg2026_portal_marketing::run(pool, done).await?;
     m09_data_sync_forward_rules::run(pool, done).await?;
     m10_comfyui_tail::run(pool, done).await?;
+    m11_models_kyc_invoices::run(pool, done).await?;
+    m12_playground_skills_voice::run(pool, done).await?;
+    m13_model_library_enhance_logs::run(pool, done).await?;
+    m14_marketing_affiliate_portal_articles::run(pool, done).await?;
+    m15_system_modules_bigint_int8::run(pool, done).await?;
     Ok(())
 }

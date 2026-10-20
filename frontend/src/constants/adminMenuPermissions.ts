@@ -81,6 +81,7 @@ export const ADMIN_MENU_PERMISSIONS: AdminMenuPermNode[] = [
     children: [
       { label: '系统资金明细', labelKey: 'menu.finance_recharges', value: 'finance.recharges' },
       { label: '在线充值明细', labelKey: 'menu.finance_orders', value: 'finance.orders' },
+      { label: '订单明细', labelKey: 'menu.finance_purchase_orders', value: 'finance.purchase_orders' },
       { label: '赠送金明细', labelKey: 'menu.finance_gifts', value: 'finance.gifts' },
       { label: '佣金明细', labelKey: 'menu.finance_commissions', value: 'finance.commissions' },
       { label: '发票申请审核', labelKey: 'menu.finance_invoices', value: 'finance.invoices' },

@@ -20,6 +20,8 @@ use crate::error::AppResult;
 use crate::AppState;
 
 const TOP_N: usize = 10;
+/// 月注册图固定最近 12 个自然月（含本月）。排行与每日注册仍用 TOP_N。
+const MONTHLY_REG_MONTHS: i32 = 12;
 
 #[derive(Debug, Serialize, Clone, sqlx::FromRow)]
 pub struct DateCount {
@@ -217,7 +219,7 @@ fn paid_recharge_where(alias: &str) -> String {
         format!("{alias}.")
     };
     format!(
-        "{p}amount > 0 AND COALESCE({p}wallet_type, 'system') = 'system' AND {p}recharge_type NOT IN ('gift', 'registration', 'commission', 'redemption', 'ark_video_consume', 'ark_video_refund')"
+        "{p}amount > 0 AND COALESCE({p}wallet_type, 'system') = 'system' AND {p}recharge_type NOT IN ('gift', 'registration', 'commission', 'redemption', 'redemption_refund', 'model_voucher', 'coupon_purchase', 'coupon_pack', 'coupon_subscription', 'ark_video_consume', 'ark_video_refund')"
     )
 }
 
@@ -229,12 +231,13 @@ fn sql_month_bucket(ts_expr: &str, tz: chrono_tz::Tz) -> String {
     )
 }
 
-fn range_ts(start_day: NaiveDate, end_day_inclusive: NaiveDate, tz: chrono_tz::Tz) -> (String, String) {
-    let start = date_helper::parse_timestamptz_bind(
-        &start_day.format("%Y-%m-%d").to_string(),
-        false,
-        tz,
-    );
+fn range_ts(
+    start_day: NaiveDate,
+    end_day_inclusive: NaiveDate,
+    tz: chrono_tz::Tz,
+) -> (String, String) {
+    let start =
+        date_helper::parse_timestamptz_bind(&start_day.format("%Y-%m-%d").to_string(), false, tz);
     let end = date_helper::parse_timestamptz_bind(
         &end_day_inclusive.format("%Y-%m-%d").to_string(),
         true,
@@ -360,22 +363,11 @@ async fn load_names(
 pub async fn get_user_analytics(
     State(state): State<Arc<AppState>>,
     Query(query): Query<AnalyticsQuery>,
-    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<UserAnalyticsResponse>> {
-    let header_tz = headers
-        .get("x-timezone")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let site_tz_name = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
-    let tz_src = if header_tz.trim().is_empty() {
-        site_tz_name.as_ref()
-    } else {
-        header_tz
-    };
-    let tz = crate::time_system::parse_timedisplay(tz_src);
+    let tz = crate::api::date_helper::resolve_site_operation_timezone(&state.db).await;
     let today = date_helper::get_timezone_time_bounds(tz).today;
     let days = day_keys(today, TOP_N as i64);
-    let months = month_keys(today, TOP_N as i32);
+    let months = month_keys(today, MONTHLY_REG_MONTHS);
     let day_start = NaiveDate::parse_from_str(&days[0], "%Y-%m-%d").unwrap_or(today);
     let month_start = NaiveDate::parse_from_str(&format!("{}-01", months[0]), "%Y-%m-%d")
         .unwrap_or(NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today));
@@ -451,6 +443,15 @@ mod tests {
         assert_eq!(keys.len(), 10);
         assert_eq!(keys[0], "2025-04");
         assert_eq!(keys[9], "2026-01");
+    }
+
+    #[test]
+    fn monthly_registration_window_is_last_twelve_months() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
+        let keys = month_keys(today, MONTHLY_REG_MONTHS);
+        assert_eq!(keys.len(), 12);
+        assert_eq!(keys[0], "2025-11");
+        assert_eq!(keys[11], "2026-10");
     }
 
     #[test]

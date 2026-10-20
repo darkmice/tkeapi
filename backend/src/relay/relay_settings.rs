@@ -105,6 +105,7 @@ async fn setting_value(db: &Database, key: &str) -> Option<String> {
 
 static RELAY_SETTINGS: CacheSlot<Arc<RelaySettings>> = CacheSlot::new();
 static SITE_TZ: CacheSlot<Arc<str>> = CacheSlot::new();
+static ADMIN_DISPLAY_TZ: CacheSlot<Arc<str>> = CacheSlot::new();
 static HA_ENABLED: CacheSlot<bool> = CacheSlot::new();
 static HA_RULES: CacheSlot<Arc<HaRulesBundle>> = CacheSlot::new();
 
@@ -132,6 +133,15 @@ pub fn put_cached_site_timezone(tz: impl AsRef<str>) {
     SITE_TZ.put(Arc::<str>::from(tz.as_ref()));
 }
 
+pub fn put_cached_admin_display_timezone(tz: impl AsRef<str>) {
+    ADMIN_DISPLAY_TZ.put(Arc::<str>::from(tz.as_ref()));
+}
+
+pub fn put_cached_site_timezones(site: &crate::models::SiteSettings) {
+    put_cached_site_timezone(site.default_timezone.trim());
+    put_cached_admin_display_timezone(site.resolved_admin_display_timezone());
+}
+
 pub async fn get_cached_site_timezone(db: &Database) -> Arc<str> {
     SITE_TZ
         .get_or_load(async {
@@ -139,6 +149,19 @@ pub async fn get_cached_site_timezone(db: &Database) -> Arc<str> {
                 .await
                 .and_then(|v| serde_json::from_str::<crate::models::SiteSettings>(&v).ok())
                 .map(|s| s.default_timezone)
+                .unwrap_or_else(|| DEFAULT_TIMEDISPLAY.to_string());
+            Arc::<str>::from(tz)
+        })
+        .await
+}
+
+pub async fn get_cached_admin_display_timezone(db: &Database) -> Arc<str> {
+    ADMIN_DISPLAY_TZ
+        .get_or_load(async {
+            let tz = setting_value(db, "site_settings")
+                .await
+                .and_then(|v| serde_json::from_str::<crate::models::SiteSettings>(&v).ok())
+                .map(|s| s.resolved_admin_display_timezone())
                 .unwrap_or_else(|| DEFAULT_TIMEDISPLAY.to_string());
             Arc::<str>::from(tz)
         })
@@ -167,6 +190,7 @@ pub async fn get_cached_ha_rules(db: &Database) -> Arc<HaRulesBundle> {
 pub fn invalidate_all() {
     RELAY_SETTINGS.clear();
     SITE_TZ.clear();
+    ADMIN_DISPLAY_TZ.clear();
     invalidate_ha();
     clear_api_token_cache();
     crate::debug_log::RELAY.set(false);
@@ -190,11 +214,7 @@ impl ApiTokenCache {
         }
     }
 
-    async fn lookup(
-        &self,
-        db: &Database,
-        api_key: &str,
-    ) -> Result<Option<ApiToken>, sqlx::Error> {
+    async fn lookup(&self, db: &Database, api_key: &str) -> Result<Option<ApiToken>, sqlx::Error> {
         let key: Arc<str> = Arc::from(api_key);
         if let Some(entry) = self.by_key.get(&key) {
             if entry.at.elapsed() < API_TOKEN_TTL {
@@ -202,12 +222,11 @@ impl ApiTokenCache {
             }
         }
 
-        let token: Option<ApiToken> = sqlx::query_as(
-            &db.format_query("SELECT * FROM api_tokens WHERE token_key = ?"),
-        )
-        .bind(api_key)
-        .fetch_optional(&db.pool)
-        .await?;
+        let token: Option<ApiToken> =
+            sqlx::query_as(&db.format_query("SELECT * FROM api_tokens WHERE token_key = ?"))
+                .bind(api_key)
+                .fetch_optional(&db.pool)
+                .await?;
 
         if let Some(ref t) = token {
             self.by_key.insert(
@@ -266,7 +285,26 @@ pub async fn get_cached_ha_enabled(db: &Database) -> bool {
         .await
 }
 
-/// 低余额在途门禁：限额读内存配置；DB 仅在启用时查「是否已有 ≥max 条在途」（OFFSET 触顶即停）
+const PRE_LOG_INFLIGHT_TTL: Duration = Duration::from_secs(5);
+
+fn pre_log_inflight_map() -> &'static DashMap<(String, InflightCat), Vec<Instant>> {
+    static MAP: OnceLock<DashMap<(String, InflightCat), Vec<Instant>>> = OnceLock::new();
+    MAP.get_or_init(DashMap::new)
+}
+
+/// 当预记录日志（record_pending_log）落库完成时，释放一条内存预占槽位（交棒给 DB 在途行统计）
+pub fn release_pre_log_inflight(user_id: &str, action_type: &str) {
+    let cat = InflightCat::of(action_type);
+    if let Some(mut entry) = pre_log_inflight_map().get_mut(&(user_id.to_string(), cat)) {
+        let now = Instant::now();
+        entry.retain(|t| now.duration_since(*t) < PRE_LOG_INFLIGHT_TTL);
+        if !entry.is_empty() {
+            entry.remove(0);
+        }
+    }
+}
+
+/// 低余额在途门禁：限额读内存配置；DB 仅在启用时查在途条数（LIMIT max 触顶即停），并叠加尚未落库的同毫秒并发预占槽位
 pub async fn enforce_inflight_gate(
     db: &Database,
     user_id: &str,
@@ -279,19 +317,29 @@ pub async fn enforce_inflight_gate(
         return Ok(());
     };
     let cat_sql = cat.count_sql();
-    let over: bool = sqlx::query_scalar(&db.format_query(&format!(
-        "SELECT EXISTS (
+    let max_i64 = i64::from(max);
+    let db_inflight: i64 = sqlx::query_scalar(&db.format_query(&format!(
+        "SELECT COUNT(*) FROM (
              SELECT 1 FROM logs \
              WHERE user_id = ? AND is_completed = 0 AND status_code IN (0, 200) {cat_sql} \
-             OFFSET ? LIMIT 1
-         )"
+             LIMIT ?
+         ) AS inflight_sub"
     )))
     .bind(user_id)
-    .bind(i64::from(max.saturating_sub(1)))
+    .bind(max_i64)
     .fetch_one(&db.pool)
     .await?;
-    if over {
+    if db_inflight >= max_i64 {
         return Err(AppError::TooManyRequests(INFLIGHT_MSG.to_string()));
     }
+    let now = Instant::now();
+    let mut entry = pre_log_inflight_map()
+        .entry((user_id.to_string(), cat))
+        .or_default();
+    entry.retain(|t| now.duration_since(*t) < PRE_LOG_INFLIGHT_TTL);
+    if db_inflight + (entry.len() as i64) >= max_i64 {
+        return Err(AppError::TooManyRequests(INFLIGHT_MSG.to_string()));
+    }
+    entry.push(now);
     Ok(())
 }

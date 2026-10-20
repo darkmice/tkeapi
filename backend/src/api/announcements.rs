@@ -25,6 +25,7 @@ const DEFAULT_FLAG_EXPIRE_DAYS: i64 = 5;
 const PERMANENT_EXPIRE: &str = "permanent";
 const DISPLAY_TIME_CREATED: &str = "created";
 const DISPLAY_TIME_UPDATED: &str = "updated";
+const MODULE_PAY_MODAL: &str = "pay_modal";
 const MODULE_CONSOLE: &str = "console";
 const MODULE_PLAYGROUND: &str = "playground_2026";
 const MODULE_PORTAL: &str = "portal_pro";
@@ -40,9 +41,11 @@ fn normalize_public_module(raw: Option<&str>) -> AppResult<String> {
         .filter(|s| !s.is_empty())
         .unwrap_or(MODULE_CONSOLE);
     match candidate {
-        MODULE_CONSOLE | MODULE_PLAYGROUND | MODULE_PORTAL => Ok(candidate.to_string()),
+        MODULE_PAY_MODAL | MODULE_CONSOLE | MODULE_PLAYGROUND | MODULE_PORTAL => {
+            Ok(candidate.to_string())
+        }
         _ => Err(AppError::BadRequest(
-            "通知模块无效，请选择控制台、创作中心或门户".to_string(),
+            "通知模块无效，请选择支付弹窗、控制台、创作中心或门户".to_string(),
         )),
     }
 }
@@ -52,23 +55,28 @@ fn normalize_target_modules(raw: Option<&str>) -> AppResult<String> {
     let Some(text) = text else {
         return Ok(MODULE_CONSOLE.to_string());
     };
+    let mut pay_modal = false;
     let mut console = false;
     let mut playground = false;
     let mut portal = false;
     for part in text.split(',') {
         match part.trim() {
             "" => {}
+            MODULE_PAY_MODAL => pay_modal = true,
             MODULE_CONSOLE => console = true,
             MODULE_PLAYGROUND => playground = true,
             MODULE_PORTAL => portal = true,
             _ => {
                 return Err(AppError::BadRequest(
-                    "通知模块无效，请选择控制台、创作中心或门户".to_string(),
+                    "通知模块无效，请选择支付弹窗、控制台、创作中心或门户".to_string(),
                 ))
             }
         }
     }
     let mut out = Vec::new();
+    if pay_modal {
+        out.push(MODULE_PAY_MODAL);
+    }
     if console {
         out.push(MODULE_CONSOLE);
     }
@@ -113,6 +121,9 @@ fn module_plugin_name(module: &str) -> Option<&'static str> {
 }
 
 async fn is_plugin_enabled(state: &Arc<AppState>, name: &str) -> AppResult<bool> {
+    if !crate::api::plugins::is_plugin_compiled(name) {
+        return Ok(false);
+    }
     let enabled: Option<i64> = sqlx::query_scalar(
         &state
             .db
@@ -132,11 +143,7 @@ fn module_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
-async fn ensure_added_modules(
-    state: &Arc<AppState>,
-    next: &str,
-    previous: &str,
-) -> AppResult<()> {
+async fn ensure_added_modules(state: &Arc<AppState>, next: &str, previous: &str) -> AppResult<()> {
     let prev = module_list(previous);
     for module in module_list(next) {
         if prev.iter().any(|item| item == &module) {
@@ -228,11 +235,14 @@ fn parse_flag_expires_at(raw: Option<&str>) -> Result<Option<DbTs>, String> {
     Ok(Some(ts))
 }
 
-fn flag_should_turn_off(is_on: i32, expires_at: Option<&DbTs>, now: DateTime<Utc>) -> bool {
-    is_on == 1 && expires_at.and_then(|t| t.to_utc()).is_some_and(|t| t <= now)
+fn flag_should_turn_off(is_on: i64, expires_at: Option<&DbTs>, now: DateTime<Utc>) -> bool {
+    is_on == 1
+        && expires_at
+            .and_then(|t| t.to_utc())
+            .is_some_and(|t| t <= now)
 }
 
-fn apply_flag_expiry(is_on: i32, expires_at: Option<&DbTs>, now: DateTime<Utc>) -> i32 {
+fn apply_flag_expiry(is_on: i64, expires_at: Option<&DbTs>, now: DateTime<Utc>) -> i64 {
     if flag_should_turn_off(is_on, expires_at, now) {
         0
     } else {
@@ -241,7 +251,7 @@ fn apply_flag_expiry(is_on: i32, expires_at: Option<&DbTs>, now: DateTime<Utc>) 
 }
 
 fn resolve_create_expires(
-    is_on: i32,
+    is_on: i64,
     raw: Option<&str>,
     now: DateTime<Utc>,
 ) -> AppResult<Option<DbTs>> {
@@ -254,7 +264,7 @@ fn resolve_create_expires(
 }
 
 fn resolve_update_expires(
-    is_on: i32,
+    is_on: i64,
     raw: Option<&str>,
     current: Option<DbTs>,
     now: DateTime<Utc>,
@@ -359,8 +369,11 @@ pub async fn create_announcement(
         resolve_create_expires(payload.is_pinned, payload.pin_expires_at.as_deref(), now_dt)?;
     let popup_expires_at =
         resolve_create_expires(is_popup, payload.popup_expires_at.as_deref(), now_dt)?;
-    let active_expires_at =
-        resolve_create_expires(payload.is_active, payload.active_expires_at.as_deref(), now_dt)?;
+    let active_expires_at = resolve_create_expires(
+        payload.is_active,
+        payload.active_expires_at.as_deref(),
+        now_dt,
+    )?;
     let is_pinned = apply_flag_expiry(payload.is_pinned, pin_expires_at.as_ref(), now_dt);
     let is_popup = apply_flag_expiry(is_popup, popup_expires_at.as_ref(), now_dt);
     let is_active = apply_flag_expiry(payload.is_active, active_expires_at.as_ref(), now_dt);
@@ -368,7 +381,8 @@ pub async fn create_announcement(
         normalize_display_time_mode(payload.display_time_mode.as_deref(), DISPLAY_TIME_CREATED)?;
     let target_module = normalize_target_modules(payload.target_module.as_deref())?;
     ensure_added_modules(&state, &target_module, "").await?;
-    let playground_banner_bg = parse_banner_bg(payload.playground_banner_bg.as_deref().unwrap_or(""))?;
+    let playground_banner_bg =
+        parse_banner_bg(payload.playground_banner_bg.as_deref().unwrap_or(""))?;
     let portal_banner_bg = parse_banner_bg(payload.portal_banner_bg.as_deref().unwrap_or(""))?;
 
     let announcement: Announcement = sqlx::query_as(&state.db.format_query(
@@ -532,6 +546,14 @@ mod tests {
         assert_eq!(
             normalize_target_modules(Some("console,console")).unwrap(),
             MODULE_CONSOLE
+        );
+        assert_eq!(
+            normalize_target_modules(Some("portal_pro, pay_modal, console")).unwrap(),
+            "pay_modal,console,portal_pro"
+        );
+        assert_eq!(
+            normalize_public_module(Some("pay_modal")).unwrap(),
+            MODULE_PAY_MODAL
         );
         assert!(normalize_target_modules(Some("dashboard")).is_err());
         assert_eq!(parse_banner_bg("").unwrap(), None);

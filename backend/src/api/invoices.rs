@@ -52,13 +52,17 @@ impl Default for InvoiceConfigData {
             currency_symbol: Some("$".to_string()),
             invoice_prefix: Some("INV-".to_string()),
             receipt_prefix: Some("REC-".to_string()),
-            notes: Some("Thank you for your business! Payment has been processed in full.".to_string()),
+            notes: Some(
+                "Thank you for your business! Payment has been processed in full.".to_string(),
+            ),
             show_invoices: Some(true),
             show_receipts: Some(true),
             china_min_amount: Some(100.0),
             china_invoice_content: Some("*信息技术服务*软件技术服务费".to_string()),
             china_tax_rate: Some(6.0),
-            china_invoice_notice: Some("增值税普通发票将在审核通过后发送至填写的邮箱。".to_string()),
+            china_invoice_notice: Some(
+                "增值税普通发票将在审核通过后发送至填写的邮箱。".to_string(),
+            ),
             sellers: None,
         }
     }
@@ -338,7 +342,12 @@ fn format_day_suffix(day: u32) -> &'static str {
 
 fn format_invoice_date(dt: DateTime<Utc>) -> String {
     let month_name = dt.format("%B").to_string();
-    let day = dt.format("%e").to_string().trim().parse::<u32>().unwrap_or(1);
+    let day = dt
+        .format("%e")
+        .to_string()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(1);
     let suffix = format_day_suffix(day);
     let year = dt.format("%Y").to_string();
     format!("{month_name} {day}{suffix}, {year}")
@@ -348,12 +357,21 @@ fn format_receipt_date(dt: DateTime<Utc>, user_tz_name: &str) -> String {
     let tz: chrono_tz::Tz = user_tz_name.parse().unwrap_or(chrono_tz::Asia::Shanghai);
     let local_dt = dt.with_timezone(&tz);
     let month_name = local_dt.format("%B").to_string();
-    let day = local_dt.format("%e").to_string().trim().parse::<u32>().unwrap_or(1);
+    let day = local_dt
+        .format("%e")
+        .to_string()
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(1);
     let suffix = format_day_suffix(day);
     let year = local_dt.format("%Y").to_string();
     let time_part = local_dt.format("%l:%M:%S %p").to_string();
     let tz_offset = local_dt.format("%Z").to_string();
-    let tz_display = if tz_offset == "CST" || tz_offset == "+08" || tz_offset == "+08:00" || tz_offset == "+0800" {
+    let tz_display = if tz_offset == "CST"
+        || tz_offset == "+08"
+        || tz_offset == "+08:00"
+        || tz_offset == "+0800"
+    {
         "UTC+8".to_string()
     } else if tz_offset.starts_with("GMT") {
         tz_offset.replace("GMT", "UTC")
@@ -362,7 +380,10 @@ fn format_receipt_date(dt: DateTime<Utc>, user_tz_name: &str) -> String {
     } else {
         tz_offset
     };
-    format!("{month_name} {day}{suffix}, {year} at {} {tz_display}", time_part.trim())
+    format!(
+        "{month_name} {day}{suffix}, {year} at {} {tz_display}",
+        time_part.trim()
+    )
 }
 
 async fn load_user_invoices(
@@ -371,13 +392,11 @@ async fn load_user_invoices(
     is_admin: bool,
 ) -> AppResult<UserInvoicesResponse> {
     // 1. 查询当前用户等级发票开关与时区
-    let level_info: Option<(Option<i32>, Option<String>)> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT ul.invoice_enabled, u.timezone \
+    let level_info: Option<(Option<i64>, Option<String>)> = sqlx::query_as(&state.db.format_query(
+        "SELECT ul.invoice_enabled, u.timezone \
              FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key \
-             WHERE u.id = ?"
-        )
-    )
+             WHERE u.id = ?",
+    ))
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await?;
@@ -391,37 +410,55 @@ async fn load_user_invoices(
 
     // 2. 读取全局统一的发票设置 (settings 表中 key = 'invoice_settings')
     let global_inv_setting_str: Option<String> = sqlx::query_scalar(
-        &state.db.format_query("SELECT value FROM settings WHERE key = ?")
+        &state
+            .db
+            .format_query("SELECT value FROM settings WHERE key = ?"),
     )
     .bind("invoice_settings")
     .fetch_optional(&state.db.pool)
     .await
     .unwrap_or(None);
 
-    let mut invoice_settings: crate::models::InvoiceSettings = if let Some(ref s) = global_inv_setting_str {
-        serde_json::from_str(s).unwrap_or_default()
-    } else {
-        Default::default()
-    };
+    let mut invoice_settings: crate::models::InvoiceSettings =
+        if let Some(ref s) = global_inv_setting_str {
+            serde_json::from_str(s).unwrap_or_default()
+        } else {
+            Default::default()
+        };
     invoice_settings.clear_placeholder_issuer();
 
     let mode = invoice_settings.invoice_mode.clone();
 
     let effective_sellers = invoice_settings.get_effective_sellers();
 
-    let default_seller = effective_sellers.iter().find(|s| s.is_default).or_else(|| effective_sellers.first());
+    let default_seller = effective_sellers
+        .iter()
+        .find(|s| s.is_default)
+        .or_else(|| effective_sellers.first());
 
     let mut config = InvoiceConfigData {
         company_name: Some(invoice_settings.invoice_company_name),
         company_address: Some(invoice_settings.invoice_company_address),
         tax_id: Some(invoice_settings.invoice_tax_id),
         contact_email: Some(invoice_settings.invoice_contact_email),
-        company_phone: default_seller.and_then(|s| s.company_phone.clone()).or_else(|| {
-            if invoice_settings.invoice_company_phone.is_empty() { None } else { Some(invoice_settings.invoice_company_phone.clone()) }
-        }),
-        company_website: default_seller.and_then(|s| s.company_website.clone()).or_else(|| {
-            if invoice_settings.invoice_company_website.is_empty() { None } else { Some(invoice_settings.invoice_company_website.clone()) }
-        }),
+        company_phone: default_seller
+            .and_then(|s| s.company_phone.clone())
+            .or_else(|| {
+                if invoice_settings.invoice_company_phone.is_empty() {
+                    None
+                } else {
+                    Some(invoice_settings.invoice_company_phone.clone())
+                }
+            }),
+        company_website: default_seller
+            .and_then(|s| s.company_website.clone())
+            .or_else(|| {
+                if invoice_settings.invoice_company_website.is_empty() {
+                    None
+                } else {
+                    Some(invoice_settings.invoice_company_website.clone())
+                }
+            }),
         currency_symbol: Some(invoice_settings.invoice_currency_symbol),
         invoice_prefix: Some(invoice_settings.invoice_prefix),
         receipt_prefix: Some(invoice_settings.receipt_prefix),
@@ -449,39 +486,43 @@ async fn load_user_invoices(
     let curr = config.currency_symbol.as_deref().unwrap_or("$");
 
     // 2. 查询用户钱包与信用余额
-    let user_wallet: Option<(f64, f64, f64)> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT COALESCE(balance, 0.0), COALESCE(gift_balance, 0.0), COALESCE(credit_limit, 0.0) \
-             FROM users WHERE id = ?"
-        )
-    )
+    let user_wallet: Option<(f64, f64, f64)> = sqlx::query_as(&state.db.format_query(
+        "SELECT COALESCE(balance, 0.0), COALESCE(gift_balance, 0.0), COALESCE(credit_limit, 0.0) \
+             FROM users WHERE id = ?",
+    ))
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await?;
 
-    let (current_balance, current_gift_balance, current_credit_limit) = user_wallet.unwrap_or((0.0, 0.0, 0.0));
+    let (current_balance, current_gift_balance, current_credit_limit) =
+        user_wallet.unwrap_or((0.0, 0.0, 0.0));
 
     // 3. 查询已完成支付在线订单 (orders WHERE user_id = ? AND status = 'paid')
-    let orders: Vec<(i64, String, String, f64, Option<String>, DbTs, Option<DbTs>)> = sqlx::query_as(
-        &state.db.format_query(
+    let orders: Vec<(i64, String, String, f64, Option<String>, DbTs, Option<DbTs>)> =
+        sqlx::query_as(&state.db.format_query(
             "SELECT id, out_trade_no, payment_method, amount, trade_no, created_at, paid_at \
              FROM orders WHERE user_id = ? AND status = 'paid' \
-             ORDER BY created_at DESC"
-        )
-    )
-    .bind(user_id)
-    .fetch_all(&state.db.pool)
-    .await
-    .unwrap_or_default();
+             ORDER BY created_at DESC",
+        ))
+        .bind(user_id)
+        .fetch_all(&state.db.pool)
+        .await
+        .unwrap_or_default();
 
     // 4. 查询充值记录 (包含 wallet_type 和 operator)
-    let recharges: Vec<(i64, f64, String, Option<String>, Option<String>, Option<String>, DbTs)> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT id, amount, recharge_type, remark, operator, wallet_type, created_at \
+    let recharges: Vec<(
+        i64,
+        f64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        DbTs,
+    )> = sqlx::query_as(&state.db.format_query(
+        "SELECT id, amount, recharge_type, remark, operator, wallet_type, created_at \
              FROM recharge_records WHERE user_id = ? \
-             ORDER BY created_at DESC"
-        )
-    )
+             ORDER BY created_at DESC",
+    ))
     .bind(user_id)
     .fetch_all(&state.db.pool)
     .await
@@ -572,10 +613,16 @@ async fn load_user_invoices(
         let inv_date_str = format_invoice_date(dt);
         let rec_date_str = format_receipt_date(dt, &tz_name);
 
-        let is_online_order_callback = r_type == "wechat" || r_type == "alipay" || r_type == "stripe"
+        let is_online_order_callback = r_type == "wechat"
+            || r_type == "alipay"
+            || r_type == "stripe"
             || remark.as_deref().unwrap_or("").contains("订单号");
 
-        if w_type == "gift" || r_type == "gift" || r_type == "registration" || r_type == "commission" {
+        if w_type == "gift"
+            || r_type == "gift"
+            || r_type == "registration"
+            || r_type == "commission"
+        {
             // === 赠送钱包 (活动体验金) ===
             // 绝不加入付款收据 (Receipt) 和发票账单 (Invoice)，因为客户未真实付款，不属于应税商业交易！
             if amount > 0.0 {
@@ -596,7 +643,11 @@ async fn load_user_invoices(
                 payment: "paid".to_string(),
                 amount,
                 currency: curr.to_string(),
-                payment_method: if r_type == "manual" { "Wire Transfer / Offline".to_string() } else { r_type.clone() },
+                payment_method: if r_type == "manual" {
+                    "Wire Transfer / Offline".to_string()
+                } else {
+                    r_type.clone()
+                },
                 description: desc,
                 fund_type: "real_payment".to_string(),
                 fund_type_label: "实付充值 (Cash Top-up)".to_string(),
@@ -610,7 +661,11 @@ async fn load_user_invoices(
                 raw_date: dt.to_rfc3339(),
                 amount,
                 currency: curr.to_string(),
-                payment_method: if r_type == "manual" { "Wire Transfer / Offline".to_string() } else { r_type },
+                payment_method: if r_type == "manual" {
+                    "Wire Transfer / Offline".to_string()
+                } else {
+                    r_type
+                },
                 transaction_id: None,
                 fund_type: "real_payment".to_string(),
                 fund_type_label: "实付现金 (Cash Paid)".to_string(),
@@ -633,58 +688,77 @@ async fn load_user_invoices(
     };
 
     // 4. 查询境内发票申请记录
-    let china_requests: Vec<UserInvoiceRequestRecord> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT * FROM user_invoice_requests WHERE user_id = ? ORDER BY created_at DESC"
-        )
-    )
+    let china_requests: Vec<UserInvoiceRequestRecord> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM user_invoice_requests WHERE user_id = ? ORDER BY created_at DESC",
+    ))
     .bind(user_id)
     .fetch_all(&state.db.pool)
     .await
     .unwrap_or_default();
 
     // 5. 查询用户账号基础信息 (users 表: username, email, nickname, mobile, uid)
-    let user_info: Option<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT uid, username, email, nickname, mobile FROM users WHERE id = ?"
+    let user_info: Option<(String, String, String, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            &state.db.format_query(
+                "SELECT uid, username, email, nickname, mobile FROM users WHERE id = ?",
+            ),
         )
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db.pool)
-    .await
-    .unwrap_or(None);
+        .bind(user_id)
+        .fetch_optional(&state.db.pool)
+        .await
+        .unwrap_or(None);
 
     let (u_uid, u_username, u_email, u_nickname, u_mobile) = match user_info {
         Some((uid, username, email, nickname, mobile)) => {
-            let account_id = if !uid.is_empty() { uid } else { user_id.to_string() };
+            let account_id = if !uid.is_empty() {
+                uid
+            } else {
+                user_id.to_string()
+            };
             (account_id, username, email, nickname, mobile)
         }
-        None => (user_id.to_string(), String::new(), String::new(), None, None),
+        None => (
+            user_id.to_string(),
+            String::new(),
+            String::new(),
+            None,
+            None,
+        ),
     };
 
     // 6. 查询完善用户信息 (user_kyc 表多记录)
-    let kyc_rows: Vec<crate::models::UserKyc> = sqlx::query_as(
-        &state.db.format_query("SELECT * FROM user_kyc WHERE user_id = ? ORDER BY is_default DESC, id DESC")
-    )
+    let kyc_rows: Vec<crate::models::UserKyc> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM user_kyc WHERE user_id = ? ORDER BY is_default DESC, id DESC",
+    ))
     .bind(user_id)
     .fetch_all(&state.db.pool)
     .await
     .unwrap_or_default();
 
     let _def_kyc = kyc_rows.iter().find(|k| k.is_default);
-    let _ent_kyc = kyc_rows.iter().find(|k| k.kyc_type == "enterprise" && k.status == "approved")
+    let _ent_kyc = kyc_rows
+        .iter()
+        .find(|k| k.kyc_type == "enterprise" && k.status == "approved")
         .or_else(|| kyc_rows.iter().find(|k| k.kyc_type == "enterprise"));
-    let _per_kyc = kyc_rows.iter().find(|k| k.kyc_type == "personal" && k.status == "approved")
+    let _per_kyc = kyc_rows
+        .iter()
+        .find(|k| k.kyc_type == "personal" && k.status == "approved")
         .or_else(|| kyc_rows.iter().find(|k| k.kyc_type == "personal"));
     let primary_kyc = _def_kyc.or_else(|| kyc_rows.first());
 
     // 7. 查询历史已提交/通过的发票抬头记录 (user_invoice_requests 表)
-    let last_inv_req: Option<(String, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT title, tax_number, company_address, company_phone, email, bank_name, bank_account \
-             FROM user_invoice_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1"
-        )
-    )
+    let last_inv_req: Option<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(&state.db.format_query(
+        "SELECT title, tax_number, company_address, company_phone, email, bank_name, bank_account \
+             FROM user_invoice_requests WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+    ))
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await
@@ -702,9 +776,16 @@ async fn load_user_invoices(
     .unwrap_or(None);
 
     let mut customer_profile = CustomerProfile {
-        display_name: u_nickname.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| u_username.clone()),
+        display_name: u_nickname
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| u_username.clone()),
         account_id: u_uid,
-        email: if !u_email.trim().is_empty() { Some(u_email.clone()) } else { None },
+        email: if !u_email.trim().is_empty() {
+            Some(u_email.clone())
+        } else {
+            None
+        },
         phone: u_mobile.clone().filter(|s| !s.trim().is_empty()),
         kyc_type: "unverified".to_string(),
         company_name: None,
@@ -723,8 +804,16 @@ async fn load_user_invoices(
 
     if let Some(kyc) = primary_kyc {
         let is_enterprise = kyc.kyc_type == "enterprise";
-        let has_cname = kyc.company_name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-        let has_rname = kyc.real_name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+        let has_cname = kyc
+            .company_name
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_rname = kyc
+            .real_name
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
 
         if is_enterprise && (has_cname || kyc.company_doc_number.is_some()) {
             customer_profile.is_completed = true;
@@ -772,12 +861,15 @@ async fn load_user_invoices(
     }
 
     // 若 KYC 没填地址/税号，而历史开票抬头中有，则自动补齐
-    if let Some((ref req_title, ref req_tax, ref req_addr, ref req_phone, ref req_mail, _, _)) = last_inv_req {
+    if let Some((ref req_title, ref req_tax, ref req_addr, ref req_phone, ref req_mail, _, _)) =
+        last_inv_req
+    {
         if !customer_profile.is_completed && !req_title.trim().is_empty() {
             customer_profile.display_name = req_title.trim().to_string();
             customer_profile.is_completed = true;
         }
-        if customer_profile.company_doc_number.is_none() && customer_profile.id_doc_number.is_none() {
+        if customer_profile.company_doc_number.is_none() && customer_profile.id_doc_number.is_none()
+        {
             if let Some(ref tax) = req_tax {
                 if !tax.trim().is_empty() {
                     customer_profile.company_doc_number = Some(tax.trim().to_string());
@@ -809,15 +901,27 @@ async fn load_user_invoices(
 
     for kyc in &kyc_rows {
         if kyc.kyc_type == "enterprise" {
-            let has_cname = kyc.company_name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-            let has_cdoc = kyc.company_doc_number.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+            let has_cname = kyc
+                .company_name
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            let has_cdoc = kyc
+                .company_doc_number
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
             if has_cname || has_cdoc {
                 let cname = {
                     let named = kyc.company_name.as_deref().unwrap_or("").trim().to_string();
                     if !named.is_empty() {
                         named
                     } else {
-                        kyc.company_doc_number.as_deref().unwrap_or("").trim().to_string()
+                        kyc.company_doc_number
+                            .as_deref()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
                     }
                 };
                 let mut ent = BillingSubject {
@@ -826,15 +930,38 @@ async fn load_user_invoices(
                     display_name: cname,
                     doc_type: kyc.company_doc_type.clone(),
                     doc_number: kyc.company_doc_number.clone(),
-                    email: kyc.company_email.clone().filter(|s| !s.trim().is_empty()).or_else(|| if !u_email.trim().is_empty() { Some(u_email.clone()) } else { None }),
-                    phone: kyc.company_phone.clone().filter(|s| !s.trim().is_empty()).or_else(|| u_mobile.clone()),
+                    email: kyc
+                        .company_email
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| {
+                            if !u_email.trim().is_empty() {
+                                Some(u_email.clone())
+                            } else {
+                                None
+                            }
+                        }),
+                    phone: kyc
+                        .company_phone
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| u_mobile.clone()),
                     address: customer_profile.address.clone(),
                     bank_name: None,
                     bank_account: None,
                     is_default: kyc.is_default,
                     status: Some(kyc.status.clone()),
                 };
-                if let Some((_, _, ref req_addr, ref req_phone, _, ref req_bank_name, ref req_bank_account)) = ent_inv_ref {
+                if let Some((
+                    _,
+                    _,
+                    ref req_addr,
+                    ref req_phone,
+                    _,
+                    ref req_bank_name,
+                    ref req_bank_account,
+                )) = ent_inv_ref
+                {
                     if ent.address.is_none() && req_addr.is_some() {
                         ent.address = req_addr.clone();
                     }
@@ -851,18 +978,45 @@ async fn load_user_invoices(
                 all_subjects.push(ent);
             }
         } else if kyc.kyc_type == "personal" {
-            let has_rname = kyc.real_name.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-            let has_rdoc = kyc.id_doc_number.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+            let has_rname = kyc
+                .real_name
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            let has_rdoc = kyc
+                .id_doc_number
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
             if has_rname || has_rdoc {
-                let rname = kyc.real_name.as_deref().unwrap_or_else(|| u_nickname.as_deref().unwrap_or(&u_username)).trim().to_string();
+                let rname = kyc
+                    .real_name
+                    .as_deref()
+                    .unwrap_or_else(|| u_nickname.as_deref().unwrap_or(&u_username))
+                    .trim()
+                    .to_string();
                 all_subjects.push(BillingSubject {
                     id: Some(kyc.id),
                     subject_type: "personal".to_string(),
                     display_name: rname,
                     doc_type: kyc.id_doc_type.clone(),
                     doc_number: kyc.id_doc_number.clone(),
-                    email: kyc.personal_email.clone().filter(|s| !s.trim().is_empty()).or_else(|| if !u_email.trim().is_empty() { Some(u_email.clone()) } else { None }),
-                    phone: kyc.personal_phone.clone().filter(|s| !s.trim().is_empty()).or_else(|| u_mobile.clone()),
+                    email: kyc
+                        .personal_email
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| {
+                            if !u_email.trim().is_empty() {
+                                Some(u_email.clone())
+                            } else {
+                                None
+                            }
+                        }),
+                    phone: kyc
+                        .personal_phone
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .or_else(|| u_mobile.clone()),
                     address: customer_profile.address.clone(),
                     bank_name: None,
                     bank_account: None,
@@ -873,10 +1027,14 @@ async fn load_user_invoices(
         }
     }
 
-    let enterprise_sub = all_subjects.iter().find(|s| s.subject_type == "enterprise" && s.is_default)
+    let enterprise_sub = all_subjects
+        .iter()
+        .find(|s| s.subject_type == "enterprise" && s.is_default)
         .or_else(|| all_subjects.iter().find(|s| s.subject_type == "enterprise"))
         .cloned();
-    let personal_sub = all_subjects.iter().find(|s| s.subject_type == "personal" && s.is_default)
+    let personal_sub = all_subjects
+        .iter()
+        .find(|s| s.subject_type == "personal" && s.is_default)
         .or_else(|| all_subjects.iter().find(|s| s.subject_type == "personal"))
         .cloned();
 
@@ -913,7 +1071,9 @@ pub async fn admin_get_user_invoices(
     Path(id): Path<String>,
 ) -> AppResult<Json<UserInvoicesResponse>> {
     let user_id: String = sqlx::query_scalar(
-        &state.db.format_query("SELECT id FROM users WHERE id = ? OR uid = ?"),
+        &state
+            .db
+            .format_query("SELECT id FROM users WHERE id = ? OR uid = ?"),
     )
     .bind(&id)
     .bind(&id)
@@ -939,17 +1099,22 @@ pub async fn generate_invoice_request_no(state: &Arc<AppState>) -> Result<String
     loop {
         // 当前位数下重试最多 15 次，若均发生冲突则位数自增（4位 -> 5位 -> 6位 ...）
         for _ in 0..15 {
-            let min_val = if digit_count == 4 { 1000 } else { 10_u64.pow((digit_count - 1) as u32) };
+            let min_val = if digit_count == 4 {
+                1000
+            } else {
+                10_u64.pow((digit_count - 1) as u32)
+            };
             let max_val = 10_u64.pow(digit_count as u32) - 1;
             let random_num = rand::thread_rng().gen_range(min_val..=max_val);
             let candidate = format!("{}{:0width$}", prefix, random_num, width = digit_count);
 
-            let exists: Option<i32> = sqlx::query_scalar(
-                &state.db.format_query("SELECT 1 FROM user_invoice_requests WHERE request_no = ? LIMIT 1")
-            )
-            .bind(&candidate)
-            .fetch_optional(&state.db.pool)
-            .await?;
+            let exists: Option<i64> =
+                sqlx::query_scalar(&state.db.format_query(
+                    "SELECT 1 FROM user_invoice_requests WHERE request_no = ? LIMIT 1",
+                ))
+                .bind(&candidate)
+                .fetch_optional(&state.db.pool)
+                .await?;
 
             if exists.is_none() {
                 return Ok(candidate);
@@ -971,7 +1136,7 @@ pub async fn create_user_invoice_request(
 ) -> AppResult<Json<serde_json::Value>> {
     let user_id = &claims.sub;
 
-    let level_enabled: Option<i32> = sqlx::query_scalar(
+    let level_enabled: Option<i64> = sqlx::query_scalar(
         &state.db.format_query(
             "SELECT ul.invoice_enabled FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ?"
         )
@@ -981,7 +1146,9 @@ pub async fn create_user_invoice_request(
     .await?;
 
     if claims.role != "admin" && level_enabled.unwrap_or(0) != 1 {
-        return Err(AppError::Forbidden("当前用户等级未开启发票开具权限".to_string()));
+        return Err(AppError::Forbidden(
+            "当前用户等级未开启发票开具权限".to_string(),
+        ));
     }
 
     if payload.amount <= 0.0 {
@@ -1006,16 +1173,16 @@ pub async fn create_user_invoice_request(
         .unwrap_or(false);
 
         if !has_approved_enterprise {
-            return Err(AppError::BadRequest("仅通过实名认证的企业主体才可申请开具增值税专用发票".to_string()));
+            return Err(AppError::BadRequest(
+                "仅通过实名认证的企业主体才可申请开具增值税专用发票".to_string(),
+            ));
         }
     }
 
     // 严格核验实付金额：仅允许对实际充值支付的现金开票，完全排除赠送金与信控额度
-    let orders_total: f64 = sqlx::query_scalar(
-        &state.db.format_query(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM orders WHERE user_id = ? AND status = 'paid'"
-        )
-    )
+    let orders_total: f64 = sqlx::query_scalar(&state.db.format_query(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM orders WHERE user_id = ? AND status = 'paid'",
+    ))
     .bind(user_id)
     .fetch_one(&state.db.pool)
     .await
@@ -1024,9 +1191,11 @@ pub async fn create_user_invoice_request(
     let manual_cash_total: f64 = sqlx::query_scalar(
         &state.db.format_query(
             "SELECT COALESCE(SUM(amount), 0.0) FROM recharge_records \
-             WHERE user_id = ? AND wallet_type = 'system' AND amount > 0 \
-               AND recharge_type NOT IN ('wechat', 'alipay', 'stripe', 'gift', 'registration', 'commission') \
-               AND (remark IS NULL OR remark NOT LIKE '%订单号%')"
+             WHERE user_id = ? AND wallet_type = 'system' \
+               AND ((amount > 0 \
+                 AND recharge_type NOT IN ('wechat', 'alipay', 'stripe', 'gift', 'registration', 'commission', 'model_voucher', 'coupon_purchase', 'coupon_pack', 'coupon_subscription', 'redemption_refund') \
+                 AND (remark IS NULL OR remark NOT LIKE '%订单号%')) \
+                OR recharge_type = 'redemption_refund')"
         )
     )
     .bind(user_id)
@@ -1036,12 +1205,10 @@ pub async fn create_user_invoice_request(
 
     let total_real_paid = orders_total + manual_cash_total;
 
-    let invoiced_total: f64 = sqlx::query_scalar(
-        &state.db.format_query(
-            "SELECT COALESCE(SUM(amount), 0.0) FROM user_invoice_requests \
-             WHERE user_id = ? AND status IN ('approved', 'pending')"
-        )
-    )
+    let invoiced_total: f64 = sqlx::query_scalar(&state.db.format_query(
+        "SELECT COALESCE(SUM(amount), 0.0) FROM user_invoice_requests \
+             WHERE user_id = ? AND status IN ('approved', 'pending')",
+    ))
     .bind(user_id)
     .fetch_one(&state.db.pool)
     .await
@@ -1094,11 +1261,9 @@ pub async fn list_user_invoice_requests(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<auth::Claims>,
 ) -> AppResult<Json<Vec<UserInvoiceRequestRecord>>> {
-    let records: Vec<UserInvoiceRequestRecord> = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT * FROM user_invoice_requests WHERE user_id = ? ORDER BY created_at DESC"
-        )
-    )
+    let records: Vec<UserInvoiceRequestRecord> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM user_invoice_requests WHERE user_id = ? ORDER BY created_at DESC",
+    ))
     .bind(&claims.sub)
     .fetch_all(&state.db.pool)
     .await?;
@@ -1114,7 +1279,9 @@ pub async fn cancel_user_invoice_request(
     let user_id = &claims.sub;
 
     let existing: Option<(String, String)> = sqlx::query_as(
-        &state.db.format_query("SELECT status, user_id FROM user_invoice_requests WHERE id = ?")
+        &state
+            .db
+            .format_query("SELECT status, user_id FROM user_invoice_requests WHERE id = ?"),
     )
     .bind(id)
     .fetch_optional(&state.db.pool)
@@ -1129,17 +1296,17 @@ pub async fn cancel_user_invoice_request(
     }
 
     if current_status != "pending" {
-        return Err(AppError::BadRequest("仅支持取消审核中的发票申请".to_string()));
+        return Err(AppError::BadRequest(
+            "仅支持取消审核中的发票申请".to_string(),
+        ));
     }
 
-    sqlx::query(
-        &state.db.format_query(
-            "UPDATE user_invoice_requests SET \
+    sqlx::query(&state.db.format_query(
+        "UPDATE user_invoice_requests SET \
              status = 'cancelled', \
              updated_at = now() \
-             WHERE id = ? AND user_id = ? AND status = 'pending'"
-        )
-    )
+             WHERE id = ? AND user_id = ? AND status = 'pending'",
+    ))
     .bind(id)
     .bind(user_id)
     .execute(&state.db.pool)
@@ -1225,9 +1392,10 @@ pub async fn admin_list_invoice_requests(
     if let Some(ref kw) = params.keyword {
         let k = kw.trim();
         if !k.is_empty() {
-            where_clause.push_str(" AND (u.username ILIKE ? OR u.uid ILIKE ? OR u.email ILIKE ? OR r.title ILIKE ? OR r.tax_number ILIKE ? OR r.email ILIKE ? OR r.invoice_number ILIKE ? OR r.request_no ILIKE ?)");
+            // 聚焦发票核心检索维度（抬头/姓名、税号、申请单号、发票号、用户名、UID），彻底保证模糊检索功能不回归
+            where_clause.push_str(" AND (r.title ILIKE ? OR r.tax_number ILIKE ? OR r.request_no ILIKE ? OR r.invoice_number ILIKE ? OR u.username ILIKE ? OR u.uid ILIKE ?)");
             let pattern = format!("%{}%", k);
-            for _ in 0..8 {
+            for _ in 0..6 {
                 binds.push(pattern.clone());
             }
         }
@@ -1281,22 +1449,25 @@ pub async fn admin_list_invoice_requests(
     for b in &stats_binds {
         stats_q = stats_q.bind(b);
     }
-    let stats_row: Option<(i64, i64, i64, i64, f64, f64)> = stats_q
-        .fetch_optional(&state.db.pool)
-        .await
-        .unwrap_or(None);
+    let stats_row: Option<(i64, i64, i64, i64, f64, f64)> =
+        stats_q.fetch_optional(&state.db.pool).await.unwrap_or(None);
 
     let stats = match stats_row {
-        Some((total_count, pending_count, approved_count, rejected_count, total_approved_amount, this_month_approved_amount)) => {
-            InvoiceAuditStats {
-                total_count,
-                pending_count,
-                approved_count,
-                rejected_count,
-                total_approved_amount,
-                this_month_approved_amount,
-            }
-        }
+        Some((
+            total_count,
+            pending_count,
+            approved_count,
+            rejected_count,
+            total_approved_amount,
+            this_month_approved_amount,
+        )) => InvoiceAuditStats {
+            total_count,
+            pending_count,
+            approved_count,
+            rejected_count,
+            total_approved_amount,
+            this_month_approved_amount,
+        },
         None => InvoiceAuditStats::default(),
     };
 
@@ -1349,12 +1520,13 @@ pub async fn admin_update_invoice_request(
         "Admin".to_string()
     };
 
-    let existing: Option<(String, f64, String)> = sqlx::query_as(
-        &state.db.format_query("SELECT status, amount, user_id FROM user_invoice_requests WHERE id = ?")
-    )
-    .bind(id)
-    .fetch_optional(&state.db.pool)
-    .await?;
+    let existing: Option<(String, f64, String)> =
+        sqlx::query_as(&state.db.format_query(
+            "SELECT status, amount, user_id FROM user_invoice_requests WHERE id = ?",
+        ))
+        .bind(id)
+        .fetch_optional(&state.db.pool)
+        .await?;
 
     let Some((_current_status, _amount, _user_id)) = existing else {
         return Err(AppError::NotFound("发票申请记录不存在".to_string()));
@@ -1362,14 +1534,17 @@ pub async fn admin_update_invoice_request(
 
     match payload.action.as_str() {
         "approve" => {
-            let inv_number = payload.invoice_number.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let inv_number = payload
+                .invoice_number
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
             if inv_number.is_none() {
                 return Err(AppError::BadRequest("开具发票必须填写发票号码".to_string()));
             }
 
-            sqlx::query(
-                &state.db.format_query(
-                    "UPDATE user_invoice_requests SET \
+            sqlx::query(&state.db.format_query(
+                "UPDATE user_invoice_requests SET \
                      status = 'approved', \
                      invoice_number = ?, \
                      invoice_code = ?, \
@@ -1380,13 +1555,30 @@ pub async fn admin_update_invoice_request(
                      operator_id = ?, \
                      operator_name = ?, \
                      updated_at = now() \
-                     WHERE id = ?"
-                )
-            )
+                     WHERE id = ?",
+            ))
             .bind(inv_number)
-            .bind(payload.invoice_code.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.invoice_file_url.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.admin_remark.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+            .bind(
+                payload
+                    .invoice_code
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
+            .bind(
+                payload
+                    .invoice_file_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
+            .bind(
+                payload
+                    .admin_remark
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
             .bind(&operator_id)
             .bind(&operator_name)
             .bind(id)
@@ -1394,25 +1586,33 @@ pub async fn admin_update_invoice_request(
             .await?;
         }
         "reject" => {
-            let reason = payload.reject_reason.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let reason = payload
+                .reject_reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
             if reason.is_none() {
                 return Err(AppError::BadRequest("驳回申请必须填写驳回原因".to_string()));
             }
 
-            sqlx::query(
-                &state.db.format_query(
-                    "UPDATE user_invoice_requests SET \
+            sqlx::query(&state.db.format_query(
+                "UPDATE user_invoice_requests SET \
                      status = 'rejected', \
                      reject_reason = ?, \
                      admin_remark = ?, \
                      operator_id = ?, \
                      operator_name = ?, \
                      updated_at = now() \
-                     WHERE id = ?"
-                )
-            )
+                     WHERE id = ?",
+            ))
             .bind(reason)
-            .bind(payload.admin_remark.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+            .bind(
+                payload
+                    .admin_remark
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
             .bind(&operator_id)
             .bind(&operator_name)
             .bind(id)
@@ -1420,9 +1620,8 @@ pub async fn admin_update_invoice_request(
             .await?;
         }
         "update" => {
-            sqlx::query(
-                &state.db.format_query(
-                    "UPDATE user_invoice_requests SET \
+            sqlx::query(&state.db.format_query(
+                "UPDATE user_invoice_requests SET \
                      invoice_number = COALESCE(?, invoice_number), \
                      invoice_code = ?, \
                      invoice_file_url = ?, \
@@ -1431,14 +1630,43 @@ pub async fn admin_update_invoice_request(
                      operator_id = ?, \
                      operator_name = ?, \
                      updated_at = now() \
-                     WHERE id = ?"
-                )
+                     WHERE id = ?",
+            ))
+            .bind(
+                payload
+                    .invoice_number
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
             )
-            .bind(payload.invoice_number.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.invoice_code.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.invoice_file_url.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.admin_remark.as_deref().map(str::trim).filter(|s| !s.is_empty()))
-            .bind(payload.reject_reason.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+            .bind(
+                payload
+                    .invoice_code
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
+            .bind(
+                payload
+                    .invoice_file_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
+            .bind(
+                payload
+                    .admin_remark
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
+            .bind(
+                payload
+                    .reject_reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty()),
+            )
             .bind(&operator_id)
             .bind(&operator_name)
             .bind(id)
@@ -1455,4 +1683,3 @@ pub async fn admin_update_invoice_request(
         "message": "发票处理成功"
     })))
 }
-

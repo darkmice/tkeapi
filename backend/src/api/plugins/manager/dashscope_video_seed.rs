@@ -221,9 +221,10 @@ pub fn saved_io_is_legacy_text_only(saved: &Value) -> bool {
 /// 覆写列表中的 dashscope_video；若不存在则追加
 pub fn seed_dashscope_video_wan3(schemes: &mut Vec<Value>) {
     let next = dashscope_video_wan3_scheme();
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(DASHSCOPE_VIDEO_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(DASHSCOPE_VIDEO_SCHEME_ID))
+    {
         schemes[pos] = next;
     } else {
         schemes.push(next);
@@ -280,7 +281,9 @@ fn bump_wan3_reference_max(saved: &mut Value) {
         .and_then(|v| v.as_array())
         .and_then(|inputs| {
             inputs.iter().find_map(|p| {
-                (port_key(p) == "reference_images").then(|| port_max(p)).flatten()
+                (port_key(p) == "reference_images")
+                    .then(|| port_max(p))
+                    .flatten()
             })
         });
     if matches!(img_max, Some(10)) {

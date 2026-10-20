@@ -91,9 +91,9 @@ pub fn parse_instant_bound(raw_date: &str, is_end: bool, tz: chrono_tz::Tz) -> D
         }
     }
 
-    // 纯日期 YYYY-MM-DD
-    if s.len() >= 10 {
-        if let Ok(day) = NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d") {
+    // 纯日期 YYYY-MM-DD（使用 get(..10) 防多字节 UTF-8 字符边界切分 panic）
+    if let Some(prefix) = s.get(..10) {
+        if let Ok(day) = NaiveDate::parse_from_str(prefix, "%Y-%m-%d") {
             // 仅当整段（或截到空白前）就是日期时，才按日历日半开；避免误吃 "2026-07-15 junk"
             let date_token = s.split(['T', ' ']).next().unwrap_or(s);
             if date_token.len() == 10 {
@@ -216,8 +216,14 @@ pub fn get_timezone_time_bounds(tz: chrono_tz::Tz) -> TimeBounds {
     }
 }
 
-/// 统一解析 timedisplay。
-/// 管理端：请求头 > 站点默认。用户端：请求头 / 个人时区合法 IANA，否则 timesystem UTC。
+/// 站点运营时区（计费/额度/统计自然日）。忽略请求展示时区。
+pub async fn resolve_site_operation_timezone(db: &crate::db::Database) -> chrono_tz::Tz {
+    let name = crate::relay::relay_settings::get_cached_site_timezone(db).await;
+    crate::time_system::parse_timedisplay(&name)
+}
+
+/// 统一解析列表/筛选展示时区。
+/// 管理端：请求头 > 管理后台展示时区。用户端：请求头 / 个人时区合法 IANA，否则 timesystem UTC。
 pub async fn resolve_user_timezone(
     db: &crate::db::Database,
     is_admin: bool,
@@ -231,11 +237,11 @@ pub async fn resolve_user_timezone(
     };
 
     if is_admin {
-        let default_site_tz = crate::relay::relay_settings::get_cached_site_timezone(db).await;
+        let admin_tz = crate::relay::relay_settings::get_cached_admin_display_timezone(db).await;
         return Ok(crate::time_system::resolve_timedisplay(
             header,
             None,
-            Some(default_site_tz.as_ref()),
+            Some(admin_tz.as_ref()),
         ));
     }
 
@@ -551,31 +557,34 @@ pub async fn query_user_consumption_summary(
 
     // 1. 历史自然日汇总 (usage_daily_stats)
     let hist_sql = db.format_query(
-        "SELECT COALESCE(SUM(total_cost), 0.0), COALESCE(SUM(total_pre_deduct_gift), 0.0) \
-         FROM usage_daily_stats WHERE user_id = ? AND stat_date <= ?"
+        "SELECT COALESCE(SUM(total_cost), 0.0), COALESCE(SUM(total_pre_deduct_gift), 0.0), \
+                COALESCE(SUM(total_pre_deduct_voucher), 0.0) \
+         FROM usage_daily_stats WHERE user_id = ? AND stat_date <= ?",
     );
-    let hist: (f64, f64) = sqlx::query_as(&hist_sql)
+    let hist: (f64, f64, f64) = sqlx::query_as(&hist_sql)
         .bind(user_id)
         .bind(history_end)
         .fetch_one(&db.pool)
         .await
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, 0.0));
 
     // 2. 今日实时调用汇总 (logs)
     let today_sql = db.format_query(
-        "SELECT COALESCE(SUM(cost), 0.0), COALESCE(SUM(LEAST(cost, pre_deduct_gift)), 0.0) \
-         FROM logs WHERE user_id = ? AND created_at >= ?::timestamptz"
+        "SELECT COALESCE(SUM(cost), 0.0), COALESCE(SUM(LEAST(cost, pre_deduct_gift)), 0.0), \
+                COALESCE(SUM(pre_deduct_voucher), 0.0) \
+         FROM logs WHERE user_id = ? AND created_at >= ?::timestamptz",
     );
-    let today: (f64, f64) = sqlx::query_as(&today_sql)
+    let today: (f64, f64, f64) = sqlx::query_as(&today_sql)
         .bind(user_id)
         .bind(&today_start_ts)
         .fetch_one(&db.pool)
         .await
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, 0.0));
 
     let total_cost = hist.0 + today.0;
     let total_gift = hist.1 + today.1;
-    let total_real = (total_cost - total_gift).max(0.0);
+    let total_voucher = hist.2 + today.2;
+    let total_real = (total_cost - total_gift - total_voucher).max(0.0);
 
     (total_cost, total_gift, total_real)
 }

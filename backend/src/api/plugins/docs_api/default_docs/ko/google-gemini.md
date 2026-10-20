@@ -38,6 +38,22 @@ Google SDK 또는 Gemini 형식을 사용하는 경우, 아래 경로와 본 플
 }
 ```
 
+### 3. Interactions 통합 인터페이스 (v1 / v1beta)
+* **경로**: `/v1/interactions` (`/v1beta/interactions` 호환)
+* **요청 메서드**: `POST`
+
+Google Gemini의 새로운 통합 인터랙션 API로, `model`(또는 `agent`) 및 `input`을 직접 지정할 수 있으며 `system_instruction`, `tools`, `response_format` 등의 매개변수를 지원합니다.
+
+#### 핵심 요청 페이로드 예시
+```json
+{
+  "model": "gemini-2.5-flash",
+  "input": "교토 3일 벚꽃 여행 코스를 계획해 주세요.",
+  "system_instruction": "당신은 친절하고 유머러스한 전문 여행 플래너입니다.",
+  "stream": false
+}
+```
+
 #### 인증 방식 (택일)
 * 표준 헤더: `Authorization: Bearer sk-your_token`
 * Google 헤더: `X-Goog-Api-Key: sk-your_token`

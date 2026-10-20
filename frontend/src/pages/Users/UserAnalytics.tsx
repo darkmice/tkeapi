@@ -189,7 +189,7 @@ const UserAnalytics: React.FC = () => {
             {t('menu.user_analytics', '用户数据分析')}
           </Title>
           <Text type="secondary">
-            {t('user_analytics.subtitle', '注册展示最近 10 个周期，排行榜默认取前 10 名')}
+            {t('user_analytics.subtitle', '每日注册展示最近 10 天，月注册展示最近 12 个月，排行榜默认取前 10 名')}
           </Text>
         </div>
         <div>
@@ -225,9 +225,9 @@ const UserAnalytics: React.FC = () => {
                   </defs>
                   <CartesianGrid vertical={false} stroke="var(--border-custom)" />
                   <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} tick={AXIS_TICK} tickFormatter={(v: string) => dayjs(v).format('MM-DD')} />
-                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={AXIS_TICK} />
+                  <YAxis domain={[0, 'auto']} allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={AXIS_TICK} />
                   <Tooltip cursor={false} content={(props) => <ChartTooltip active={props.active} payload={props.payload as never} label={props.label} titleKey="date" formatValue={people} />} />
-                  <Area dataKey="count" type="natural" fill="url(#userRegFill)" stroke="var(--chart-1)" strokeWidth={2} />
+                  <Area dataKey="count" type="monotone" baseValue={0} fill="url(#userRegFill)" stroke="var(--chart-1)" strokeWidth={2} />
                 </AreaChart>
               </ChartFrame>
             </AnalyticsCard>
@@ -235,13 +235,13 @@ const UserAnalytics: React.FC = () => {
 
           <Col xs={24} xl={12}>
             <AnalyticsCard
-              title={t('user_analytics.monthly_reg', '每月注册')}
-              desc={t('user_analytics.monthly_reg_desc', '最近 10 个月新注册用户')}
+              title={t('user_analytics.monthly_reg', '最近12个月新注册用户')}
+              desc={t('user_analytics.monthly_reg_desc', '含本月，按自然月统计')}
             >
               <ChartFrame>
                 <BarChart data={data.monthly_registrations} margin={{ left: 0, right: 12, top: 8 }} accessibilityLayer={false}>
                   <CartesianGrid vertical={false} stroke="var(--border-custom)" />
-                  <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} tick={AXIS_TICK} />
+                  <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} interval={0} tick={AXIS_TICK} tickFormatter={(v: string) => (v.length >= 7 ? v.slice(2) : v)} />
                   <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={36} tick={AXIS_TICK} />
                   <Tooltip cursor={false} content={(props) => <ChartTooltip active={props.active} payload={props.payload as never} label={props.label} titleKey="date" formatValue={people} />} />
                   <Bar dataKey="count" fill="var(--chart-2)" radius={[4, 4, 0, 0]} maxBarSize={28} />

@@ -127,9 +127,9 @@ pub fn duration_until_next_local_hms(
 /// 日键取「最近一次已到达的切点」所对应的那个日历日（冷却跨午夜时会正确回退多天）。
 pub fn quota_day_key_with_cutover(
     timedisplay: &str,
-    hour: i32,
-    minute: i32,
-    cooldown_minutes: i32,
+    hour: i64,
+    minute: i64,
+    cooldown_minutes: i64,
 ) -> String {
     quota_day_key_with_cutover_at(Utc::now(), timedisplay, hour, minute, cooldown_minutes)
 }
@@ -137,15 +137,15 @@ pub fn quota_day_key_with_cutover(
 fn quota_day_key_with_cutover_at(
     now_utc: DateTime<Utc>,
     timedisplay: &str,
-    hour: i32,
-    minute: i32,
-    cooldown_minutes: i32,
+    hour: i64,
+    minute: i64,
+    cooldown_minutes: i64,
 ) -> String {
     let tz = parse_timedisplay(timedisplay);
     let local = now_utc.with_timezone(&tz);
     let h = hour.clamp(0, 23) as u32;
     let m = minute.clamp(0, 59) as u32;
-    let cool = i64::from(cooldown_minutes.max(0));
+    let cool = cooldown_minutes.max(0);
 
     // 冷却可能把切点推到次日；大冷却需回退更多天
     let max_back = 2 + cool / (24 * 60);
@@ -163,4 +163,3 @@ fn quota_day_key_with_cutover_at(
         .format("%Y-%m-%d")
         .to_string()
 }
-

@@ -13,12 +13,14 @@ use serde_json::{json, Value};
 use super::doubao_seed_evolving_seed::{doubao_chat_scheme_io, DOUBAO_SEED_EVOLVING_SCHEME_ID};
 
 pub const GLM_5_2_SCHEME_ID: &str = "glm_5_2";
+pub const GLM_5_3_SCHEME_ID: &str = "glm_5_3";
 pub const DEEPSEEK_V4_PRO_SCHEME_ID: &str = "deepseek_v4_pro";
 pub const QWEN_3_7_MAX_SCHEME_ID: &str = "qwen_3_7_max";
 
 pub fn is_thinking_on_chat_scheme_id(id: &str) -> bool {
     id == DOUBAO_SEED_EVOLVING_SCHEME_ID
         || id == GLM_5_2_SCHEME_ID
+        || id == GLM_5_3_SCHEME_ID
         || id == DEEPSEEK_V4_PRO_SCHEME_ID
         || id == QWEN_3_7_MAX_SCHEME_ID
 }
@@ -41,7 +43,7 @@ pub fn glm_5_2_scheme() -> Value {
     chat_scheme_shell(
         GLM_5_2_SCHEME_ID,
         "GLM-5.2聊天方案",
-        "智谱 GLM-5.2 对话方案。thinking.type 默认 enabled，reasoning_effort 官方默认 max（高=max，中=high）。temperature 仅 0–1；勿与 top_p 同时猛调。max_tokens 上限 131072。",
+        "智谱 GLM-5.2 及以下对话方案。thinking.type 默认 enabled，reasoning_effort 高=max、中=high。temperature 仅 0–1；勿与 top_p 同时猛调。max_tokens 上限 131072。GLM-5.3 不用这套。",
         json!([
             {"key": "temperature", "label": "创意度", "type": "slider", "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05, "hint": "官方范围 0–1，默认 1.0；不要和核采样一起猛调"},
             {"key": "max_tokens", "label": "最大回复长度", "type": "select", "options": [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072], "default": 4096, "unit": "tokens", "hint": "输出上限 128K；思考与回答共用额度"},
@@ -91,8 +93,26 @@ fn upsert_scheme(schemes: &mut Vec<Value>, next: Value) {
     }
 }
 
+pub fn glm_5_3_scheme() -> Value {
+    chat_scheme_shell(
+        GLM_5_3_SCHEME_ID,
+        "GLM-5.3聊天方案",
+        "智谱 GLM-5.3 对话方案。不传 thinking。reasoning_effort 高=xhigh、中=high、关=none，不传 max。temperature 仅 0–1。max_tokens 上限 131072。",
+        json!([
+            {"key": "temperature", "label": "创意度", "type": "slider", "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05, "hint": "官方范围 0–1，默认 1.0；不要和核采样一起猛调"},
+            {"key": "max_tokens", "label": "最大回复长度", "type": "select", "options": [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072], "default": 4096, "unit": "tokens", "hint": "输出上限 128K；思考与回答共用额度"},
+            {"key": "stream", "label": "流式输出", "type": "switch", "default": true, "hint": "逐字输出回答，提升体验"},
+            {"key": "top_p", "label": "核采样", "type": "slider", "default": 0.95, "min": 0.01, "max": 1.0, "step": 0.01, "hint": "官方范围 0.01–1，默认 0.95"}
+        ]),
+    )
+}
+
 pub fn seed_glm_5_2_scheme(schemes: &mut Vec<Value>) {
     upsert_scheme(schemes, glm_5_2_scheme());
+}
+
+pub fn seed_glm_5_3_scheme(schemes: &mut Vec<Value>) {
+    upsert_scheme(schemes, glm_5_3_scheme());
 }
 
 pub fn seed_deepseek_v4_pro_scheme(schemes: &mut Vec<Value>) {
@@ -105,6 +125,7 @@ pub fn seed_qwen_3_7_max_scheme(schemes: &mut Vec<Value>) {
 
 pub fn seed_glm_deepseek_chat_schemes(schemes: &mut Vec<Value>) {
     seed_glm_5_2_scheme(schemes);
+    seed_glm_5_3_scheme(schemes);
     seed_deepseek_v4_pro_scheme(schemes);
     seed_qwen_3_7_max_scheme(schemes);
 }

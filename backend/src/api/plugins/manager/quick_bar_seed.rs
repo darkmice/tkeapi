@@ -229,4 +229,3 @@ pub(crate) fn seed_imagine_quick_bar_overrides(
 
     changed
 }
-

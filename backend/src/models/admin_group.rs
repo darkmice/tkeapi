@@ -15,7 +15,7 @@ pub struct AdminGroup {
     pub permissions: Option<String>, // Stores JSON array as string
     pub description: Option<String>,
     #[sqlx(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     #[sqlx(default)]
     pub user_count: Option<i64>,
     pub created_at: DbTs,
@@ -28,7 +28,7 @@ pub struct CreateAdminGroupRequest {
     pub permissions: Option<Vec<String>>,
     pub edit_permissions: Option<Vec<String>>,
     pub description: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,7 +37,7 @@ pub struct UpdateAdminGroupRequest {
     pub permissions: Option<Vec<String>>,
     pub edit_permissions: Option<Vec<String>>,
     pub description: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]

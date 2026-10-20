@@ -138,16 +138,17 @@ pub fn seedream_5_0_pro_scheme() -> Value {
 
 /// 若列表中尚无 Pro 方案则插入到 lite 方案之后（无 lite 则追加）
 pub fn seed_seedream_5_0_pro_scheme(schemes: &mut Vec<Value>) -> bool {
-    let exists = schemes.iter().any(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(SEEDREAM_5_0_PRO_SCHEME_ID)
-    });
+    let exists = schemes
+        .iter()
+        .any(|s| s.get("id").and_then(|v| v.as_str()) == Some(SEEDREAM_5_0_PRO_SCHEME_ID));
     if exists {
         return false;
     }
     let scheme = seedream_5_0_pro_scheme();
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(SEEDREAM_5_0_LITE_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(SEEDREAM_5_0_LITE_SCHEME_ID))
+    {
         schemes.insert(pos + 1, scheme);
     } else {
         schemes.push(scheme);
@@ -469,10 +470,7 @@ pub fn strip_seedream_scheme_size_params(schemes: &mut [Value]) -> bool {
 pub fn seed_seedream_output_format_radio(schemes: &mut [Value]) -> bool {
     let mut changed = false;
     for s in schemes.iter_mut() {
-        let id = s
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
         if id != SEEDREAM_5_0_PRO_SCHEME_ID {
             continue;
         }
@@ -480,7 +478,11 @@ pub fn seed_seedream_output_format_radio(schemes: &mut [Value]) -> bool {
             continue;
         };
         for p in arr.iter_mut() {
-            let key = p.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let key = p
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             match key.as_str() {
                 "output_format" => {
                     if p.get("type").and_then(|v| v.as_str()) != Some("radio") {
@@ -523,7 +525,10 @@ pub fn seed_seedream_output_format_radio(schemes: &mut [Value]) -> bool {
                 }
                 _ => {}
             }
-            if matches!(key.as_str(), "output_format" | "background" | "layer_decomposition" | "optimize_prompt_mode") {
+            if matches!(
+                key.as_str(),
+                "output_format" | "background" | "layer_decomposition" | "optimize_prompt_mode"
+            ) {
                 if let Some(obj) = p.as_object_mut() {
                     if obj.remove("hint").is_some() {
                         changed = true;

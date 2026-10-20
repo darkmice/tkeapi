@@ -1,0 +1,878 @@
+.coupon-storefront {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 24px;
+}
+
+.coupon-storefront .order-standalone-back {
+  align-self: flex-start;
+}
+
+.coupon-storefront.is-dark {
+  background: #0b0b0d;
+  color: #f5f5f5;
+}
+
+.coupon-storefront.is-dark .order-standalone-back {
+  color: #f5f5f5;
+}
+
+.coupon-storefront-copyright {
+  margin-top: auto;
+  padding: 28px 16px 4px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.38);
+  user-select: none;
+}
+
+.coupon-storefront .credits-page.light ~ .coupon-storefront-copyright {
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.coupon-storefront .pg-ig-campaign-sub {
+  margin: 0 0 16px;
+  color: #bdbdbd;
+  font-size: 13px;
+}
+
+.coupon-storefront .pg-ig-campaign-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.coupon-storefront .pg-ig-campaign-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #212121;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  color: #fff;
+}
+
+.coupon-storefront .pg-ig-campaign-name {
+  font-weight: 600;
+}
+
+.coupon-storefront .pg-ig-campaign-desc,
+.coupon-storefront .pg-ig-campaign-features {
+  color: #bdbdbd;
+  font-size: 12px;
+  margin: 0;
+}
+
+.coupon-storefront .pg-ig-campaign-features {
+  padding-left: 16px;
+}
+
+.coupon-storefront .pg-ig-campaign-price {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.coupon-storefront .pg-ig-hplan-title,
+.coupon-storefront .pg-ig-iplan-title {
+  margin: 4px 0 6px;
+  text-align: center;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 800;
+}
+
+.coupon-storefront .pg-ig-hplan-sub,
+.coupon-storefront .pg-ig-iplan-sub {
+  margin: 0 0 22px;
+  text-align: center;
+  color: #9a9a9a;
+  font-size: 14px;
+}
+
+.coupon-storefront .pg-ig-hplan-grid,
+.coupon-storefront .pg-ig-iplan-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.coupon-storefront .pg-ig-hplan-card,
+.coupon-storefront .pg-ig-iplan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 18px 16px 16px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #171717;
+  color: #f5f5f5;
+}
+
+.coupon-storefront .pg-ig-hplan-card.is-plus {
+  background: linear-gradient(180deg, #1c2a12 0%, #141814 55%, #171717 100%);
+  border-color: rgba(198, 255, 61, 0.28);
+}
+
+.coupon-storefront .pg-ig-hplan-card.is-ultra {
+  background: linear-gradient(180deg, #4a1844 0%, #2a102c 42%, #161018 100%);
+  border-color: rgba(255, 47, 154, 0.45);
+}
+
+.coupon-storefront .pg-ig-hplan-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.coupon-storefront .pg-ig-hplan-name,
+.coupon-storefront .pg-ig-iplan-name {
+  font-weight: 700;
+}
+
+.coupon-storefront .pg-ig-hplan-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #2f6bff;
+  color: #fff;
+  font-size: 10px;
+}
+
+.coupon-storefront .pg-ig-hplan-desc,
+.coupon-storefront .pg-ig-iplan-note,
+.coupon-storefront .pg-ig-iplan-badge {
+  color: #bdbdbd;
+  font-size: 12px;
+}
+
+.coupon-storefront .pg-ig-hplan-features,
+.coupon-storefront .pg-ig-iplan-features {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.coupon-storefront .pg-ig-iplan-features {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.coupon-storefront .pg-ig-hplan-features li::before,
+.coupon-storefront .pg-ig-iplan-features li::before {
+  content: '✓';
+  margin-right: 6px;
+}
+
+.coupon-storefront .pg-ig-hplan-price,
+.coupon-storefront .pg-ig-iplan-price {
+  margin-top: auto;
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.coupon-storefront .pg-ig-hplan-buy,
+.coupon-storefront .pg-ig-iplan-buy {
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coupon-storefront .pg-ig-iplan-buy {
+  border-radius: 999px;
+  background: #7c4dff;
+  color: #fff;
+}
+
+.coupon-storefront .pg-ig-hplan-card.is-starter .pg-ig-hplan-buy { background: #fff; color: #111; }
+.coupon-storefront .pg-ig-hplan-card.is-plus .pg-ig-hplan-buy { background: #d6ff3c; color: #111; }
+.coupon-storefront .pg-ig-hplan-card.is-ultra .pg-ig-hplan-buy { background: #ff2f9a; color: #fff; }
+.coupon-storefront .pg-ig-hplan-card.is-teams .pg-ig-hplan-buy { background: #2f6bff; color: #fff; }
+
+.coupon-storefront .pg-ig-hplan-buy:disabled,
+.coupon-storefront .pg-ig-iplan-buy:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.coupon-storefront .pg-ig-iplan-card.is-last {
+  background:
+    radial-gradient(90% 42% at 78% 0%, rgba(96, 80, 255, 0.55), transparent 58%),
+    #141416;
+}
+
+@media (max-width: 900px) {
+  .coupon-storefront .pg-ig-hplan-grid,
+  .coupon-storefront .pg-ig-iplan-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tke-offers .tke-block {
+  margin-top: 28px;
+}
+
+.tke-offers .tke-block-title {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.tke-offers .tke-cycle-switch {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.tke-offers .tke-sub-row {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+  padding-bottom: 6px;
+}
+
+.tke-offers .tke-sub-row .credits-card {
+  flex: 0 0 260px;
+  min-height: 420px;
+}
+
+.tke-offers .tke-pack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.tke-offers .tke-pack {
+  position: relative;
+  display: flex;
+  min-height: 118px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #1c1c1f;
+  color: #f5f5f5;
+}
+
+.credits-page.light.tke-offers .tke-pack {
+  background: #fff;
+  color: #18181b;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.tke-offers .tke-pack-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  border-bottom-right-radius: 8px;
+  background: #3f3f46;
+  color: #f4f4f5;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  letter-spacing: -0.01em;
+  pointer-events: none;
+}
+
+.credits-page.light.tke-offers .tke-pack-badge {
+  background: #e4e4e7;
+  color: #18181b;
+  border-right-color: rgba(0, 0, 0, 0.08);
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+
+.tke-offers .tke-pack.accent-blue .tke-pack-badge,
+.tke-offers .tke-pack.accent-purple .tke-pack-badge,
+.tke-offers .tke-pack.accent-green .tke-pack-badge {
+  background: rgba(0, 0, 0, 0.28);
+  color: #fff;
+  border-right-color: rgba(255, 255, 255, 0.22);
+  border-bottom-color: rgba(255, 255, 255, 0.22);
+}
+
+.tke-offers .tke-pack-stub {
+  width: 156px;
+  flex: 0 0 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px 12px;
+  border-right: 1px dashed rgba(255, 255, 255, 0.28);
+  background: #26262a;
+  text-align: center;
+}
+
+.credits-page.light.tke-offers .tke-pack-stub {
+  background: #f4f4f5;
+  border-right-color: rgba(0, 0, 0, 0.12);
+}
+
+.tke-offers .tke-pack.accent-blue .tke-pack-stub {
+  background: linear-gradient(180deg, #2f6bff 0%, #1d4ed8 100%);
+  color: #fff;
+  border-right-color: rgba(255, 255, 255, 0.35);
+}
+
+.tke-offers .tke-pack.accent-purple .tke-pack-stub {
+  background: linear-gradient(180deg, #8b5cf6 0%, #6d28d9 100%);
+  color: #fff;
+  border-right-color: rgba(255, 255, 255, 0.35);
+}
+
+.tke-offers .tke-pack.accent-green .tke-pack-stub {
+  background: linear-gradient(160deg, #14532d 0%, #052e16 100%);
+  color: #f0fdf4;
+  border-right-color: rgba(255, 255, 255, 0.28);
+}
+
+.tke-offers .tke-pack-price {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.tke-offers .tke-pack-list-price {
+  font-size: 12px;
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
+.tke-offers .tke-pack-unit {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.tke-offers .tke-pack-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+}
+
+.tke-offers .tke-pack-copy {
+  min-width: 0;
+}
+
+.tke-offers .tke-pack-name {
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.tke-offers .tke-pack-sub {
+  margin-top: 4px;
+  font-size: 13px;
+  opacity: 0.78;
+}
+
+.tke-offers .tke-pack-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  opacity: 0.88;
+}
+
+.tke-offers .tke-pack .ant-btn {
+  flex: 0 0 auto;
+  height: 36px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+@media (max-width: 680px) {
+  .tke-offers .tke-pack {
+    flex-direction: column;
+  }
+  .tke-offers .tke-pack-stub {
+    width: 100%;
+    flex-basis: auto;
+    border-right: none;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.28);
+  }
+  .tke-offers .tke-pack-main {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* ==========================================
+   TKE卡券风格 (tke_coupon) 拟物礼券双列网格
+   ========================================== */
+
+.tke-coupon-offers .tke-coupon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  gap: 20px;
+  margin-top: 8px;
+}
+
+.tke-coupon-offers .tke-coupon-ticket {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-height: 196px;
+  border-radius: 16px;
+  border: none;
+  background: var(--credits-surface, #18181b);
+  overflow: hidden;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.35);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-ticket {
+  background: #ffffff;
+  box-shadow: 0 8px 24px -12px rgba(15, 23, 42, 0.08);
+}
+
+.tke-coupon-offers .tke-coupon-ticket:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px -12px rgba(0, 0, 0, 0.48);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-ticket:hover {
+  box-shadow: 0 14px 32px -12px rgba(15, 23, 42, 0.12);
+}
+
+.tke-coupon-offers .tke-coupon-ticket.is-disabled {
+  opacity: 0.78;
+}
+
+.tke-coupon-offers .tke-coupon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  font-style: italic;
+  line-height: 1.3;
+  letter-spacing: 0.03em;
+  background: radial-gradient(circle at 50% 50%, #ff3b94 0%, #ff005c 72%, #e60052 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(255, 0, 92, 0.42);
+  transform: skewX(-10deg);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* 左侧礼券副券面值区 */
+.tke-coupon-offers .tke-coupon-stub {
+  width: 196px;
+  flex: 0 0 196px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 12px 16px;
+  text-align: center;
+  background: linear-gradient(165deg, #27272a 0%, #1f1f23 100%);
+  color: #fafafa;
+  position: relative;
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-stub {
+  background: linear-gradient(165deg, #f4f4f5 0%, #e4e4e7 100%);
+  color: #18181b;
+}
+
+.tke-coupon-offers .tke-coupon-ticket.accent-blue .tke-coupon-stub {
+  background: linear-gradient(160deg, #2563eb 0%, #1d4ed8 100%);
+  color: #ffffff;
+}
+
+.tke-coupon-offers .tke-coupon-ticket.accent-purple .tke-coupon-stub {
+  background: linear-gradient(160deg, #7c3aed 0%, #5b21b6 100%);
+  color: #ffffff;
+}
+
+.tke-coupon-offers .tke-coupon-ticket.accent-green .tke-coupon-stub {
+  background: linear-gradient(160deg, #059669 0%, #065f46 100%);
+  color: #ecfdf5;
+}
+
+.tke-coupon-offers .tke-coupon-face-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.1);
+  color: #d4d4d8;
+  margin-bottom: 6px;
+  white-space: nowrap;
+}
+
+.tke-coupon-offers .tke-coupon-ticket.accent-blue .tke-coupon-face-caption,
+.tke-coupon-offers .tke-coupon-ticket.accent-purple .tke-coupon-face-caption,
+.tke-coupon-offers .tke-coupon-ticket.accent-green .tke-coupon-face-caption {
+  background: rgba(0, 0, 0, 0.24);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-ticket.accent-plain .tke-coupon-face-caption {
+  background: rgba(0, 0, 0, 0.07);
+  color: #52525b;
+}
+
+.tke-coupon-offers .tke-coupon-face-value {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tke-coupon-offers .tke-coupon-savings-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 2px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  background: linear-gradient(135deg, #ff1e7a 0%, #ff005c 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(255, 0, 92, 0.45);
+  white-space: nowrap;
+}
+
+.tke-coupon-offers .tke-coupon-price-box {
+  margin-top: auto;
+  padding-top: 12px;
+  width: 100%;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-ticket.accent-plain .tke-coupon-price-box {
+  border-top-color: rgba(30, 58, 138, 0.12);
+}
+
+.tke-coupon-offers .tke-coupon-list-price {
+  font-size: 11px;
+  text-decoration: line-through;
+  opacity: 0.68;
+  white-space: nowrap;
+}
+
+.tke-coupon-offers .tke-coupon-sale-price {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.tke-coupon-offers .tke-coupon-sale-label {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.tke-coupon-offers .tke-coupon-sale-amount {
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.tke-coupon-offers .tke-coupon-sale-unit {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* 齿孔撕裂线与上下半圆缺口 */
+.tke-coupon-offers .tke-coupon-divider {
+  position: relative;
+  width: 0;
+  flex: 0 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 3;
+}
+
+.tke-coupon-offers .tke-coupon-perforation {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  border-left: 2px dashed rgba(255, 255, 255, 0.22);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-perforation {
+  border-left-color: rgba(15, 23, 42, 0.14);
+}
+
+.tke-coupon-offers .tke-coupon-notch {
+  position: absolute;
+  left: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--dashboard, #09090b);
+  border: none;
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-notch {
+  background: var(--dashboard, #f8fafc);
+}
+
+.tke-coupon-offers .tke-coupon-notch-top {
+  top: -10px;
+}
+
+.tke-coupon-offers .tke-coupon-notch-bottom {
+  bottom: -10px;
+}
+
+/* 右侧卡券主体详情区 */
+.tke-coupon-offers .tke-coupon-body {
+  flex: 1;
+  min-width: 0;
+  padding: 18px 20px 16px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tke-coupon-offers .tke-coupon-main {
+  min-width: 0;
+}
+
+.tke-coupon-offers .tke-coupon-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tke-coupon-offers .tke-coupon-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tke-coupon-offers .tke-coupon-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: inherit;
+}
+
+.tke-coupon-offers .tke-coupon-validity {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--credits-muted, #a1a1aa);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-validity {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.tke-coupon-offers .tke-coupon-subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--credits-muted, #a1a1aa);
+}
+
+.tke-coupon-offers .tke-coupon-scope {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tke-coupon-offers .tke-coupon-scope-label {
+  font-size: 12px;
+  color: var(--credits-muted, #a1a1aa);
+  margin-right: 2px;
+}
+
+.tke-coupon-offers .tke-coupon-model-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tke-coupon-offers .tke-coupon-model-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d4d4d8;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-model-tag {
+  background: #f4f4f5;
+  color: #3f3f46;
+  border-color: #e4e4e7;
+}
+
+.tke-coupon-offers .tke-coupon-model-tag.is-more {
+  cursor: pointer;
+}
+
+.tke-coupon-offers .tke-coupon-model-zhe {
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-model-zhe {
+  border-left-color: #d4d4d8;
+  color: #18181b;
+}
+
+.tke-coupon-offers .tke-coupon-benefits {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.tke-coupon-offers .tke-coupon-benefits li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  opacity: 0.9;
+}
+
+.tke-coupon-offers .tke-coupon-benefits li .anticon {
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-benefits li .anticon {
+  color: #52525b;
+}
+
+.tke-coupon-offers .tke-coupon-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.credits-page.light.tke-coupon-offers .tke-coupon-footer {
+  border-top-color: rgba(15, 23, 42, 0.08);
+}
+
+.tke-coupon-offers .tke-coupon-limit {
+  font-size: 12px;
+  color: var(--credits-muted, #a1a1aa);
+}
+
+.tke-coupon-offers .tke-coupon-buy-btn {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .tke-coupon-offers .tke-coupon-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tke-coupon-offers .tke-coupon-ticket {
+    flex-direction: column;
+  }
+
+  .tke-coupon-offers .tke-coupon-stub {
+    width: 100%;
+    flex-basis: auto;
+    padding: 18px 16px 14px;
+  }
+
+  .tke-coupon-offers .tke-coupon-divider {
+    width: 100%;
+    height: 0;
+  }
+
+  .tke-coupon-offers .tke-coupon-perforation {
+    top: 0;
+    bottom: auto;
+    left: 12px;
+    right: 12px;
+    border-left: none;
+    border-top: 2px dashed rgba(255, 255, 255, 0.22);
+  }
+
+  .credits-page.light.tke-coupon-offers .tke-coupon-perforation {
+    border-top-color: rgba(15, 23, 42, 0.14);
+  }
+
+  .tke-coupon-offers .tke-coupon-notch-top {
+    top: -9px;
+    left: -10px;
+  }
+
+  .tke-coupon-offers .tke-coupon-notch-bottom {
+    top: -9px;
+    bottom: auto;
+    left: auto;
+    right: -10px;
+  }
+}
+

@@ -59,6 +59,7 @@
   "about_stat_developers": "글로벌 활성 개발자",
   "about_stat_providers": "모델 공급업체",
   "about_stat_models": "통합 전방 모델",
+  "about_press_title": "통합 대형 모델 API 환경, AI 연동 부담 제로",
   "about_press_title_prefix": "통합 대형 모델 API 환경, ",
   "about_press_title_suffix": " AI 연동 부담 제로",
   "about_press_desc": "개발자가 다양한 AI 모델을 연결하고 비교하며 호출할 수 있는 최적의 애그리게이션 게이트웨이가 되는 것을 지향합니다. 한 번의 연동으로 수백 개의 최첨단 모델에 전체 액세스 가능.",

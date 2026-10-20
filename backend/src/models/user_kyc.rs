@@ -116,16 +116,24 @@ pub struct UpsertUserKycRequest {
 
 impl UpsertUserKycRequest {
     pub fn resolved_personal_email(&self) -> Option<String> {
-        self.personal_email.clone().or_else(|| self.contact_email.clone())
+        self.personal_email
+            .clone()
+            .or_else(|| self.contact_email.clone())
     }
     pub fn resolved_personal_phone(&self) -> Option<String> {
-        self.personal_phone.clone().or_else(|| self.contact_phone.clone())
+        self.personal_phone
+            .clone()
+            .or_else(|| self.contact_phone.clone())
     }
     pub fn resolved_company_email(&self) -> Option<String> {
-        self.company_email.clone().or_else(|| self.contact_email.clone())
+        self.company_email
+            .clone()
+            .or_else(|| self.contact_email.clone())
     }
     pub fn resolved_company_phone(&self) -> Option<String> {
-        self.company_phone.clone().or_else(|| self.contact_phone.clone())
+        self.company_phone
+            .clone()
+            .or_else(|| self.contact_phone.clone())
     }
 }
 

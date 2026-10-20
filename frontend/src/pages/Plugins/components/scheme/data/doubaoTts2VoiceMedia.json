@@ -1,0 +1,978 @@
+{
+  "zh_female_vv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/vivi_v2.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_vv_uranus_bigtts.wav"
+  },
+  "zh_female_xiaohe_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/小何.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_xiaohe_uranus_bigtts.mp3"
+  },
+  "zh_male_wennuanahu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/温暖阿虎.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/zh_male_wennuanahu_uranus_bigtts.mp3"
+  },
+  "zh_male_jieshuoxiaoming_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/解说小明.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_jieshuoxiaoming_uranus_bigtts.mp3"
+  },
+  "zh_female_wenroumama_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/温柔妈妈_副本.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_wenroumama_uranus_bigtts.mp3"
+  },
+  "zh_female_sophie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sophie.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_sophie_uranus_bigtts.mp3"
+  },
+  "zh_female_meilinvyou_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/魅力女友.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_meilinvyou_uranus_bigtts.mp3"
+  },
+  "zh_male_liufei_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/刘飞.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_liufei_uranus_bigtts.mp3"
+  },
+  "zh_male_shaonianzixin_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/少年梓辛.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_shaonianzixin_uranus_bigtts.mp3"
+  },
+  "zh_male_taocheng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/小天.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_taocheng_uranus_bigtts.mp3"
+  },
+  "zh_male_m191_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/云舟.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_m191_uranus_bigtts.mp3"
+  },
+  "zh_male_guanggaojieshuo_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/广告解说.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_guanggaojieshuo_uranus_bigtts.mp3"
+  },
+  "zh_female_gujie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/顾姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_gujie_uranus_bigtts.mp3"
+  },
+  "zh_female_wuzetian_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/武则天.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_wuzetian_uranus_bigtts.mp3"
+  },
+  "zh_female_peiqi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/佩奇猪.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_peiqi_uranus_bigtts.mp3"
+  },
+  "zh_male_qingshuangnanda_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/清爽男大.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_qingshuangnanda_uranus_bigtts.mp3"
+  },
+  "zh_female_tiexinnvsheng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/贴心女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_tiexinnvsheng_uranus_bigtts.mp3"
+  },
+  "zh_female_jitangmei_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/鸡汤妹妹.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_jitangmei_uranus_bigtts.mp3"
+  },
+  "zh_male_cixingjieshuonan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/磁性解说男声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_cixingjieshuonan_uranus_bigtts.mp3"
+  },
+  "zh_female_mengyatou_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/萌丫头.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_mengyatou_uranus_bigtts.mp3"
+  },
+  "zh_female_qiaopinv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/俏皮女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_qiaopinv_uranus_bigtts.mp3"
+  },
+  "zh_female_shaoergushi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/少儿故事.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_shaoergushi_uranus_bigtts.mp3"
+  },
+  "zh_male_tiancaitongsheng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/天才童声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_tiancaitongsheng_uranus_bigtts.mp3"
+  },
+  "zh_female_wenrouxiaoya_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/温柔小雅.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_wenrouxiaoya_uranus_bigtts.mp3"
+  },
+  "zh_male_dongfanghaoran_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/东方浩然.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_dongfanghaoran_uranus_bigtts.mp3"
+  },
+  "zh_female_roumeinvyou_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/柔美女友.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_roumeinvyou_uranus_bigtts.mp3"
+  },
+  "zh_male_wenrouxiaoge_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/温柔小哥.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_wenrouxiaoge_uranus_bigtts.mp3"
+  },
+  "zh_female_xinlingjitang_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/心灵鸡汤.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_xinlingjitang_uranus_bigtts.mp3"
+  },
+  "zh_female_tianmeiyueyue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/甜美悦悦.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_tianmeiyueyue_uranus_bigtts.mp3"
+  },
+  "zh_female_qingchezizi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/清澈梓梓.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_qingchezizi_uranus_bigtts.mp3"
+  },
+  "zh_male_yangguangqingnian_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/阳光青年.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_yangguangqingnian_uranus_bigtts.mp3"
+  },
+  "zh_male_yuanboxiaoshu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/渊博小叔.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_yuanboxiaoshu_uranus_bigtts.mp3"
+  },
+  "zh_female_zhixingnv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/知性女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_zhixingnv_uranus_bigtts.mp3"
+  },
+  "zh_female_wenjingmaomao_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/文静毛毛.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_wenjingmaomao_uranus_bigtts.mp3"
+  },
+  "zh_male_youyoujunzi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/悠悠君子.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_youyoujunzi_uranus_bigtts.mp3"
+  },
+  "zh_male_kailangxuezhang_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/开朗学长.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_kailangxuezhang_uranus_bigtts.mp3"
+  },
+  "zh_male_kuailexiaodong_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/快乐小东.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_kuailexiaodong_uranus_bigtts.mp3"
+  },
+  "zh_female_qinqienv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/亲切女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_qinqienv_uranus_bigtts.mp3"
+  },
+  "zh_female_zhishuaiyingzi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/直率英子.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_zhishuaiyingzi_uranus.mp3"
+  },
+  "zh_female_nvleishen_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/女雷神.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_nvleishen_uranus_bigtts.mp3"
+  },
+  "zh_female_chanmeinv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/谄媚女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_chanmeinv_uranus_bigtts.mp3"
+  },
+  "zh_female_ganmaodianyin_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/感冒电音姐姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_ganmaodianyin_uranus_bigtts.mp3"
+  },
+  "zh_male_zhubajie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/猪八戒.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_zhubajie_uranus_bigtts.mp3"
+  },
+  "zh_male_kailangdidi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/开朗弟弟.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_kailangdidi_uranus_bigtts.mp3"
+  },
+  "zh_male_zhuangzhou_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/庄周.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_zhuangzhou_uranus_bigtts.mp3"
+  },
+  "zh_male_tangseng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/唐僧.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_tangseng_uranus_bigtts.mp3"
+  },
+  "zh_female_chunribu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/春日部姐姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_chunribu_uranus_bigtts.mp3"
+  },
+  "zh_female_lingling_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/玲玲姐姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_lingling_uranus_bigtts.mp3"
+  },
+  "zh_female_linxiao_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/林潇.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_linxiao_uranus_bigtts.mp3"
+  },
+  "zh_female_jiaochuannv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/娇喘女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_jiaochuannv_uranus_bigtts.mp3"
+  },
+  "zh_male_lubanqihao_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/鲁班七号.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_lubanqihao_uranus_bigtts.mp3"
+  },
+  "zh_male_shenyeboke_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/深夜播客.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_shenyeboke_uranus_bigtts.mp3"
+  },
+  "zh_female_gaolengyujie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/高冷御姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_gaolengyujie_uranus_bigtts.mp3"
+  },
+  "zh_female_kailangjiejie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/开朗姐姐.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_kailangjiejie_uranus_bigtts.mp3"
+  },
+  "zh_male_liangsangmengzai_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/亮嗓萌仔.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_liangsangmengzai_uranus_bigtts.mp3"
+  },
+  "zh_male_xuanyijieshuo_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/悬疑解说.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_xuanyijieshuo_uranus_bigtts.mp3"
+  },
+  "zh_male_baqiqingshu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/霸气青叔.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_baqiqingshu_uranus_bigtts.mp3"
+  },
+  "zh_male_huolixiaoge_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/活力小哥.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_huolixiaoge_uranus_bigtts.mp3"
+  },
+  "zh_female_gufengshaoyu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/古风少御2.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_gufengshaoyu_uranus_bigtts.mp3"
+  },
+  "zh_female_wenroushunv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/温柔淑女.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_wenroushunv_uranus_bigtts.mp3"
+  },
+  "zh_male_fanjuanqingnian_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/反卷青年.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_fanjuanqingnian_uranus_bigtts.mp3"
+  },
+  "zh_male_lanyinmianbao_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/懒音绵宝.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_lanyinmianbao_uranus_bigtts.mp3"
+  },
+  "zh_male_aojiaobazong_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/傲娇霸总.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_aojiaobazong_uranus_bigtts.mp3"
+  },
+  "zh_female_popo_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/婆婆.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_popo_uranus_bigtts.mp3"
+  },
+  "zh_male_naiqimengwa_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/奶气萌娃.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_naiqimengwa_uranus_bigtts.mp3"
+  },
+  "zh_female_yingtaowanzi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/樱桃丸子.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_yingtaowanzi_uranus_bigtts.mp3"
+  },
+  "zh_male_xionger_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/熊二.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_xionger_uranus_bigtts.mp3"
+  },
+  "zh_male_qingcang_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/擎苍.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_qingcang_uranus_bigtts.mp3"
+  },
+  "zh_male_ruyaqingnian_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/儒雅青年.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_ruyaqingnian_uranus_bigtts.mp3"
+  },
+  "zh_male_silang_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/四郎.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_silang_uranus_bigtts.mp3"
+  },
+  "zh_male_linjiananhai_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/邻家男孩.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_linjiananhai_uranus_bigtts.mp3"
+  },
+  "zh_male_yizhipiannan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/译制片男.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_yizhipiannan_uranus_bigtts.mp3"
+  },
+  "zh_female_tvbnv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/TVB女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_tvbnv_uranus_bigtts.mp3"
+  },
+  "zh_female_sajiaoxuemei_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/撒娇学妹.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_sajiaoxuemei_uranus_bigtts.mp3"
+  },
+  "zh_female_linjianvhai_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/邻家女孩.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_linjianvhai_uranus_bigtts.mp3"
+  },
+  "zh_female_kefunvsheng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/暖阳女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_kefunvsheng_uranus_bigtts.mp3"
+  },
+  "zh_female_cancan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/灿灿.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_cancan_uranus_bigtts.mp3"
+  },
+  "zh_male_ruyayichen_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/儒雅逸辰.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_ruyayichen_uranus_bigtts.mp3"
+  },
+  "zh_female_liuchangnv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/流畅女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_liuchangnv_uranus_bigtts.mp3"
+  },
+  "zh_female_jitangnv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/鸡汤女.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_jitangnv_uranus_bigtts.mp3"
+  },
+  "zh_female_mizai_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/黑猫侦探社咪仔.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_mizai_uranus_bigtts.mp3"
+  },
+  "zh_male_dayi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/大壹.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_dayi_uranus_bigtts.mp3"
+  },
+  "zh_female_yingyujiaoxue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Tina老师.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_yingyujiaoxue_uranus_bigtts.mp3"
+  },
+  "zh_male_sunwukong_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/猴哥.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_sunwukong_uranus_bigtts.mp3"
+  },
+  "zh_female_shuangkuaisisi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/爽快思思.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_shuangkuaisisi_uranus_bigtts.mp3"
+  },
+  "zh_female_tianmeitaozi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/甜美桃子.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_tianmeitaozi_uranus_bigtts.mp3"
+  },
+  "zh_female_qingxinnvsheng_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/清新女声.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_qingxinnvsheng_uranus_bigtts.mp3"
+  },
+  "en_male_russell_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Russell_en_male_russell_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_russell_uranus_bigtts.wav"
+  },
+  "en_male_knightley_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Knightley_en_male_knightley_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_knightley_uranus_bigtts.wav"
+  },
+  "en_female_authoritative-british_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Charlotte_en_female_authoritative-british_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_authoritative-british_uranus_bigtts.wav"
+  },
+  "en_male_father-christmas_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Alfred_en_male_father-christmas_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_father-christmas_uranus_bigtts.wav"
+  },
+  "es_male_guillem_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Guillem_es_male_guillem_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/es_male_guillem_uranus_bigtts.wav"
+  },
+  "es_female_ht_mx_f6_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Marisol_es_female_ht_mx_f6_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/es_female_ht_mx_f6_uranus_bigtts.wav"
+  },
+  "th_female_bv568_fear_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Iris_th_female_bv568_fear_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_fear_uranus_bigtts.wav"
+  },
+  "ru_female_sophie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ksenia_ru_female_sophie_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ru_female_sophie_uranus_bigtts.wav"
+  },
+  "ru_female_af07_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Amelia_ru_female_af07_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ru_female_af07_uranus_bigtts.wav"
+  },
+  "pt_male_bv531_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Arthur_pt_male_bv531_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_bv531_uranus_bigtts.wav"
+  },
+  "mx_male_felipe_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Felipe_mx_male_felipe_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_male_felipe_uranus_bigtts.wav"
+  },
+  "mx_female_bv166emotion_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rosa_mx_female_bv166emotion_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_female_bv166emotion_uranus_bigtts.wav"
+  },
+  "mx_female_bv065_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Irene_mx_female_bv065_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_female_bv065_uranus_bigtts.wav"
+  },
+  "ko_male_m03_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Minho_ko_male_m03_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ko_male_m03_uranus_bigtts.wav"
+  },
+  "ko_male_bv545_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jay_ko_male_bv545_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ko_male_bv545_uranus_bigtts.wav"
+  },
+  "ja_female_bv024_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Bonnie_ja_female_bv024_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_bv024_uranus_bigtts.wav"
+  },
+  "id_female_f20_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Chloe_id_female_f20_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_f20_uranus_bigtts.wav"
+  },
+  "id_male_bv164dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Elian_id_male_bv164dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_bv164dialogue_uranus_bigtts.wav"
+  },
+  "fr_male_usseau_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Usseau_fr_male_usseau_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/fr_male_usseau_uranus_bigtts.wav"
+  },
+  "es_male_dani_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Dani_es_male_dani_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/es_male_dani_uranus_bigtts.wav"
+  },
+  "en_female_zendaya_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Zendaya_en_female_zendaya_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_zendaya_p1_uranus_bigtts.wav"
+  },
+  "en_female_wenrouzhishijieshuonv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Megan_en_female_wenrouzhishijieshuonv_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_wenrouzhishijieshuonv_uranus_bigtts.wav"
+  },
+  "en_female_scarlet_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Scarlet_en_female_scarlet_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_scarlet_p1_uranus_bigtts.wav"
+  },
+  "en_male_ronald_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ronald_en_male_ronald_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_ronald_uranus_bigtts.wav"
+  },
+  "en_male_michael_kevin_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Michael_Kevin_en_male_michael_kevin_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_michael_kevin_uranus_bigtts.wav"
+  },
+  "en_male_josh_coery_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Josiah_en_male_josh_coery_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_josh_coery_uranus_bigtts.wav"
+  },
+  "en_female_jane_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jane_en_female_jane_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_jane_uranus_bigtts.wav"
+  },
+  "en_male_hades_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Beau_en_male_hades_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_hades_uranus_bigtts.wav"
+  },
+  "en_male_deep-voice_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Orion_en_male_deep-voice_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_deep-voice_uranus_bigtts.wav"
+  },
+  "en_male_alberto_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Alberto_en_male_alberto_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_alberto_uranus_bigtts.wav"
+  },
+  "ar_male_youssef_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Youssef_ar_male_youssef_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ar_male_youssef_uranus_bigtts.wav"
+  },
+  "ar_female_dina_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Dina_ar_female_dina_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ar_female_dina_uranus_bigtts.wav"
+  },
+  "en_male_marcus_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Marcus_en_male_marcus_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_marcus_uranus_bigtts.wav"
+  },
+  "zh_male_gaolengchenwen_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/高冷沉稳 2.0.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_male_gaolengchenwen_uranus_bigtts.mp3"
+  },
+  "it_male_enzo_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Enzo_it_male_enzo_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/it_male_enzo_uranus_bigtts.wav"
+  },
+  "vi_male_wumg_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Wumg_vi_male_wumg_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_male_wumg_uranus_bigtts.wav"
+  },
+  "vi_female_wu_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Wu_vi_female_wu_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_wu_uranus_bigtts.wav"
+  },
+  "vi_female_ruan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ruan_vi_female_ruan_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_ruan_uranus_bigtts.wav"
+  },
+  "vi_female_partner_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Partner_vi_female_partner_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_partner_uranus_bigtts.wav"
+  },
+  "vi_female_linh_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Linh_vi_female_linh_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_linh_uranus_bigtts.wav"
+  },
+  "vi_female_ling_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ling_vi_female_ling_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_ling_uranus_bigtts.wav"
+  },
+  "vi_female_hong_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hong_vi_female_hong_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/vi_female_hong_uranus_bigtts.wav"
+  },
+  "tl_female_hervie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hervie_tl_female_hervie_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/tl_female_hervie_uranus_bigtts.wav"
+  },
+  "tl_male_ed_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ed_tl_male_ed_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/tl_male_ed_uranus_bigtts.wav"
+  },
+  "tl_female_annika_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Annika_tl_female_annika_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/tl_female_annika_uranus_bigtts.wav"
+  },
+  "th_female_bv568_suprise_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Phoebe_th_female_bv568_suprise_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_suprise_uranus_bigtts.wav"
+  },
+  "th_female_bv568_sad_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Lydia_th_female_bv568_sad_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_sad_uranus_bigtts.wav"
+  },
+  "th_female_bv568_neutral_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Mildred_th_female_bv568_neutral_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_neutral_uranus_bigtts.wav"
+  },
+  "th_female_bv568_hate_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Valentina_th_female_bv568_hate_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_hate_uranus_bigtts.wav"
+  },
+  "th_female_bv568_happy_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Zara_th_female_bv568_happy_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_happy_uranus_bigtts.wav"
+  },
+  "th_female_bv568_angry_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Valeria_th_female_bv568_angry_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/th_female_bv568_angry_uranus_bigtts.wav"
+  },
+  "ru_male_vlad_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Silas_ru_male_vlad_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ru_male_vlad_uranus_bigtts.wav"
+  },
+  "ru_male_pavel_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Pavel_ru_male_pavel_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ru_male_pavel_uranus_bigtts.wav"
+  },
+  "ru_female_irinae_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Irinae_ru_female_irinae_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ru_female_irinae_uranus_bigtts.wav"
+  },
+  "pt_male_rael_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rael_pt_male_rael_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_rael_uranus_bigtts.wav"
+  },
+  "pt_male_martins_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Toby_pt_male_martins_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_martins_uranus_bigtts.wav"
+  },
+  "pt_female_mari_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Mari_pt_female_mari_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_mari_uranus_bigtts.wav"
+  },
+  "pt_female_bv530_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sofia_pt_female_bv530_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_bv530_uranus_bigtts.wav"
+  },
+  "pt_female_bv173narrator_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Emma_pt_female_bv173narrator_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_bv173narrator_uranus_bigtts.wav"
+  },
+  "pt_female_bv173emotion_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Lola_pt_female_bv173emotion_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_bv173emotion_uranus_bigtts.wav"
+  },
+  "pt_female_bv173dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Elena_pt_female_bv173dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_bv173dialogue_uranus_bigtts.wav"
+  },
+  "pt_female_bv173_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Diana_pt_female_bv173_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_female_bv173_uranus_bigtts.wav"
+  },
+  "pt_male_bv172narrator_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Miles_pt_male_bv172narrator_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_bv172narrator_uranus_bigtts.wav"
+  },
+  "pt_male_bv172emotion_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Vincent_pt_male_bv172emotion_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_bv172emotion_uranus_bigtts.wav"
+  },
+  "pt_male_bv172dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Walter_pt_male_bv172dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_bv172dialogue_uranus_bigtts.wav"
+  },
+  "pt_male_bv172_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sam_pt_male_bv172_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/pt_male_bv172_uranus_bigtts.wav"
+  },
+  "mx_male_marcelo_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Marcelo_mx_male_marcelo_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_male_marcelo_uranus_bigtts.wav"
+  },
+  "mx_female_leslie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Leslie_mx_female_leslie_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_female_leslie_uranus_bigtts.wav"
+  },
+  "mx_male_ht_mx_m012_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Derek_mx_male_ht_mx_m012_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_male_ht_mx_m012_uranus_bigtts.wav"
+  },
+  "mx_female_bv166narrator_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Freya_mx_female_bv166narrator_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_female_bv166narrator_uranus_bigtts.wav"
+  },
+  "mx_female_bv166dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Lucy_mx_female_bv166dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_female_bv166dialogue_uranus_bigtts.wav"
+  },
+  "mx_male_bv165narrator_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Marcos_mx_male_bv165narrator_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_male_bv165narrator_uranus_bigtts.wav"
+  },
+  "mx_male_bv165dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Diego_mx_male_bv165dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/mx_male_bv165dialogue_uranus_bigtts.wav"
+  },
+  "ms_male_naim_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Naim_ms_male_naim_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ms_male_naim_uranus_bigtts.wav"
+  },
+  "ms_male_ham_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ham_ms_male_ham_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ms_male_ham_uranus_bigtts.wav"
+  },
+  "ko_male_shane_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Shane_ko_male_shane_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ko_male_shane_uranus_bigtts.wav"
+  },
+  "ko_female_bv546_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Momo_ko_female_bv546_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ko_female_bv546_uranus_bigtts.wav"
+  },
+  "ja_female_shirou_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Shirou_ja_female_shirou_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_shirou_uranus_bigtts.wav"
+  },
+  "ja_female_minimi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Minimi_ja_female_minimi_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_minimi_uranus_bigtts.wav"
+  },
+  "ja_male_bv524_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ken_ja_male_bv524_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_male_bv524_uranus_bigtts.wav"
+  },
+  "ja_female_bv523_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Lily_ja_female_bv523_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_bv523_uranus_bigtts.wav"
+  },
+  "ja_female_bv522_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hana_ja_female_bv522_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_bv522_uranus_bigtts.wav"
+  },
+  "ja_female_bv521_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Aoi_ja_female_bv521_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_bv521_uranus_bigtts.wav"
+  },
+  "ja_female_bv520_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Poppy_ja_female_bv520_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ja_female_bv520_uranus_bigtts.wav"
+  },
+  "id_female_phulia_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Phulia_id_female_phulia_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_phulia_uranus_bigtts.wav"
+  },
+  "id_male_m08_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Kyle_id_male_m08_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_m08_uranus_bigtts.wav"
+  },
+  "id_male_han_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Han_id_male_han_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_han_uranus_bigtts.wav"
+  },
+  "id_male_bv164narration_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ronan_id_male_bv164narration_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_bv164narration_uranus_bigtts.wav"
+  },
+  "id_female_bv164_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Crew_id_female_bv164_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_bv164_uranus_bigtts.wav"
+  },
+  "id_female_bv161narration_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Celeste_id_female_bv161narration_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_bv161narration_uranus_bigtts.wav"
+  },
+  "id_female_bv161dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sylvia_id_female_bv161dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_bv161dialogue_uranus_bigtts.wav"
+  },
+  "id_female_bv161_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Clara_id_female_bv161_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_female_bv161_uranus_bigtts.wav"
+  },
+  "id_male_bv160narration_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hugo_id_male_bv160narration_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_bv160narration_uranus_bigtts.wav"
+  },
+  "id_male_bv160dialogue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jude_id_male_bv160dialogue_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_bv160dialogue_uranus_bigtts.wav"
+  },
+  "id_male_bv160_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rocco_id_male_bv160_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/id_male_bv160_uranus_bigtts.wav"
+  },
+  "fr_male_fr_m29_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Maurice_fr_male_fr_m29_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/fr_male_fr_m29_uranus_bigtts.wav"
+  },
+  "fr_female_fr_f47_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Camille_fr_female_fr_f47_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/fr_female_fr_f47_uranus_bigtts.wav"
+  },
+  "fr_female_fr_bv078_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Simone_fr_female_fr_bv078_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/fr_female_fr_bv078_uranus_bigtts.wav"
+  },
+  "es_female_bv084_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Gracie_es_female_bv084_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/es_female_bv084_uranus_bigtts.wav"
+  },
+  "en_male_yangguangjieshuonan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Dylan_en_male_yangguangjieshuonan_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_yangguangjieshuonan_uranus_bigtts.wav"
+  },
+  "en_female_xinwenjieshuonv_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Kayla_en_female_xinwenjieshuonv_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_xinwenjieshuonv_uranus_bigtts.wav"
+  },
+  "en_male_valentino_corey_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Clark_en_male_valentino_corey_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_valentino_corey_uranus_bigtts.wav"
+  },
+  "en_male_valentino_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Valentino_en_male_valentino_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_valentino_uranus_bigtts.wav"
+  },
+  "en_male_tom_hiddleston_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Tom_en_male_tom_hiddleston_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_tom_hiddleston_p1_uranus_bigtts.wav"
+  },
+  "en_female_skye_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Skye_en_female_skye_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_skye_uranus_bigtts.wav"
+  },
+  "en_male_simba_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Simba_en_male_simba_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_simba_p1_uranus_bigtts.wav"
+  },
+  "en_female_sharron_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sharron_en_female_sharron_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_sharron_uranus_bigtts.wav"
+  },
+  "en_female_rachel_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rachel_en_female_rachel_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_rachel_p1_uranus_bigtts.wav"
+  },
+  "en_female_pleasant-female_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Elaine_en_female_pleasant-female_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_pleasant-female_uranus_bigtts.wav"
+  },
+  "en_female_natasha_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Natasha_en_female_natasha_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_natasha_uranus_bigtts.wav"
+  },
+  "en_female_nadia_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Blair_en_female_nadia_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_nadia_uranus_bigtts.wav"
+  },
+  "en_female_myra_cmb_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sunny_en_female_myra_cmb_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_myra_cmb_uranus_bigtts.wav"
+  },
+  "en_female_myra_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Myra_en_female_myra_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_myra_uranus_bigtts.wav"
+  },
+  "en_male_motivational-coach_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rory_en_male_motivational-coach_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_motivational-coach_uranus_bigtts.wav"
+  },
+  "en_male_michael-mouse_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Chip_en_male_michael-mouse_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_michael-mouse_uranus_bigtts.wav"
+  },
+  "en_male_michael_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hank_en_male_michael_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_michael_uranus_bigtts.wav"
+  },
+  "en_female_mel_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Mel_en_female_mel_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_mel_uranus_bigtts.wav"
+  },
+  "en_female_lana_del_rey_parky_s_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Ivy_en_female_lana_del_rey_parky_s_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_lana_del_rey_parky_s_p1_uranus_bigtts.wav"
+  },
+  "en_female_lana_del_rey_kelley_d_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Lynn_en_female_lana_del_rey_kelley_d_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_lana_del_rey_kelley_d_p1_uranus_bigtts.wav"
+  },
+  "en_male_kevin_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Kevin_en_male_kevin_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_kevin_uranus_bigtts.wav"
+  },
+  "en_male_josh_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Josh_en_male_josh_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_josh_uranus_bigtts.wav"
+  },
+  "en_male_joker_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Joker_en_male_joker_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_joker_uranus_bigtts.wav"
+  },
+  "en_female_joanne_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Joanne_en_female_joanne_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_joanne_uranus_bigtts.wav"
+  },
+  "en_male_jimmy_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jimmy_en_male_jimmy_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_jimmy_uranus_bigtts.wav"
+  },
+  "en_male_jidongchuanjiaoshi_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Blaze_en_male_jidongchuanjiaoshi_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_jidongchuanjiaoshi_uranus_bigtts.wav"
+  },
+  "en_female_jenny_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jenny_en_female_jenny_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_jenny_uranus_bigtts.wav"
+  },
+  "en_male_jamie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jamie_en_male_jamie_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_jamie_uranus_bigtts.wav"
+  },
+  "en_female_hayley_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Hayley_en_female_hayley_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_hayley_uranus_bigtts.wav"
+  },
+  "en_male_gollum_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Gollum_en_male_gollum_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_gollum_uranus_bigtts.wav"
+  },
+  "en_male_godfather_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Godfather_en_male_godfather_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_godfather_uranus_bigtts.wav"
+  },
+  "en_male_fernando-martinez_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Felix_en_male_fernando-martinez_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_fernando-martinez_uranus_bigtts.wav"
+  },
+  "en_female_female_tutor_ms-jenny_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Holly_en_female_female_tutor_ms-jenny_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_female_tutor_ms-jenny_uranus_bigtts.wav"
+  },
+  "en_male_excited-male-voice_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jasper_en_male_excited-male-voice_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_excited-male-voice_uranus_bigtts.wav"
+  },
+  "en_male_evil-guy-oxley_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Harrison_en_male_evil-guy-oxley_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_evil-guy-oxley_uranus_bigtts.wav"
+  },
+  "en_male_diyuwenrounan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Julian_en_male_diyuwenrounan_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_diyuwenrounan_uranus_bigtts.wav"
+  },
+  "en_male_david_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/David_en_male_david_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_david_uranus_bigtts.wav"
+  },
+  "en_male_cowboy_john_b_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/John_en_male_cowboy_john_b_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_cowboy_john_b_uranus_bigtts.wav"
+  },
+  "en_male_cowboy-bob_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Bob_en_male_cowboy-bob_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_cowboy-bob_uranus_bigtts.wav"
+  },
+  "en_male_chandler_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Leo_en_male_chandler_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_chandler_p1_uranus_bigtts.wav"
+  },
+  "en_male_bruce_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Adrian_en_male_bruce_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_bruce_uranus_bigtts.wav"
+  },
+  "en_female_brittney_pimintel_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Zoe_en_female_brittney_pimintel_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_brittney_pimintel_uranus_bigtts.wav"
+  },
+  "en_female_brittney_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Brittney_en_female_brittney_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_brittney_uranus_bigtts.wav"
+  },
+  "en_male_brad_pitt_p1_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Brad_Pitt_en_male_brad_pitt_p1_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_brad_pitt_p1_uranus_bigtts.wav"
+  },
+  "en_male_bill_jones_corey_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Bill_en_male_bill_jones_corey_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_bill_jones_corey_uranus_bigtts.wav"
+  },
+  "en_female_authoritative-informative_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Margaret_en_female_authoritative-informative_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_authoritative-informative_uranus_bigtts.wav"
+  },
+  "en_female_allison_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Allison_en_female_allison_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_female_allison_uranus_bigtts.wav"
+  },
+  "en_male_alex_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Alex_en_male_alex_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_alex_uranus_bigtts.wav"
+  },
+  "en_male_adam-imitation_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Rowan_en_male_adam-imitation_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_adam-imitation_uranus_bigtts.wav"
+  },
+  "de_male_sven_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Sven_de_male_sven_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/de_male_sven_uranus_bigtts.wav"
+  },
+  "de_female_bv081_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Stella_de_female_bv081_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/de_female_bv081_uranus_bigtts.wav"
+  },
+  "ar_female_fatma_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Fatma_ar_female_fatma_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/ar_female_fatma_uranus_bigtts.wav"
+  },
+  "zh_female_xiaoxue_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/儿童绘本.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_xiaoxue_uranus_bigtts.mp3"
+  },
+  "zh_female_tianmeixiaoyuan_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/甜美小源.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/zh_female_tianmeixiaoyuan_uranus_bigtts.mp3"
+  },
+  "en_female_stokie_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Stokie.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/en_female_stokie_uranus_bigtts.mp3"
+  },
+  "en_female_dacey_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Dacey.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/en_female_dacey_uranus_bigtts.mp3"
+  },
+  "en_male_tim_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/TIM2.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/en_male_tim_uranus_bigtts.mp3"
+  },
+  "en_male_bill-jones_uranus_bigtts": {
+    "avatar": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/avatar/Jones_en_male_bill-jones_uranus_bigtts.png",
+    "trial_url": "https://lf3-static.bytednsdoc.com/obj/eden-cn/lm_hz_ihsph/ljhwZthlaukjlkulzlp/portal/bigtts/audio/en_male_bill-jones_uranus_bigtts.wav"
+  }
+}

@@ -1468,7 +1468,7 @@ pub async fn cleanup_stale_playground_nodes(state: &crate::AppState) {
             }
 
             // 查询对应日志：有 task_id 时精确匹配，无 task_id 时按 model+created_at 模糊匹配
-            let log: Option<(i64, i32, Option<String>, Option<String>, Option<String>)> =
+            let log: Option<(i64, i64, Option<String>, Option<String>, Option<String>)> =
                 if !task_id_str.is_empty() {
                     // 异步任务：通过 task_id 精确查询日志
                     sqlx::query_as(&state.db.format_query(
@@ -1521,7 +1521,7 @@ pub async fn cleanup_stale_playground_nodes(state: &crate::AppState) {
             }
 
             let is_video = action_type.as_deref() == Some("视频")
-                || action_type.as_deref() == Some("视频增强");
+                || action_type.as_deref() == Some("封装");
             let category = if is_video { "视频" } else { "图片" };
             let raw_path = db_endpoint
                 .as_deref()
@@ -1736,14 +1736,14 @@ pub async fn cleanup_stale_playground_nodes(state: &crate::AppState) {
 struct SaveModelConfigRequest {
     model_mid: String,
     param_values: String,
-    is_locked: i32,
+    is_locked: i64,
 }
 
 async fn list_model_configs(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<auth::Claims>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let configs: Vec<(i64, String, String, String, i32, DbTs, DbTs)> =
+    let configs: Vec<(i64, String, String, String, i64, DbTs, DbTs)> =
         sqlx::query_as(&state.db.format_query(
             "SELECT id, user_id, model_mid, param_values, is_locked, created_at, updated_at \
              FROM user_model_configs WHERE user_id = ?",
@@ -1828,7 +1828,7 @@ async fn recover_by_log_id(
 ) -> AppResult<Json<serde_json::Value>> {
     let log: Option<(
         i64,
-        i32,
+        i64,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -1912,7 +1912,7 @@ async fn recover_by_log_id(
         .unwrap_or("/v1/images/generations");
     let clean_path = raw_path.split('|').next().unwrap_or(raw_path);
     let is_video =
-        action_type.as_deref() == Some("视频") || action_type.as_deref() == Some("视频增强");
+        action_type.as_deref() == Some("视频") || action_type.as_deref() == Some("封装");
     let category = if is_video { "视频" } else { "图片" };
 
     let formatted = crate::relay::response_formatter::apply_format(

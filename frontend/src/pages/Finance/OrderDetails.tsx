@@ -51,6 +51,16 @@ const methodMap: Record<string, { color: string; label: string }> = {
   'allinpay alipay': { color: '#1677ff', label: '通联支付宝' },
 };
 
+const methodOrder = [
+  'wechat',
+  'alipay',
+  'allinpay_wechat',
+  'allinpay_alipay',
+  'stripe',
+  'hyperbc',
+  'bonuspay',
+];
+
 const formatOrderTime = (
   timeStr: string | null,
   _refTimeStr: string | null,
@@ -71,6 +81,7 @@ const OrderDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [totalAmount, setTotalAmount] = useState<number>(0);
+  const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
   const { page, pageSize, onChange } = useListPager();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
@@ -89,16 +100,52 @@ const OrderDetails: React.FC = () => {
           payment_method: methodFilter,
           ...toTimeRangeParams(dateRange),
         }
-      }) as unknown as Promise<{ data: OrderRecord[]; total: number; total_amount: number }>);
+      }) as unknown as Promise<{ data: OrderRecord[]; total: number; total_amount: number; payment_methods?: string[] }>);
       setData(resp.data);
       setTotal(resp.total);
       setTotalAmount(resp.total_amount || 0);
+      if (Array.isArray(resp.payment_methods)) {
+        setPaymentMethods(resp.payment_methods);
+      } else if (!methodFilter) {
+        setPaymentMethods(
+          Array.from(new Set((resp.data || []).map((r) => r.payment_method).filter(Boolean)))
+        );
+      }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
   }, [page, pageSize, search, statusFilter, methodFilter, dateRange]);
+
+  const methodOptions = React.useMemo(() => {
+    const normalizeMethod = (m: string) => {
+      if (m === 'allinpay wechat') return 'allinpay_wechat';
+      if (m === 'allinpay alipay') return 'allinpay_alipay';
+      return m;
+    };
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const raw of paymentMethods) {
+      const m = normalizeMethod(raw);
+      if (m && !seen.has(m)) {
+        seen.add(m);
+        list.push(m);
+      }
+    }
+    list.sort((a, b) => {
+      const idxA = methodOrder.indexOf(a);
+      const idxB = methodOrder.indexOf(b);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return a.localeCompare(b);
+    });
+    return list.map((m) => ({
+      label: methodMap[m]?.label || m,
+      value: m,
+    }));
+  }, [paymentMethods]);
 
   useEffect(() => {
     fetchData();
@@ -153,8 +200,8 @@ const OrderDetails: React.FC = () => {
       title: '金额',
       dataIndex: 'amount',
       key: 'amount',
-      width: 100,
-      render: (val: number) => <Text strong style={{ color: '#ff4d4f' }}>{currencySymbol}{val.toFixed(6)}</Text>,
+      width: 140,
+      render: (val: number) => <Text strong style={{ color: '#ff4d4f', whiteSpace: 'nowrap' }}>{currencySymbol}{val.toFixed(6)}</Text>,
     },
     {
       title: t('finance.status'),
@@ -237,14 +284,7 @@ const OrderDetails: React.FC = () => {
             value={methodFilter}
             onChange={setMethodFilter}
             style={{ width: 120 }}
-            options={[
-              { label: '微信支付', value: 'wechat' },
-              { label: '支付宝', value: 'alipay' },
-              { label: '通联微信', value: 'allinpay_wechat' },
-              { label: '通联支付宝', value: 'allinpay_alipay' },
-              { label: 'Stripe', value: 'stripe' },
-              { label: 'HyperBC', value: 'hyperbc' },
-            ]}
+            options={methodOptions}
           />
           <Input
             placeholder="搜索 用户名 / UID"

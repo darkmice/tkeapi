@@ -83,88 +83,88 @@ pub async fn update_admin_group(
     Path(id): Path<i64>,
     Json(request): Json<UpdateAdminGroupRequest>,
 ) -> Response {
-    let result: AppResult<Json<serde_json::Value>> =
-        (async {
-            let mut tx = state.db.pool.begin().await?;
+    let result: AppResult<Json<serde_json::Value>> = (async {
+        let mut tx = state.db.pool.begin().await?;
 
-            if let Some(name) = request.name {
-                sqlx::query(
-                    &state
-                        .db
-                        .format_query("UPDATE admin_groups SET name = ? WHERE id = ?"),
-                )
-                .bind(name)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            if request.permissions.is_some() || request.edit_permissions.is_some() {
-                let current_raw: Option<String> = sqlx::query_scalar(
-                    &state
-                        .db
-                        .format_query("SELECT permissions FROM admin_groups WHERE id = ?"),
-                )
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?;
-                let mut policy = crate::admin_permission::AdminGroupPermissionPolicy::parse(
-                    current_raw.as_deref(),
-                );
-                if let Some(view) = request.permissions {
-                    policy.view = view;
-                }
-                if let Some(edit) = request.edit_permissions {
-                    policy.edit = edit;
-                }
-                let p_json = policy.normalized().to_json_string()?;
-                sqlx::query(
-                    &state
-                        .db
-                        .format_query("UPDATE admin_groups SET permissions = ? WHERE id = ?"),
-                )
-                .bind(p_json)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            if let Some(description) = request.description {
-                sqlx::query(
-                    &state
-                        .db
-                        .format_query("UPDATE admin_groups SET description = ? WHERE id = ?"),
-                )
-                .bind(description)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            if let Some(sort_order) = request.sort_order {
-                sqlx::query(
-                    &state
-                        .db
-                        .format_query("UPDATE admin_groups SET sort_order = ? WHERE id = ?"),
-                )
-                .bind(sort_order)
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            sqlx::query(&state.db.format_query(
-                "UPDATE admin_groups SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            ))
+        if let Some(name) = request.name {
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE admin_groups SET name = ? WHERE id = ?"),
+            )
+            .bind(name)
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        }
 
-            tx.commit().await?;
+        if request.permissions.is_some() || request.edit_permissions.is_some() {
+            let current_raw: Option<String> = sqlx::query_scalar(
+                &state
+                    .db
+                    .format_query("SELECT permissions FROM admin_groups WHERE id = ?"),
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let mut policy =
+                crate::admin_permission::AdminGroupPermissionPolicy::parse(current_raw.as_deref());
+            if let Some(view) = request.permissions {
+                policy.view = view;
+            }
+            if let Some(edit) = request.edit_permissions {
+                policy.edit = edit;
+            }
+            let p_json = policy.normalized().to_json_string()?;
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE admin_groups SET permissions = ? WHERE id = ?"),
+            )
+            .bind(p_json)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
 
-            Ok(Json(serde_json::json!({ "success": true })))
-        })
-        .await;
+        if let Some(description) = request.description {
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE admin_groups SET description = ? WHERE id = ?"),
+            )
+            .bind(description)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        if let Some(sort_order) = request.sort_order {
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE admin_groups SET sort_order = ? WHERE id = ?"),
+            )
+            .bind(sort_order)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        sqlx::query(
+            &state.db.format_query(
+                "UPDATE admin_groups SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ),
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(Json(serde_json::json!({ "success": true })))
+    })
+    .await;
 
     match result {
         Ok(json) => json.into_response(),

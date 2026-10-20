@@ -13,7 +13,7 @@ import dayjs from 'dayjs';
 import ErrorBoundary from '../../components/ErrorBoundary';
 import useSettingsStore from '../../store/settings';
 import request from '../../utils/request';
-import { timedisplayNow } from '../../utils/dateRangeParams';
+import { statsCalendarNow } from '../../utils/dateRangeParams';
 import type { ModelTrend30dResponse } from '../../types';
 
 const { Title, Text } = Typography;
@@ -90,7 +90,7 @@ function buildUsageArea(
   otherLabel: string,
 ): { rows: ChartRow[]; series: SeriesMeta[] } {
   const n = rangeLength(range);
-  const today = timedisplayNow().startOf('day');
+  const today = statsCalendarNow().startOf('day');
   const dates: string[] = [];
   for (let i = n - 1; i >= 0; i -= 1) {
     dates.push(today.subtract(i, 'day').format('YYYY-MM-DD'));
@@ -170,16 +170,16 @@ function UsageTooltip({
           <div key={item.key} className="flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 shrink-0 rounded-[2px]" style={{ backgroundColor: item.color }} />
             <span className="max-w-[8rem] truncate text-muted-foreground">{item.label}</span>
-            <span className="ml-auto font-mono font-medium tabular-nums text-foreground">
+            <span className="ml-auto font-medium tabular-nums text-foreground">
               {formatCost(item.value, currencySymbol)}
-              <span className="ml-1 font-sans font-normal text-muted-foreground">{pct.toFixed(1)}%</span>
+              <span className="ml-1 font-normal text-muted-foreground">{pct.toFixed(1)}%</span>
             </span>
           </div>
         );
       })}
       <div className="flex items-center gap-1.5 border-t border-border/60 pt-1">
         <span className="text-muted-foreground">{totalLabel}</span>
-        <span className="ml-auto font-mono font-medium tabular-nums text-foreground">{formatCost(total, currencySymbol)}</span>
+        <span className="ml-auto font-medium tabular-nums text-foreground">{formatCost(total, currencySymbol)}</span>
       </div>
     </div>
   );

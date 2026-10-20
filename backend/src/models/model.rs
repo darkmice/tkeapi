@@ -6,8 +6,8 @@
  */
 
 #![allow(dead_code)]
-use chrono::{Datelike, Timelike};
 use crate::time_system::DbTs;
+use chrono::{Datelike, Timelike};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -26,17 +26,17 @@ pub struct Model {
     pub group_ratios: String, // {"default": 1.0, "vip": 0.8}
     pub billing_rule_id: Option<i64>,
     pub pre_deduction: f64,
-    pub is_active: i32,
+    pub is_active: i64,
     pub forward_rule_ids: Option<String>,
-    pub enable_log_content: i32,
+    pub enable_log_content: i64,
     #[sqlx(default)]
     pub site_discount: f64, // 折扣限价倍率（开启时折扣不低于此值，1.0=原价）
     #[sqlx(default)]
-    pub site_discount_enabled: i32, // 折扣限价开关（0=关，1=开）
+    pub site_discount_enabled: i64, // 折扣限价开关（0=关，1=开）
     #[sqlx(default)]
     pub global_discount: f64, // 全站折扣倍率
     #[sqlx(default)]
-    pub global_discount_enabled: i32, // 全站折扣开关（0=关，1=开）
+    pub global_discount_enabled: i64, // 全站折扣开关（0=关，1=开）
     /// 折扣限价 / 全站折扣的按天时段规划。`enabled=false` 或空串时使用上面的统一折扣
     #[sqlx(default)]
     #[serde(default)]
@@ -52,7 +52,7 @@ pub struct Model {
     /// 1=模型库目录，0=上架模型（`models` 表内应恒为 0）
     #[sqlx(default)]
     #[serde(default)]
-    pub is_system: i32,
+    pub is_system: i64,
     /// 来源模型库 mid；自建上架为空
     #[sqlx(default)]
     #[serde(default)]
@@ -60,7 +60,7 @@ pub struct Model {
     /// 1=上架（可调用/进渠道/进广场），0=下架（在模型库）
     #[sqlx(default)]
     #[serde(default)]
-    pub is_listed: i32,
+    pub is_listed: i64,
     /// 模型库列表：已被上架的份数（非表字段）
     #[sqlx(skip)]
     #[serde(default)]
@@ -71,7 +71,7 @@ pub struct Model {
     pub library_kind: Option<String>,
     #[sqlx(default)]
     #[serde(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
     #[sqlx(default)]
@@ -100,13 +100,13 @@ pub struct BillingRule {
     pub provider_id: Option<i64>,
     #[sqlx(default)]
     pub type_id: Option<i64>,
-    pub is_active: i32,
-    pub is_system: i32,
+    pub is_active: i64,
+    pub is_system: i64,
     pub pid: String,
     #[sqlx(default)]
     pub pricing_type: String,
     #[sqlx(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
     #[sqlx(default)]
@@ -136,7 +136,9 @@ pub struct TimeMultiplier {
     pub all_day: bool,
 }
 
-fn deserialize_days<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+fn deserialize_days<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<u8>, D::Error> {
     Ok(Option::<Vec<u8>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
@@ -193,16 +195,16 @@ fn invert_rest_rate(
     weekday: chrono::Weekday,
     remainder: Option<f64>,
 ) -> f64 {
+    if let Some(r) = remainder {
+        if finite_non_negative(r) {
+            return r;
+        }
+    }
     if !multipliers
         .iter()
         .any(|item| !item.all_day && weekday_applies(&item.days, weekday))
     {
         return 1.0;
-    }
-    if let Some(r) = remainder {
-        if r >= 0.0 {
-            return r;
-        }
     }
     invert_remainder(multipliers, weekday)
 }
@@ -237,9 +239,7 @@ fn interval_matches(
             false
         }
     } else {
-        current_time >= start_t
-            && current_time < end_t
-            && weekday_applies(&item.days, weekday)
+        current_time >= start_t && current_time < end_t && weekday_applies(&item.days, weekday)
     }
 }
 
@@ -253,25 +253,34 @@ fn resolve_time_multiplier(
     if multipliers.is_empty() {
         return 1.0;
     }
+    let has_valid_remainder = remainder.is_some_and(finite_non_negative);
     let matched = multipliers
         .iter()
         .find(|item| interval_matches(item, current_time, weekday));
     if let Some(item) = matched {
         // 未填剩余倍率时保持旧反向：窗口改成 1.00；填了则窗口用填写值（即模型当前价）
-        if invert && remainder.is_none() && !day_has_all_day(multipliers, weekday) {
+        if invert && !has_valid_remainder && !day_has_all_day(multipliers, weekday) {
             return 1.0;
         }
-        return item.multiplier;
+        return if finite_non_negative(item.multiplier) {
+            item.multiplier
+        } else {
+            1.0
+        };
     }
     if let Some(item) = multipliers
         .iter()
         .find(|item| item.all_day && weekday_applies(&item.days, weekday))
     {
-        return item.multiplier;
+        return if finite_non_negative(item.multiplier) {
+            item.multiplier
+        } else {
+            1.0
+        };
     }
     // 未规划倍率是一等配置：只要填了就生效，不必再开 invert。
     // 旧反向（invert 且未填剩余）仍走倒数。
-    if remainder.is_some() || invert {
+    if has_valid_remainder || invert {
         invert_rest_rate(multipliers, weekday, remainder)
     } else {
         1.0
@@ -302,7 +311,6 @@ impl BillingRule {
         let local_now = chrono::Utc::now().with_timezone(&tz);
         self.multiplier_at_local_datetime(local_now.time(), local_now.weekday())
     }
-
 
     /// 按给定本地时钟与星期匹配时段倍率
     pub fn multiplier_at_local_datetime(
@@ -350,10 +358,11 @@ struct DiscountSlot {
     start: String,
     #[serde(default)]
     end: String,
+    /// 缺省回退统一折扣；显式 0 表示该时段免费
     #[serde(default)]
-    site_discount: f64,
+    site_discount: Option<f64>,
     #[serde(default)]
-    global_discount: f64,
+    global_discount: Option<f64>,
     #[serde(default, deserialize_with = "deserialize_days")]
     days: Vec<u8>,
     #[serde(default)]
@@ -407,8 +416,8 @@ pub fn discount_schedule_enabled(raw: &str) -> bool {
 pub fn effective_model_discounts(
     site_discount: f64,
     global_discount: f64,
-    site_enabled: i32,
-    global_enabled: i32,
+    site_enabled: i64,
+    global_enabled: i64,
     schedule_json: &str,
     current_time: chrono::NaiveTime,
     weekday: chrono::Weekday,
@@ -422,31 +431,44 @@ pub fn effective_model_discounts(
     let Some(slot) = matching_discount_slot(&schedule.slots, current_time, weekday) else {
         return (site_discount, global_discount);
     };
-    let site = if site_enabled == 1 && slot.site_discount.is_finite() && slot.site_discount > 0.0 {
-        slot.site_discount
+    let site = if site_enabled == 1 {
+        scheduled_discount(slot.site_discount).unwrap_or(site_discount)
     } else {
         site_discount
     };
-    let global = if global_enabled == 1
-        && slot.global_discount.is_finite()
-        && slot.global_discount > 0.0
-    {
-        slot.global_discount
+    let global = if global_enabled == 1 {
+        scheduled_discount(slot.global_discount).unwrap_or(global_discount)
     } else {
         global_discount
     };
     (site, global)
 }
 
-fn finite_positive(v: f64) -> bool {
-    v.is_finite() && v > 0.0
+fn finite_non_negative(v: f64) -> bool {
+    v.is_finite() && v >= 0.0
+}
+
+fn scheduled_discount(raw: Option<f64>) -> Option<f64> {
+    raw.filter(|v| finite_non_negative(*v))
+}
+
+fn discount_rate_label(v: f64) -> String {
+    if v.abs() <= 1e-9 {
+        "免费".to_string()
+    } else {
+        format!("{v:.2}")
+    }
 }
 
 fn slot_days(days: &[u8]) -> Vec<u8> {
     if days.is_empty() {
         return vec![1, 2, 3, 4, 5, 6, 7];
     }
-    let mut out: Vec<u8> = days.iter().copied().filter(|d| (1..=7).contains(d)).collect();
+    let mut out: Vec<u8> = days
+        .iter()
+        .copied()
+        .filter(|d| (1..=7).contains(d))
+        .collect();
     out.sort_unstable();
     out.dedup();
     if out.is_empty() {
@@ -457,7 +479,11 @@ fn slot_days(days: &[u8]) -> Vec<u8> {
 }
 
 fn next_iso_day(day: u8) -> u8 {
-    if day == 7 { 1 } else { day + 1 }
+    if day == 7 {
+        1
+    } else {
+        day + 1
+    }
 }
 
 struct DiscountInterval {
@@ -472,21 +498,32 @@ fn clock_minutes(raw: &str) -> Option<u16> {
     Some((t.hour() as u16) * 60 + t.minute() as u16)
 }
 
-fn expand_discount_intervals(slot: &DiscountSlot, index: usize) -> Result<Vec<DiscountInterval>, String> {
-    if slot.all_day {
+fn expand_time_intervals(
+    all_day: bool,
+    start_raw: &str,
+    end_raw: &str,
+    days: &[u8],
+    index: usize,
+) -> Result<Vec<DiscountInterval>, String> {
+    if all_day {
         return Ok(Vec::new());
     }
-    let start = clock_minutes(&slot.start)
-        .ok_or_else(|| format!("第 {} 条时段的开始时间无效", index + 1))?;
-    let end = clock_minutes(&slot.end)
-        .ok_or_else(|| format!("第 {} 条时段的结束时间无效", index + 1))?;
+    let start =
+        clock_minutes(start_raw).ok_or_else(|| format!("第 {} 条时段的开始时间无效", index + 1))?;
+    let end =
+        clock_minutes(end_raw).ok_or_else(|| format!("第 {} 条时段的结束时间无效", index + 1))?;
     if start == end {
         return Err(format!("第 {} 条时段的起止时间不能相同", index + 1));
     }
     let mut out = Vec::new();
-    for day in slot_days(&slot.days) {
+    for day in slot_days(days) {
         if start > end {
-            out.push(DiscountInterval { start, end: 1440, day, index });
+            out.push(DiscountInterval {
+                start,
+                end: 1440,
+                day,
+                index,
+            });
             out.push(DiscountInterval {
                 start: 0,
                 end,
@@ -494,61 +531,21 @@ fn expand_discount_intervals(slot: &DiscountSlot, index: usize) -> Result<Vec<Di
                 index,
             });
         } else {
-            out.push(DiscountInterval { start, end, day, index });
+            out.push(DiscountInterval {
+                start,
+                end,
+                day,
+                index,
+            });
         }
     }
     Ok(out)
 }
 
-/// 保存前校验。关闭规划时不检查条目。
-pub fn validate_discount_schedule(
-    raw: &str,
-    site_enabled: bool,
-    global_enabled: bool,
+fn check_schedule_conflicts(
+    all_day: &[(usize, Vec<u8>)],
+    intervals: &[DiscountInterval],
 ) -> Result<(), String> {
-    let Some(schedule) = parse_discount_schedule(raw) else {
-        if raw.trim().is_empty() || raw.trim() == "{}" {
-            return Ok(());
-        }
-        return Err("时段折扣配置无法解析".to_string());
-    };
-    if !schedule.enabled {
-        return Ok(());
-    }
-    if !global_enabled {
-        return Err("开启全站折扣后才能规划时段折扣".to_string());
-    }
-    if schedule.slots.is_empty() {
-        return Err("已开启时段折扣，请至少添加一条时段或全天规则".to_string());
-    }
-    let mut intervals = Vec::new();
-    let mut all_day: Vec<(usize, Vec<u8>)> = Vec::new();
-    for (index, slot) in schedule.slots.iter().enumerate() {
-        if site_enabled && !finite_positive(slot.site_discount) {
-            return Err(format!("第 {} 条规则的折扣限价必须大于 0", index + 1));
-        }
-        if global_enabled && !finite_positive(slot.global_discount) {
-            return Err(format!("第 {} 条规则的全站折扣必须大于 0", index + 1));
-        }
-        if site_enabled
-            && global_enabled
-            && finite_positive(slot.site_discount)
-            && finite_positive(slot.global_discount)
-            && slot.global_discount < slot.site_discount
-        {
-            return Err(format!(
-                "第 {} 条规则的全站折扣 {:.2} 低于折扣限价 {:.2}",
-                index + 1,
-                slot.global_discount,
-                slot.site_discount
-            ));
-        }
-        if slot.all_day {
-            all_day.push((index, slot_days(&slot.days)));
-            continue;
-        }
-        intervals.extend(expand_discount_intervals(slot, index)?);
-    }
     for i in 0..all_day.len() {
         for j in (i + 1)..all_day.len() {
             if let Some(day) = all_day[i].1.iter().find(|d| all_day[j].1.contains(d)) {
@@ -579,6 +576,112 @@ pub fn validate_discount_schedule(
         }
     }
     Ok(())
+}
+
+/// 计费规则时段倍率保存前校验。关闭时不检查条目。
+pub fn validate_time_multiplier_config(raw: &str) -> Result<(), String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "{}" || raw == "null" {
+        return Ok(());
+    }
+    let config: TimeMultiplierConfig =
+        serde_json::from_str(raw).map_err(|_| "扩展配置格式无效".to_string())?;
+    if !config.enable_time_multipliers {
+        return Ok(());
+    }
+    if config.time_multipliers.is_empty() {
+        return Err("已开启时段倍率，请至少添加一条时段或全天规则".to_string());
+    }
+    if let Some(rem) = config.invert_remainder_multiplier {
+        if !finite_non_negative(rem) {
+            return Err("剩余时段倍率必须大于等于 0（0 为免费）".to_string());
+        }
+    }
+    let mut intervals = Vec::new();
+    let mut all_day: Vec<(usize, Vec<u8>)> = Vec::new();
+    for (index, item) in config.time_multipliers.iter().enumerate() {
+        if !finite_non_negative(item.multiplier) {
+            return Err(format!(
+                "第 {} 条规则的倍率必须大于等于 0（0 为免费）",
+                index + 1
+            ));
+        }
+        if item.all_day {
+            all_day.push((index, slot_days(&item.days)));
+            continue;
+        }
+        intervals.extend(expand_time_intervals(
+            item.all_day,
+            &item.start,
+            &item.end,
+            &item.days,
+            index,
+        )?);
+    }
+    check_schedule_conflicts(&all_day, &intervals)
+}
+
+/// 保存前校验。关闭规划时不检查条目。
+pub fn validate_discount_schedule(
+    raw: &str,
+    site_enabled: bool,
+    global_enabled: bool,
+) -> Result<(), String> {
+    let Some(schedule) = parse_discount_schedule(raw) else {
+        if raw.trim().is_empty() || raw.trim() == "{}" {
+            return Ok(());
+        }
+        return Err("时段折扣配置无法解析".to_string());
+    };
+    if !schedule.enabled {
+        return Ok(());
+    }
+    if !global_enabled {
+        return Err("开启全站折扣后才能规划时段折扣".to_string());
+    }
+    if schedule.slots.is_empty() {
+        return Err("已开启时段折扣，请至少添加一条时段或全天规则".to_string());
+    }
+    let mut intervals = Vec::new();
+    let mut all_day: Vec<(usize, Vec<u8>)> = Vec::new();
+    for (index, slot) in schedule.slots.iter().enumerate() {
+        let site_rate = if site_enabled {
+            Some(scheduled_discount(slot.site_discount).ok_or_else(|| {
+                format!("第 {} 条规则的折扣限价必须大于等于 0（0 为免费）", index + 1)
+            })?)
+        } else {
+            None
+        };
+        let global_rate = if global_enabled {
+            Some(scheduled_discount(slot.global_discount).ok_or_else(|| {
+                format!("第 {} 条规则的全站折扣必须大于等于 0（0 为免费）", index + 1)
+            })?)
+        } else {
+            None
+        };
+        if let (Some(site_rate), Some(global_rate)) = (site_rate, global_rate) {
+            if global_rate < site_rate {
+                return Err(format!(
+                    "第 {} 条规则的全站折扣 {} 低于折扣限价 {}",
+                    index + 1,
+                    discount_rate_label(global_rate),
+                    discount_rate_label(site_rate)
+                ));
+            }
+        }
+        if slot.all_day {
+            all_day.push((index, slot_days(&slot.days)));
+            continue;
+        }
+        intervals.extend(expand_time_intervals(
+            slot.all_day,
+            &slot.start,
+            &slot.end,
+            &slot.days,
+            index,
+        )?);
+    }
+    check_schedule_conflicts(&all_day, &intervals)
 }
 
 impl Model {
@@ -627,11 +730,11 @@ pub struct CreateBillingRuleRequest {
     pub provider_id: Option<i64>,
     pub type_id: Option<i64>,
     #[serde(default = "default_active")]
-    pub is_active: i32,
+    pub is_active: i64,
     pub pid: Option<String>,
     #[serde(default = "default_pricing_type")]
     pub pricing_type: String,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -650,10 +753,10 @@ pub struct UpdateBillingRuleRequest {
     pub extended_config: Option<serde_json::Value>,
     pub provider_id: Option<i64>,
     pub type_id: Option<i64>,
-    pub is_active: Option<i32>,
+    pub is_active: Option<i64>,
     pub pid: Option<String>,
     pub pricing_type: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -701,11 +804,11 @@ pub struct ForwardRule {
     pub category: String,
     pub config_json: String,
     pub description: Option<String>,
-    pub is_active: i32,
-    pub is_system: i32, // 1 for built-in, 0 for custom
+    pub is_active: i64,
+    pub is_system: i64, // 1 for built-in, 0 for custom
     pub eid: String,
     #[sqlx(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
 }
@@ -718,9 +821,9 @@ pub struct CreateRuleRequest {
     pub config_json: Option<String>,
     pub description: Option<String>,
     #[serde(default = "default_active")]
-    pub is_active: i32,
+    pub is_active: i64,
     pub eid: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -730,12 +833,12 @@ pub struct UpdateRuleRequest {
     pub category: Option<String>,
     pub config_json: Option<String>,
     pub description: Option<String>,
-    pub is_active: Option<i32>,
+    pub is_active: Option<i64>,
     pub eid: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
-pub fn default_active() -> i32 {
+pub fn default_active() -> i64 {
     1
 }
 
@@ -749,10 +852,10 @@ pub struct ModelProvider {
     pub name: String,
     #[sqlx(default)]
     pub name_en: String,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
     #[serde(default)]
-    pub is_system: i32,
+    pub is_system: i64,
     pub remark: Option<String>,
     #[sqlx(default)]
     pub logo: Option<String>,
@@ -768,10 +871,10 @@ pub struct ModelType {
     pub name: String,
     #[sqlx(default)]
     pub name_en: String,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
     #[serde(default)]
-    pub is_system: i32,
+    pub is_system: i64,
     #[sqlx(default)]
     pub logo: Option<String>,
     #[sqlx(default)]
@@ -789,7 +892,7 @@ pub struct ClassificationCount {
     #[sqlx(default)]
     pub name_en: String,
     #[serde(default)]
-    pub is_system: i32,
+    pub is_system: i64,
     #[sqlx(default)]
     pub logo: Option<String>,
     pub count: i64,
@@ -829,18 +932,18 @@ pub struct CreateModelRequest {
     pub billing_rule_id: Option<i64>,
     pub pre_deduction: Option<f64>,
     pub forward_rule_ids: Option<Vec<i64>>,
-    pub is_active: Option<i32>,
-    pub enable_log_content: Option<i32>,
+    pub is_active: Option<i64>,
+    pub enable_log_content: Option<i64>,
     pub site_discount: Option<f64>,
-    pub site_discount_enabled: Option<i32>,
+    pub site_discount_enabled: Option<i64>,
     pub global_discount: Option<f64>,
-    pub global_discount_enabled: Option<i32>,
+    pub global_discount_enabled: Option<i64>,
     pub discount_schedule: Option<String>,
     pub logo: Option<String>,
     pub remark: Option<String>,
     pub description: Option<String>,
     pub feature_attributes: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -855,19 +958,19 @@ pub struct UpdateModelRequest {
     pub group_ratios: Option<serde_json::Value>,
     pub billing_rule_id: Option<i64>,
     pub pre_deduction: Option<f64>,
-    pub is_active: Option<i32>,
+    pub is_active: Option<i64>,
     pub forward_rule_ids: Option<Vec<i64>>,
-    pub enable_log_content: Option<i32>,
+    pub enable_log_content: Option<i64>,
     pub site_discount: Option<f64>,
-    pub site_discount_enabled: Option<i32>,
+    pub site_discount_enabled: Option<i64>,
     pub global_discount: Option<f64>,
-    pub global_discount_enabled: Option<i32>,
+    pub global_discount_enabled: Option<i64>,
     pub discount_schedule: Option<String>,
     pub logo: Option<String>,
     pub remark: Option<String>,
     pub description: Option<String>,
     pub feature_attributes: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -880,15 +983,18 @@ pub struct ModelListResponse {
 pub struct ClassificationRequest {
     pub name: String,
     pub name_en: Option<String>,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
     pub remark: Option<String>,
     pub logo: Option<String>,
 }
 
 #[cfg(test)]
 mod discount_schedule_tests {
-    use super::{effective_model_discounts, validate_discount_schedule};
+    use super::{
+        effective_model_discounts, resolve_time_multiplier, validate_discount_schedule,
+        validate_time_multiplier_config, TimeMultiplier,
+    };
     use chrono::{NaiveTime, Weekday};
 
     fn at(h: u32, m: u32) -> NaiveTime {
@@ -958,5 +1064,67 @@ mod discount_schedule_tests {
         let inverted = r#"{"enabled":true,"slots":[{"all_day":true,"days":[1],"site_discount":0.9,"global_discount":0.5}]}"#;
         assert!(validate_discount_schedule(inverted, true, true).is_err());
         assert!(validate_discount_schedule(inverted, true, false).is_err());
+    }
+
+    #[test]
+    fn zero_slot_is_free_and_omitted_rate_keeps_unified() {
+        let free = r#"{"enabled":true,"slots":[{"all_day":true,"days":[1],"site_discount":0,"global_discount":0}]}"#;
+        let (site, global) =
+            effective_model_discounts(1.0, 0.8, 1, 1, free, at(10, 0), Weekday::Mon);
+        assert_eq!(site, 0.0);
+        assert_eq!(global, 0.0);
+        let (site, global) =
+            effective_model_discounts(1.0, 0.8, 1, 1, free, at(10, 0), Weekday::Tue);
+        assert_eq!(site, 1.0);
+        assert_eq!(global, 0.8);
+        assert!(validate_discount_schedule(free, true, true).is_ok());
+
+        let omitted = r#"{"enabled":true,"slots":[{"all_day":true,"days":[1]}]}"#;
+        let (site, global) =
+            effective_model_discounts(1.0, 0.8, 1, 1, omitted, at(10, 0), Weekday::Mon);
+        assert_eq!(site, 1.0);
+        assert_eq!(global, 0.8);
+        assert!(validate_discount_schedule(omitted, true, true).is_err());
+
+        let raised = r#"{"enabled":true,"slots":[{"all_day":true,"days":[1],"site_discount":0.5,"global_discount":0}]}"#;
+        assert!(validate_discount_schedule(raised, true, true).is_err());
+    }
+
+    #[test]
+    fn remainder_multiplier_applies_to_days_without_narrow_slots() {
+        let multipliers = vec![TimeMultiplier {
+            start: "00:00".to_string(),
+            end: "00:00".to_string(),
+            multiplier: 0.5,
+            days: vec![6, 7],
+            all_day: true,
+        }];
+        assert_eq!(
+            resolve_time_multiplier(&multipliers, false, Some(1.2), at(10, 0), Weekday::Sat),
+            0.5
+        );
+        assert_eq!(
+            resolve_time_multiplier(&multipliers, false, Some(1.2), at(10, 0), Weekday::Mon),
+            1.2
+        );
+        assert_eq!(
+            resolve_time_multiplier(&multipliers, true, None, at(10, 0), Weekday::Mon),
+            1.0
+        );
+    }
+
+    #[test]
+    fn validates_time_multiplier_config_conflicts_and_rates() {
+        let valid = r#"{"enable_time_multipliers":true,"invert_remainder_multiplier":0,"time_multipliers":[{"start":"09:00","end":"12:00","multiplier":0.5,"days":[1],"all_day":false}]}"#;
+        assert!(validate_time_multiplier_config(valid).is_ok());
+
+        let overlap = r#"{"enable_time_multipliers":true,"time_multipliers":[
+            {"start":"09:00","end":"12:00","multiplier":0.8,"days":[1],"all_day":false},
+            {"start":"11:00","end":"13:00","multiplier":0.5,"days":[1],"all_day":false}
+        ]}"#;
+        assert!(validate_time_multiplier_config(overlap).is_err());
+
+        let neg = r#"{"enable_time_multipliers":true,"time_multipliers":[{"all_day":true,"days":[1],"multiplier":-0.5}]}"#;
+        assert!(validate_time_multiplier_config(neg).is_err());
     }
 }

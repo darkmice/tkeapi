@@ -67,6 +67,11 @@ export function isAllDayMultiplier(item: { all_day?: boolean } | null | undefine
   return !!item?.all_day;
 }
 
+/** 时段倍率为 0：该时段按默认价乘 0，即不收费 */
+export function isFreeTimeMultiplier(rate: number): boolean {
+  return Number.isFinite(rate) && Math.abs(rate) <= 1e-9;
+}
+
 /** 两条全天规则覆盖同一星期则冲突；全天与时段允许同日并存（时段优先） */
 export function findOverlappingAllDayDays(
   items: { all_day?: boolean; days?: number[] }[],
@@ -148,7 +153,7 @@ function intervalMatches(item: TimeMultiplierRule, minutes: number, weekday: num
 }
 
 function parseInvertRemainder(remainder?: number | null): number | undefined {
-  if (remainder == null) return undefined;
+  if (remainder == null || (remainder as unknown) === '') return undefined;
   const n = Number(remainder);
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
@@ -168,17 +173,17 @@ export function resolveTimeMultiplierAt(
   if (matched) {
     if (invert && rem == null && !hasAllDay) return 1;
     const n = Number(matched.multiplier);
-    return Number.isFinite(n) ? n : 1;
+    return Number.isFinite(n) && n >= 0 ? n : 1;
   }
   const allDay = list.find((item) => isAllDayMultiplier(item) && weekdayApplies(item.days, weekday));
   if (allDay) {
     const n = Number(allDay.multiplier);
-    return Number.isFinite(n) ? n : 1;
+    return Number.isFinite(n) && n >= 0 ? n : 1;
   }
-  const first = list.find((item) => !isAllDayMultiplier(item) && weekdayApplies(item.days, weekday));
-  if (!first) return 1;
   if (rem != null) return rem;
   if (invert) {
+    const first = list.find((item) => !isAllDayMultiplier(item) && weekdayApplies(item.days, weekday));
+    if (!first) return 1;
     const m = Number(first.multiplier);
     return Number.isFinite(m) && m > 0 ? 1 / m : 1;
   }
@@ -194,8 +199,7 @@ export function hasExplicitRemainder(ext: { invert_remainder_multiplier?: unknow
 }
 
 export function invertRemainderFromExt(ext: any): number {
-  const n = Number(ext?.invert_remainder_multiplier);
-  if (Number.isFinite(n) && n >= 0) return n;
+  if (hasExplicitRemainder(ext)) return Number(ext.invert_remainder_multiplier);
   if (ext?.invert_time_multipliers) {
     const first = (Array.isArray(ext?.time_multipliers) ? ext.time_multipliers : [])
       .find((item: any) => !item.all_day && Number(item.multiplier) > 0);

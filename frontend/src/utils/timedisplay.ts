@@ -6,15 +6,23 @@
  */
 
 /**
- * timedisplay：用户/管理端显示与统计自然日时区。
+ * timedisplay：展示与筛选墙钟。
  * 后端 timesystem 固定 UTC；API 时间按 UTC 解释后再按 timedisplay 渲染。
+ * 站点运营时区（default_timezone）只用于业务自然日，不走本文件的管理端展示解析。
  */
 import useAuthStore from '../store/auth';
 import useSettingsStore from '../store/settings';
 
-/** 站点默认时区（基础设置）。管理后台筛选/展示都走这个。 */
+/** 站点运营时区：计费时段、额度刷新、仪表盘/财务自然日。 */
 export function resolveSiteTimedisplay(): string {
   return useSettingsStore.getState().settings?.site?.default_timezone?.trim() || 'Asia/Shanghai';
+}
+
+/** 管理后台展示时区；未配置或非法时回退站点运营时区。 */
+function resolveAdminTimedisplay(): string {
+  const adminTz = useSettingsStore.getState().settings?.site?.admin_display_timezone?.trim();
+  if (adminTz && isValidIanaTimezone(adminTz)) return adminTz;
+  return resolveSiteTimedisplay();
 }
 
 /** 浏览器 IANA 时区；读不到则空串（注册时后端再回退 UTC）。 */
@@ -35,10 +43,10 @@ function isValidIanaTimezone(tz: string): boolean {
   }
 }
 
-/** 管理后台：站点默认时区。用户端：个人时区合法则用之，否则 UTC。 */
+/** 管理后台：展示时区。用户端：个人时区合法则用之，否则 UTC。 */
 export function resolveTimedisplay(): string {
   if (useAuthStore.getState().user?.role === 'admin') {
-    return resolveSiteTimedisplay();
+    return resolveAdminTimedisplay();
   }
   const userTz = useAuthStore.getState().user?.timezone?.trim();
   if (userTz && isValidIanaTimezone(userTz)) return userTz;
@@ -54,6 +62,18 @@ function tzLabel(name?: string): string {
   let n = name || 'UTC';
   if (n.startsWith('GMT')) n = n.replace('GMT', 'UTC');
   return n === 'UTC' ? 'UTC+0' : n;
+}
+
+/** 按指定 IANA 墙钟格式化，不走 timezoneInterceptor。 */
+export function formatWallClock(timeZone: string, at: Date = new Date()): string {
+  const tz = timeZone.trim() || 'UTC';
+  try {
+    const p = formatParts(at, tz);
+    const hour = p.hour === '24' ? '00' : p.hour;
+    return `${p.year}-${p.month}-${p.day} ${hour}:${p.minute}:${p.second} (${tzLabel(p.timeZoneName)})`;
+  } catch {
+    return formatWallClock('UTC', at);
+  }
 }
 
 function formatParts(date: Date, timeZone: string) {

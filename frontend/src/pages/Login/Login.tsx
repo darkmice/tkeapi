@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next';
 import useAuthStore from '../../store/auth';
 import useSettingsStore from '../../store/settings';
 import AuthLayout from '../../layouts/AuthLayout';
+import SignedInEntryGate from './SignedInEntryGate';
 import type { AuthMethodOption } from '../../layouts/AuthLayout';
 import WechatQR from '../../components/WechatQR';
 import GoogleIcon from '../../components/GoogleIcon';
@@ -51,6 +52,7 @@ const Login: React.FC = () => {
   const [shakeKey, setShakeKey] = useState(0);
   const [selectOpen, setSelectOpen] = useState(false);
   const [candidates, setCandidates] = useState<{ uid: string; username: string; nickname?: string | null }[]>([]);
+  const [pendingOAuthCode, setPendingOAuthCode] = useState('');
 
   const navigate = useNavigate();
   const { token, user, setToken, setUser } = useAuthStore();
@@ -61,31 +63,10 @@ const Login: React.FC = () => {
     const prefill = searchParams.get('identifier') || searchParams.get('email') || searchParams.get('mobile') || '';
     const type = searchParams.get('type') || '';
     if (prefill) setUsernameVal(prefill);
-    if (type === 'email' || type === 'mobile' || type === 'username') {
+    if (type === 'email' || type === 'mobile' || type === 'username' || type === 'wechat') {
       setActiveTab(type);
     }
   }, [searchParams]);
-
-  // 已登录访问登录页：管理员进管理台；普通用户在站点默认创作中心开启时进创作中心主页
-  useEffect(() => {
-    if (!(token && user)) return;
-    let cancelled = false;
-    (async () => {
-      if (user.role === 'admin') {
-        const adminPath = localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
-        if (!cancelled) navigate(`/${adminPath}/dashboard`, { replace: true });
-        return;
-      }
-      const explicit = searchParams.get('redirect');
-      if (explicit) {
-        if (!cancelled) navigate(sanitizeRedirectPath(explicit), { replace: true });
-        return;
-      }
-      const landing = await playground2026LoginLanding(user);
-      if (!cancelled) navigate(landing || '/dashboard', { replace: true });
-    })();
-    return () => { cancelled = true; };
-  }, [token, user, navigate, searchParams]);
 
   useEffect(() => { 
     if (!settings) fetchSettings(); 
@@ -98,15 +79,19 @@ const Login: React.FC = () => {
     if (type === 'tos') {
       const mode = isZh ? agreement.tos_mode : agreement.tos_mode_en;
       if (mode === 'link') {
-        return isZh ? agreement.tos_link : (agreement.tos_link_en || agreement.tos_link);
+        const rawLink = isZh ? agreement.tos_link : (agreement.tos_link_en || agreement.tos_link);
+        const link = String(rawLink || '').trim();
+        return link ? (/^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`) : '#';
       }
-      return '/legal/terms';
+      return isZh ? '/legal/terms' : '/legal/terms?lang=en';
     } else {
       const mode = isZh ? agreement.privacy_mode : agreement.privacy_mode_en;
       if (mode === 'link') {
-        return isZh ? agreement.privacy_link : (agreement.privacy_link_en || agreement.privacy_link);
+        const rawLink = isZh ? agreement.privacy_link : (agreement.privacy_link_en || agreement.privacy_link);
+        const link = String(rawLink || '').trim();
+        return link ? (/^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`) : '#';
       }
-      return '/legal/privacy';
+      return isZh ? '/legal/privacy' : '/legal/privacy?lang=en';
     }
   };
 
@@ -163,8 +148,15 @@ const Login: React.FC = () => {
 
     if (code) {
       request
-        .post('/auth/exchange-login-code', { code })
+        .post('/auth/exchange-login-code', { code }, { skipErrorHandler: true } as any)
         .then((res: any) => {
+          if (res?.need_select && Array.isArray(res.candidates) && res.candidates.length > 1) {
+            stripAuthParamsFromUrl();
+            setPendingOAuthCode(code);
+            setCandidates(res.candidates);
+            setSelectOpen(true);
+            return;
+          }
           const tok = res?.token || res?.data?.token;
           if (tok) finishWithToken(tok);
           else stripAuthParamsFromUrl();
@@ -172,6 +164,7 @@ const Login: React.FC = () => {
         .catch((e) => {
           console.error('Exchange login code failed:', e);
           stripAuthParamsFromUrl();
+          setFormError(toFormError(e));
         });
       return;
     }
@@ -218,8 +211,11 @@ const Login: React.FC = () => {
 
   // 默认 Tab 设置
   useEffect(() => {
+    if (activeTab === 'wechat' && login?.enable_wechat_login) return;
     if (loginTabs.length > 0 && !loginTabs.some(tab => tab.key === activeTab)) {
       setActiveTab(loginTabs[0].key);
+    } else if (loginTabs.length === 0 && login?.enable_wechat_login) {
+      setActiveTab('wechat');
     }
   }, [settings]);
 
@@ -231,6 +227,7 @@ const Login: React.FC = () => {
     setFormError('');
     setSelectOpen(false);
     setCandidates([]);
+    setPendingOAuthCode('');
   };
 
   const toFormError = (error: unknown) => {
@@ -286,7 +283,6 @@ const Login: React.FC = () => {
     setSelectOpen(false);
     setToken(res.token); 
     setUser(res.user);
-    message.success(t('login.welcome') + ', ' + (res.user.nickname || res.user.username));
     if (res.user?.role === 'admin') {
       const adminPath = localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
       navigate(`/${adminPath}/dashboard`);
@@ -305,12 +301,18 @@ const Login: React.FC = () => {
     if (loading) return;
     setLoading(true);
     try {
-      const res = await (request.post('/auth/login', {
-        username: usernameVal.trim(),
-        password: passwordVal,
-        login_type: activeTab,
-        uid,
-      }, { skipErrorHandler: true } as any) as any);
+      const res = pendingOAuthCode
+        ? await (request.post('/auth/exchange-login-code', {
+            code: pendingOAuthCode,
+            uid,
+          }, { skipErrorHandler: true } as any) as any)
+        : await (request.post('/auth/login', {
+            username: usernameVal.trim(),
+            password: passwordVal,
+            login_type: activeTab,
+            uid,
+          }, { skipErrorHandler: true } as any) as any);
+      setPendingOAuthCode('');
       finishLogin(res);
     } catch (error) {
       setFormError(toFormError(error));
@@ -364,14 +366,18 @@ const Login: React.FC = () => {
   });
 
   const wechatAppId = settings?.wechat_oauth_app_id || '';
-  const wechatRedirectUri = `${window.location.origin}/api/v1/auth/oauth/wechat/callback`;
+  const wechatBaseOrigin = settings?.wechat_oauth_callback_domain || window.location.origin;
+  const wechatRedirectUri = `${wechatBaseOrigin}/api/v1/auth/oauth/wechat/callback`;
 
-  // 从后端获取 HMAC 签名的 OAuth state（嵌入 3 天内邀请参数，禁止前端自造）
+  // 从后端获取 HMAC 签名的 OAuth state（嵌入 3 天内邀请参数与当前 origin，禁止前端自造）
   useEffect(() => {
     if (!settings?.login?.enable_wechat_login) return;
     let cancelled = false;
     const { aff, team } = resolveInviteParams();
-    const params: Record<string, string> = { provider: 'wechat' };
+    const params: Record<string, string> = { 
+      provider: 'wechat',
+      origin: window.location.origin,
+    };
     if (aff) params.aff = aff;
     if (team) params.team = team;
     const tz = browserTimezone();
@@ -383,7 +389,7 @@ const Login: React.FC = () => {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [settings?.login?.enable_wechat_login]);
+  }, [settings?.login?.enable_wechat_login, settings?.wechat_oauth_callback_domain]);
 
   // 邀请码处理：登录页「去注册」带回 3 天内未清缓存的 aff/team
   const getStoredInviteParam = () => buildRegisterPath();
@@ -397,7 +403,12 @@ const Login: React.FC = () => {
     </div>
   );
 
+  const completingExternalAuth = Boolean(
+    searchParams.get('code') || searchParams.get('token') || searchParams.get('handoff'),
+  );
+
   return (
+    <SignedInEntryGate enabled={!completingExternalAuth}>
     <AuthLayout
       title={loginTitle}
       subtitle={loginSubtitle}
@@ -421,6 +432,7 @@ const Login: React.FC = () => {
           onSelect={handleSelectAccount}
           onBack={() => {
             setSelectOpen(false);
+            setPendingOAuthCode('');
             setFormError('');
           }}
         />
@@ -431,13 +443,15 @@ const Login: React.FC = () => {
           ) : (
             <div className="py-10 text-zinc-500 text-sm">加载中...</div>
           )}
-          <button 
-            type="button" 
-            onClick={() => handleTabChange(loginTabs[0]?.key || 'username')}
-            className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 mt-2 transition-colors cursor-pointer"
-          >
-            {t('auth.back_to_login')}
-          </button>
+          {loginTabs.length > 0 && (
+            <button 
+              type="button" 
+              onClick={() => handleTabChange(loginTabs[0]?.key || 'username')}
+              className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 mt-2 transition-colors cursor-pointer"
+            >
+              {t('auth.back_to_login')}
+            </button>
+          )}
         </div>
       ) : (
         <form onSubmit={handleLogin} className="space-y-4">
@@ -545,6 +559,7 @@ const Login: React.FC = () => {
         </form>
       )}
     </AuthLayout>
+    </SignedInEntryGate>
   );
 };
 

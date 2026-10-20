@@ -653,10 +653,7 @@ impl VolcClient {
     }
 
     /// 分页查询方舟云端素材资产列表
-    pub async fn list_assets(
-        &self,
-        req: ListAssetsRequest,
-    ) -> Result<ListAssetsResponse, String> {
+    pub async fn list_assets(&self, req: ListAssetsRequest) -> Result<ListAssetsResponse, String> {
         self.call_api::<_, ListAssetsResponse>(
             "ark",
             &self.config.region,

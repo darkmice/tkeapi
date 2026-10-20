@@ -34,16 +34,22 @@ use axum::{
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+pub(crate) mod claude_fable_chat_seed;
 pub(crate) mod dashscope_video_seed;
 pub(crate) mod doubao_seed_evolving_seed;
 pub(crate) mod doubao_tts_2_seed;
 pub(crate) mod duration_slider_seed;
 pub(crate) mod glm_deepseek_chat_seed;
+pub(crate) mod grok_4_6_chat_seed;
+pub(crate) mod gpt_6_astra_chat_seed;
 pub(crate) mod gpt_image_2_seed;
+pub(crate) mod gemini_nano_banana_21_seed;
 pub(crate) mod marketplace_visibility;
 pub(crate) mod minimax_h3_seed;
 pub(crate) mod quick_bar_seed;
 pub(crate) mod seedance2_seed;
+pub(crate) mod viduq3_seed;
+pub(crate) mod viduq4_preview_seed;
 pub(crate) mod seedream_5_0_pro_seed;
 pub use marketplace_visibility::*;
 
@@ -51,6 +57,7 @@ mod marketplace;
 mod playground;
 
 pub use marketplace::*;
+pub use playground::sync_playground_2026_page_sort;
 
 use crate::{
     auth,
@@ -102,6 +109,7 @@ pub fn router() -> Router<Arc<AppState>> {
             post(marketplace::batch_toggle_marketplace_models),
         )
         .route("/{name}/test-connection", post(test_tos_connection))
+        .route("/{name}/list-buckets", post(list_tos_buckets))
         .route("/{name}/api-logs", get(get_plugin_api_logs))
         .route(
             "/{name}/log-retention",
@@ -116,21 +124,27 @@ pub fn router() -> Router<Arc<AppState>> {
 /// 转发规则等列表展示可复用此门控，与插件中心保持一致。
 pub fn is_plugin_compiled(name: &str) -> bool {
     match name {
+        "playground" | "docs_api" | "model_marketplace" | "high_availability_channel" => true,
         "site_icons" => cfg!(feature = "plugin_site_icons"),
         "site_portal" => cfg!(feature = "plugin_site_portal"),
-        "site_portal_pro" => cfg!(feature = "commercial_plugins"),
-        "playground_2026" => cfg!(feature = "commercial_plugins"),
+        "site_portal_pro"
+        | "playground_2026"
+        | "volcengine_ark_monitor"
+        | "asset_manager"
+        | "asset_manager_intl"
+        | "upstream_asset_relay"
+        | "mobile_app"
+        | "marketing_membership"
+        | "support_tickets"
+        | "logs_archive" => cfg!(feature = "commercial_plugins"),
         "team_marketing" => cfg!(all(feature = "commercial_plugins", plugin_team_marketing)),
-        "volcengine_ark_monitor" => cfg!(feature = "commercial_plugins"),
         "volcengine_enhance" => cfg!(feature = "plugin_volcengine_enhance"),
         "tencent_enhance" => cfg!(feature = "plugin_tencent_enhance"),
-        "asset_manager" => cfg!(feature = "commercial_plugins"),
-        "asset_manager_intl" => cfg!(feature = "commercial_plugins"),
-        "upstream_asset_relay" => cfg!(feature = "commercial_plugins"),
         "data_sync" => cfg!(feature = "plugin_data_sync"),
         "comfyui_bridge" => cfg!(feature = "plugin_comfyui"),
         "content_security" => cfg!(feature = "plugin_content_security"),
-        _ => true,
+        "marketing_games" => cfg!(all(feature = "commercial_plugins", plugin_marketing_games)),
+        _ => cfg!(feature = "commercial_plugins"),
     }
 }
 
@@ -149,9 +163,9 @@ async fn list_plugins(
     }
 
     let mut plugins: Vec<Plugin> = sqlx::query_as(
-        &state
-            .db
-            .format_query("SELECT * FROM plugins ORDER BY id ASC"),
+        &state.db.format_query(
+            "SELECT * FROM plugins ORDER BY is_enabled DESC, admin_menu_sort DESC, id ASC",
+        ),
     )
     .fetch_all(&state.db.pool)
     .await?;
@@ -262,6 +276,9 @@ async fn toggle_plugin(
     if role != "admin" {
         return Err(AppError::Forbidden("需要管理员权限".to_string()));
     }
+    if !is_plugin_compiled(&name) {
+        return Err(AppError::NotFound("插件不存在或当前版本不支持".to_string()));
+    }
 
     sqlx::query(&state.db.format_query(
         "UPDATE plugins SET is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
@@ -273,6 +290,11 @@ async fn toggle_plugin(
 
     if name == crate::relay::relay_settings::HA_PLUGIN_NAME {
         crate::relay::relay_settings::put_cached_ha_enabled(payload.is_enabled == 1);
+    }
+
+    #[cfg(feature = "commercial_plugins")]
+    if name == crate::api::plugins::marketing_membership::PLUGIN_NAME {
+        crate::api::plugins::marketing_membership::billing::invalidate_enabled_cache();
     }
 
     if name == "volcengine_enhance" && payload.is_enabled == 1 {
@@ -339,11 +361,11 @@ pub struct ConfigRequest {
     pub show_in_playground_prompt: Option<bool>, // 体验中心提示词输入窗口加载显示
     /// 素材资产管理：用户端「资产素材」菜单。默认关闭，仅开启后用户端才展示该菜单。
     pub user_asset_menu_enabled: Option<bool>,
-    pub docs_api_allow_guest: Option<bool>,      // 文档API是否允许免登录访问
-    pub show_in_admin_menu: Option<i64>,         // 管理后台左侧二级菜单开关
-    pub admin_menu_sort: Option<i64>,            // 二级菜单排序权重（越大越靠前）
-    pub admin_menu_title: Option<String>,        // 二级菜单自定义名称
-    pub admin_menu_default_tab: Option<String>,  // 点击二级菜单后打开的 Tab key
+    pub docs_api_allow_guest: Option<bool>, // 文档API是否允许免登录访问
+    pub show_in_admin_menu: Option<i64>,    // 管理后台左侧二级菜单开关
+    pub admin_menu_sort: Option<i64>,       // 二级菜单排序权重（越大越靠前）
+    pub admin_menu_title: Option<String>,   // 二级菜单自定义名称
+    pub admin_menu_default_tab: Option<String>, // 点击二级菜单后打开的 Tab key
 }
 
 /// 判断用户是否允许调用素材 API（纯逻辑，与 HTTP 层解耦）
@@ -400,6 +422,9 @@ async fn update_plugin_config(
             .await?;
     if role != "admin" {
         return Err(AppError::Forbidden("需要管理员权限".to_string()));
+    }
+    if !is_plugin_compiled(&name) {
+        return Err(AppError::NotFound("插件不存在或当前版本不支持".to_string()));
     }
 
     if let Some(ref allowed) = payload.allowed_levels {
@@ -892,7 +917,7 @@ async fn get_storage_config(
     }
 
     let configs = load_plugin_configs(&state, &name).await?;
-    let global_config = crate::relay::tos_persist::load_system_object_store(&state).await;
+    let global_config = site_store_for_plugin(&state, &name).await;
     let stored_provider = configs
         .get("default_provider")
         .cloned()
@@ -1174,9 +1199,11 @@ async fn get_storage_config(
                 );
                 obj.insert(
                     "prompt_optimize_enabled".into(),
-                    json!(crate::api::plugins::playground_2026::prompt_optimize::config_enabled(
-                        configs.get("prompt_optimize_enabled").map(|s| s.as_str()),
-                    )),
+                    json!(
+                        crate::api::plugins::playground_2026::prompt_optimize::config_enabled(
+                            configs.get("prompt_optimize_enabled").map(|s| s.as_str()),
+                        )
+                    ),
                 );
             }
             #[cfg(feature = "commercial_plugins")]
@@ -1436,6 +1463,43 @@ async fn test_tos_connection(
     }
 }
 
+type ListTosBucketsRequest = crate::services::object_store::ListBucketsQuery;
+
+/// 插件独立存储：用 AK/SK 列举 TOS 或 COS 桶。
+async fn list_tos_buckets(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Extension(claims): Extension<auth::Claims>,
+    Json(payload): Json<ListTosBucketsRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let role: String =
+        sqlx::query_scalar(&state.db.format_query("SELECT role FROM users WHERE id = ?"))
+            .bind(&claims.sub)
+            .fetch_one(&state.db.pool)
+            .await?;
+    if role != "admin" {
+        return Err(AppError::Forbidden("需要管理员权限".to_string()));
+    }
+
+    let saved = load_plugin_configs(&state, &name).await.ok();
+    let saved_tos = saved.as_ref().map(|m| {
+        (
+            m.get("tos_access_key").map(String::as_str).unwrap_or(""),
+            m.get("tos_secret_key").map(String::as_str).unwrap_or(""),
+        )
+    });
+    let saved_cos = saved.as_ref().map(|m| {
+        (
+            m.get("cos_secret_id").map(String::as_str).unwrap_or(""),
+            m.get("cos_secret_key").map(String::as_str).unwrap_or(""),
+        )
+    });
+    match crate::services::object_store::list_buckets_auto(&payload, saved_tos, saved_cos).await {
+        Ok(buckets) => Ok(Json(json!({ "success": true, "buckets": buckets }))),
+        Err(e) => Ok(Json(json!({ "success": false, "message": e }))),
+    }
+}
+
 // ========== 审核配置 (火山引擎) ==========
 
 #[derive(Deserialize)]
@@ -1620,7 +1684,11 @@ async fn save_ha_config(
     // 同步更新旧 ha_max_retries 扁平配置，确保任何场景回落时次数与主规则完全一致
     let primary_retries = bundle.resolve_arc(None).retries.to_string();
     upsert_config(&state, &name, "ha_max_retries", &primary_retries).await?;
+    state.failed_channels.clear();
+    crate::relay::relay_settings::invalidate_ha();
     crate::relay::relay_settings::put_cached_ha_rules(Arc::new(bundle));
+    crate::relay::router::invalidate_channel_cache();
+    crate::relay::router::invalidate_channel_configs_cache();
 
     Ok(Json(json!({ "message": "高可用配置已保存并重载" })))
 }
@@ -1644,6 +1712,8 @@ async fn clear_ha_runtime(
 
     state.failed_channels.clear();
     crate::relay::relay_settings::invalidate_ha();
+    crate::relay::router::invalidate_channel_cache();
+    crate::relay::router::invalidate_channel_configs_cache();
     tracing::info!("[HA] 管理员清空运行时缓存 user={}", claims.sub);
     Ok(Json(json!({ "message": "ok" })))
 }
@@ -1663,14 +1733,14 @@ struct HaLogQuery {
 struct HaLogRow {
     log_id: i64,
     group_aid: Option<String>,
-    attempt_count: i16,
-    final_ok: i16,
-    final_status_code: i32,
+    attempt_count: i64,
+    final_ok: i64,
+    final_status_code: i64,
     attempts: sqlx::types::Json<serde_json::Value>,
     created_at: DbTs,
     biz_log_id: Option<String>,
     model: Option<String>,
-    status_code: Option<i32>,
+    status_code: Option<i64>,
     error_message: Option<String>,
     user_uid: Option<String>,
     user_nickname: Option<String>,
@@ -1745,7 +1815,7 @@ async fn get_ha_logs(
             conds.push("l.log_id = ?");
         } else {
             conds.push("(l.log_id LIKE ? OR l.model LIKE ? OR h.group_aid LIKE ? \
-                        OR EXISTS (SELECT 1 FROM users u2 WHERE u2.id = l.user_id AND (u2.uid LIKE ? OR u2.username LIKE ?)))");
+                        OR l.user_id IN (SELECT id FROM users WHERE uid LIKE ? OR username LIKE ?))");
         }
     }
     if df_val.is_some() {
@@ -1885,13 +1955,26 @@ fn normalize_plugin_default_provider(s: &str) -> &'static str {
 }
 
 fn push_unique_store(out: &mut Vec<ObjectStore>, seen: &mut HashSet<String>, store: ObjectStore) {
-    let sig = format!("{}:{}", store.provider(), store.bucket());
+    let sig = format!(
+        "{}:{}:{}",
+        store.provider(),
+        store.bucket(),
+        store.path_prefix()
+    );
     if seen.insert(sig) {
         out.push(store);
     }
 }
 
-/// 插件自有凭证与站点凭证一并纳入（同桶去重）。上传走 `get_object_store`；列举/删除走这里，避免切换默认后漏删旧桶。
+/// 插件落到站点存储（跟随站点或自有凭证不全回落）时一律使用 `plugins/{插件名}/`。
+pub async fn site_store_for_plugin(state: &AppState, plugin_name: &str) -> Option<ObjectStore> {
+    crate::relay::tos_persist::load_system_object_store(state)
+        .await
+        .map(|s| s.scoped_to_plugin(plugin_name))
+}
+
+/// 插件自有凭证与站点凭证一并纳入（同桶同前缀去重）。上传走 `get_object_store`；列举/删除走这里，避免切换默认后漏删旧桶。
+/// 站点存储同时给出 `plugins/{插件名}/` 与旧版前缀根目录，存量文件仍能被列举和清理。
 pub async fn collect_object_stores(state: &AppState, plugin_name: &str) -> Vec<ObjectStore> {
     let configs = load_plugin_configs(state, plugin_name).await.ok();
     let sys = crate::relay::tos_persist::load_storage_settings(state).await;
@@ -1906,6 +1989,11 @@ pub async fn collect_object_stores(state: &AppState, plugin_name: &str) -> Vec<O
         }
         if let Some(ref s) = sys {
             if let Some(store) = ObjectStore::from_settings_for(s, kind) {
+                push_unique_store(
+                    &mut out,
+                    &mut seen,
+                    store.clone().scoped_to_plugin(plugin_name),
+                );
                 push_unique_store(&mut out, &mut seen, store);
             }
         }
@@ -1948,7 +2036,7 @@ pub async fn get_object_store(state: &AppState, plugin_name: &str) -> Option<Obj
         .map(|s| s.as_str())
         .unwrap_or("tos");
     if is_global_storage_default(default_raw) {
-        return crate::relay::tos_persist::load_system_object_store(state).await;
+        return site_store_for_plugin(state, plugin_name).await;
     }
     let resolved = StoreKind::parse(default_raw);
     if let Some(store) = configs
@@ -1957,7 +2045,7 @@ pub async fn get_object_store(state: &AppState, plugin_name: &str) -> Option<Obj
     {
         return Some(store);
     }
-    crate::relay::tos_persist::load_system_object_store(state).await
+    site_store_for_plugin(state, plugin_name).await
 }
 
 pub async fn delete_stored_object(
@@ -1983,7 +2071,7 @@ pub struct PluginApiLog {
     pub api_endpoint: String,
     pub request_payload: Option<String>,
     pub response_payload: Option<String>,
-    pub status_code: Option<i32>,
+    pub status_code: Option<i64>,
     pub source: String,
     pub created_at: DbTs,
 }
@@ -2032,7 +2120,10 @@ async fn get_plugin_api_logs(
 
     let keyword = query.keyword.as_deref().unwrap_or("").to_string();
     if !keyword.is_empty() {
-        where_clause.push_str(&format!(" AND (api_endpoint ILIKE ${p} OR user_id ILIKE ${p} OR EXISTS (SELECT 1 FROM users u WHERE u.id = plugin_api_logs.user_id AND (u.uid ILIKE ${p} OR u.username ILIKE ${p})))", p = param_idx));
+        where_clause.push_str(&format!(
+            " AND (api_endpoint ILIKE ${p} OR user_id ILIKE ${p} OR user_id IN (SELECT id FROM users WHERE uid ILIKE ${p} OR username ILIKE ${p}))",
+            p = param_idx
+        ));
         param_idx += 1;
     }
 
@@ -2102,6 +2193,9 @@ async fn get_plugin_api_logs(
 }
 
 pub async fn is_plugin_enabled(state: &crate::AppState, name: &str) -> bool {
+    if !is_plugin_compiled(name) {
+        return false;
+    }
     let enabled: Option<i64> = match sqlx::query_scalar(
         &state
             .db
@@ -2329,16 +2423,20 @@ pub async fn cleanup_expired_plugin_logs(state: &AppState) {
 
     // 4b. 火山增强自测与级联流水（与直打关联表共用保留天数）
     if enhance_days > 0 {
-        let n = delete_batch_by_created_at(state, "plugin_volcengine_enhance_logs", "id", enhance_days).await;
+        let n =
+            delete_batch_by_created_at(state, "plugin_volcengine_enhance_logs", "id", enhance_days)
+                .await;
         if n > 0 {
             tracing::info!("[PluginLogCleanup] 成功清理 plugin_volcengine_enhance_logs 过期记录共 {n} 条 (保留 {enhance_days} 天)");
         }
     }
 
     // 4c. 腾讯云增强物理产物与流水清理
-    let te_days = load_plugin_log_retention_days(state, "tencent_enhance").await;
     #[cfg(feature = "plugin_tencent_enhance")]
-    crate::api::plugins::cleanup_tencent_enhance_logs(state, te_days).await;
+    {
+        let te_days = load_plugin_log_retention_days(state, "tencent_enhance").await;
+        crate::api::plugins::cleanup_tencent_enhance_logs(state, te_days).await;
+    }
 
     // 5. 数据同步操作审计日志
     let ds_days = load_plugin_log_retention_days(state, "data_sync").await;
@@ -2405,4 +2503,56 @@ pub async fn cleanup_expired_plugin_logs(state: &AppState) {
     }
 
     tracing::info!("[PluginLogCleanup] 插件日志清理检查完成。");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_plugin_compiled;
+
+    #[test]
+    fn opensource_fixed_plugins_always_compiled() {
+        for name in [
+            "playground",
+            "docs_api",
+            "model_marketplace",
+            "site_portal",
+            "site_icons",
+            "high_availability_channel",
+        ] {
+            assert!(
+                is_plugin_compiled(name),
+                "expected open-source plugin `{name}` to be compiled"
+            );
+        }
+    }
+
+    #[cfg(not(feature = "commercial_plugins"))]
+    #[test]
+    fn opensource_rejects_commercial_plugins() {
+        for name in [
+            "site_portal_pro",
+            "playground_2026",
+            "volcengine_ark_monitor",
+            "asset_manager",
+            "asset_manager_intl",
+            "upstream_asset_relay",
+            "mobile_app",
+            "marketing_membership",
+            "support_tickets",
+            "logs_archive",
+            "team_marketing",
+            "volcengine_enhance",
+            "tencent_enhance",
+            "data_sync",
+            "comfyui_bridge",
+            "content_security",
+            "marketing_games",
+            "unknown_future_plugin",
+        ] {
+            assert!(
+                !is_plugin_compiled(name),
+                "expected commercial plugin `{name}` to be disabled in open-source build"
+            );
+        }
+    }
 }

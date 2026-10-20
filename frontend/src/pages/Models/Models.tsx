@@ -9,7 +9,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Table, Button, Space, Tag, Modal, Form, Input, InputNumber, message, Popconfirm, Card, Typography, Select, Row, Col, Switch, Grid, Radio, Empty, Tooltip, Checkbox, Segmented } from 'antd';
 import MobileCardList, { MobileCard, CardRow, CardActions } from '../../components/MobileCardList';
 import ListPagination, { listPagination, useListPager } from '../../components/ListPagination';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, RightOutlined, ArrowLeftOutlined, ArrowRightOutlined, CloseOutlined, FilterOutlined, FolderOutlined, UnorderedListOutlined, SettingOutlined, CheckSquareOutlined, CheckCircleOutlined, StopOutlined, FileTextOutlined, FileOutlined, CloudUploadOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, RightOutlined, ArrowLeftOutlined, ArrowRightOutlined, CloseOutlined, FilterOutlined, FolderOutlined, UnorderedListOutlined, SettingOutlined, CheckSquareOutlined, CheckCircleOutlined, StopOutlined, FileTextOutlined, FileOutlined, CloudUploadOutlined, CloudDownloadOutlined, CopyOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import request from '../../utils/request';
@@ -24,18 +24,19 @@ import IconPicker from '../../components/IconPicker';
 import RateDisplay from './RateDisplay';
 import DiscountScheduleEditor from './DiscountScheduleEditor';
 import { discountScheduleOn, packDiscountSchedule, unpackDiscountSchedule, validateDiscountScheduleForm } from './discountSchedule';
+import { convertScheduleSlots, scheduleInputTzName } from './scheduleTzConvert';
 import { billingRulesEditPath, modelEditPath, modelListPath, modelNewPath } from './modelPaths';
 import { useThemeStore } from '../../store/theme';
 import SmartSvgIcon from '../../components/SmartSvgIcon';
 import { Image as ImageIcon, Video, AudioLines, MessageSquare, Cuboid, ListOrdered, Sparkles } from 'lucide-react';
+import { imageFeatureOptions, normalizeImageFeatureAttrs } from '../Plugins/components/scheme/modelFeatures';
 
 
 const { Title, Text } = Typography;
 
 const renderTypeSystemIcon = (name: string, size = 18) => {
   const lowerName = (name || '').toLowerCase();
-  if (lowerName.includes('画质增强') || lowerName.includes('quality enhancement') || lowerName.includes('视频增强') || lowerName.includes('videoenhance') || lowerName.includes('video-enhance') || lowerName.includes('video_enhance')) return <Sparkles size={size} />;
-  if (lowerName.includes('图像增强') || lowerName.includes('image enhancement') || lowerName.includes('image-enhance') || lowerName.includes('imageenhance') || lowerName.includes('image_enhance')) return <Sparkles size={size} />;
+  if (lowerName.includes('封装') || lowerName.includes('encapsulation')) return <Sparkles size={size} />;
   if (lowerName.includes('图片') || lowerName.includes('image')) return <ImageIcon size={size} />;
   if (lowerName.includes('视频') || lowerName.includes('video')) return <Video size={size} />;
   if (lowerName.includes('音频') || lowerName.includes('audio')) return <AudioLines size={size} />;
@@ -562,6 +563,8 @@ const Models: React.FC = () => {
   const isEn = i18n.language === 'en';
   const { settings } = useSettingsStore();
   const adminPath = settings?.site?.admin_path || 'admin1688';
+  const operationTz = settings?.site?.default_timezone?.trim() || 'Asia/Shanghai';
+  const adminTz = settings?.site?.admin_display_timezone?.trim() || operationTz;
   const navigate = useNavigate();
   const location = useLocation();
   const { id: routeParamId } = useParams<{ id?: string }>();
@@ -628,6 +631,7 @@ const Models: React.FC = () => {
   const statsQueryGuard = useRef(new QueryGuard());
   const newFormReadyRef = useRef(false);
   const hydratedEditKeyRef = useRef<string | null>(null);
+  const logoManuallyEditedRef = useRef(false);
   const [classificationsReady, setClassificationsReady] = useState(false);
 
   // 列表只按分类拉 /models；关键词本地筛
@@ -745,6 +749,8 @@ const Models: React.FC = () => {
     setBillingType('tokens');
     setSaving(false);
     setAliasEnabled(false);
+    setActiveRightPanel('provider');
+    logoManuallyEditedRef.current = false;
     form.resetFields();
   };
 
@@ -756,6 +762,9 @@ const Models: React.FC = () => {
     setEditingModel(record);
     setBillingType('tokens');
     setSaving(false);
+    setActiveRightPanel('provider');
+    const currentProvider = allProviders.find((item) => item.id === record.provider_id);
+    logoManuallyEditedRef.current = Boolean(record.logo && (!currentProvider || currentProvider.logo !== record.logo));
 
     let ruleIds: number[] = [];
     try {
@@ -769,10 +778,14 @@ const Models: React.FC = () => {
     let featureAttributes: string[] = [];
     try {
       if (record.feature_attributes) {
-        featureAttributes = JSON.parse(record.feature_attributes);
+        const parsed = JSON.parse(record.feature_attributes);
+        featureAttributes = Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
       }
     } catch (e) { }
+    const typeName = allTypes.find((item) => item.id === record.type_id)?.name || '';
+    if (typeName.includes('图片')) featureAttributes = normalizeImageFeatureAttrs(featureAttributes);
 
+    const discountSchedule = unpackDiscountSchedule(record.discount_schedule);
     form.setFieldsValue({
       ...record,
       forward_rule_ids: ruleIds,
@@ -785,8 +798,13 @@ const Models: React.FC = () => {
       site_discount: record.site_discount ?? 1.0,
       global_discount_enabled: record.global_discount_enabled === 1,
       global_discount: record.global_discount ?? 1.0,
-      discount_schedule_enabled: unpackDiscountSchedule(record.discount_schedule).enabled,
-      discount_slots: unpackDiscountSchedule(record.discount_schedule).slots,
+      discount_schedule_enabled: discountSchedule.enabled,
+      discount_schedule_input_tz: discountSchedule.edit_tz,
+      discount_slots: convertScheduleSlots(
+        discountSchedule.slots,
+        operationTz,
+        scheduleInputTzName(discountSchedule.edit_tz, operationTz, adminTz),
+      ),
       logo: record.logo || undefined,
       remark: record.remark,
       description: record.description,
@@ -883,6 +901,34 @@ const Models: React.FC = () => {
     }
   };
 
+  const [copyTarget, setCopyTarget] = useState<ModelModel | null>(null);
+  const [copyName, setCopyName] = useState('');
+  const [copying, setCopying] = useState(false);
+
+  const openCopyModal = (record: ModelModel) => {
+    setCopyTarget(record);
+    setCopyName(record.name || '');
+  };
+
+  const handleCopy = async () => {
+    if (!copyTarget || copying) return;
+    setCopying(true);
+    try {
+      const url = copyTarget.library_kind === 'catalog'
+        ? `/models/library/${copyTarget.id}/copy`
+        : `/models/${copyTarget.id}/copy`;
+      await request.post(url, { name: copyName.trim() });
+      message.success(t('models.copy_ok'));
+      setCopyTarget(null);
+      fetchModels();
+      fetchClassificationsStats();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCopying(false);
+    }
+  };
+
   const handleSave = async (values: any) => {
     try {
       // Cleanup arrays internally managed
@@ -899,8 +945,25 @@ const Models: React.FC = () => {
         message.error(scheduleError);
         return;
       }
-      values.discount_schedule = packDiscountSchedule(scheduleOn, values.discount_slots);
+      const editTz = values.discount_schedule_input_tz === 'admin_display' ? 'admin_display' : 'operation';
+      const storedSlots = convertScheduleSlots(
+        values.discount_slots,
+        scheduleInputTzName(editTz, operationTz, adminTz),
+        operationTz,
+      );
+      const storedError = validateDiscountScheduleForm(
+        scheduleOn,
+        storedSlots,
+        !!values.site_discount_enabled,
+        true,
+      );
+      if (storedError) {
+        message.error(`时段折算到站点运营时区后无效：${storedError}`);
+        return;
+      }
+      values.discount_schedule = packDiscountSchedule(scheduleOn, storedSlots, editTz);
       delete values.discount_schedule_enabled;
+      delete values.discount_schedule_input_tz;
       delete values.discount_slots;
       values.site_discount_enabled = values.site_discount_enabled ? 1 : 0;
       values.global_discount_enabled = values.global_discount_enabled ? 1 : 0;
@@ -1464,15 +1527,26 @@ const Models: React.FC = () => {
                 预扣: {formatPrice(record.pre_deduction)}{record.type_id && getTypeName(record.type_id)?.includes('视频') ? '/秒 (按秒预扣)' : ''}
               </Text>
             )}
-            {record.site_discount_enabled === 1 && (
-              <span style={{ fontSize: '10px', marginTop: 0, lineHeight: 1.2, color: 'var(--text-secondary, #595959)' }}>
-                {`折扣限价 ${Number(record.site_discount || 1).toFixed(2)} 倍率${discountScheduleOn(record.discount_schedule) ? ' · 时段' : ''}`}
-              </span>
-            )}
-            {record.global_discount_enabled === 1 && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 4px', borderRadius: 3, fontSize: 10, background: 'rgba(114, 46, 209, 0.08)', color: '#722ed1', border: '1px solid rgba(114, 46, 209, 0.2)', lineHeight: '16px' }}>
-                {`全站折扣 ${Number(record.global_discount || 1).toFixed(2)} 倍率${discountScheduleOn(record.discount_schedule) ? ' · 时段' : ''}`}
-              </span>
+            {(record.site_discount_enabled === 1 || record.global_discount_enabled === 1 || discountScheduleOn(record.discount_schedule)) && (
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                {record.site_discount_enabled === 1 && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 4px', borderRadius: 3, fontSize: 10, background: 'rgba(250, 84, 28, 0.08)', color: '#fa541c', border: '1px solid rgba(250, 84, 28, 0.2)', lineHeight: '16px' }}>
+                    {`折扣限价 ${Number(record.site_discount || 1).toFixed(2)} 倍率`}
+                  </span>
+                )}
+                {record.global_discount_enabled === 1 && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 4px', borderRadius: 3, fontSize: 10, background: 'rgba(114, 46, 209, 0.08)', color: '#722ed1', border: '1px solid rgba(114, 46, 209, 0.2)', lineHeight: '16px' }}>
+                    {`全站折扣 ${Number(record.global_discount || 1).toFixed(2)} 倍率`}
+                  </span>
+                )}
+                {discountScheduleOn(record.discount_schedule) && (
+                  <Tooltip title="已启用模型分时段折扣规划">
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, padding: '0 4px', borderRadius: 3, fontSize: 10, background: 'rgba(19, 194, 194, 0.08)', color: '#13c2c2', border: '1px solid rgba(19, 194, 194, 0.25)', lineHeight: '16px', cursor: 'default' }}>
+                      分时段折扣
+                    </span>
+                  </Tooltip>
+                )}
+              </div>
             )}
           </Space>
         );
@@ -1489,32 +1563,30 @@ const Models: React.FC = () => {
         const order = record.sort_order ?? 0;
         return (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Tooltip title="点击直接修改排序，数值越大越靠前">
-              <Text
-                editable={isLibrary ? undefined : {
-                  tooltip: false,
-                  text: String(order),
-                  onChange: (newVal) => {
-                    const num = parseInt(newVal.trim(), 10);
-                    handleUpdateSortOrder(record.id, isNaN(num) ? 0 : num);
-                  },
-                }}
-                style={{
-                  fontFamily: 'monospace',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  padding: '2px 8px',
-                  borderRadius: 6,
-                  background: order > 0 ? 'rgba(59, 130, 246, 0.08)' : 'rgba(128, 128, 128, 0.06)',
-                  color: order > 0 ? '#2563eb' : 'var(--text-secondary, #8c8c8c)',
-                  border: order > 0 ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(128, 128, 128, 0.15)',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {order}
-              </Text>
-            </Tooltip>
+            <Text
+              editable={isLibrary ? undefined : {
+                tooltip: false,
+                text: String(order),
+                onChange: (newVal) => {
+                  const num = parseInt(newVal.trim(), 10);
+                  handleUpdateSortOrder(record.id, isNaN(num) ? 0 : num);
+                },
+              }}
+              style={{
+                fontFamily: 'monospace',
+                fontSize: 12,
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: 6,
+                background: order > 0 ? 'rgba(59, 130, 246, 0.08)' : 'rgba(128, 128, 128, 0.06)',
+                color: order > 0 ? '#2563eb' : 'var(--text-secondary, #8c8c8c)',
+                border: order > 0 ? '1px solid rgba(59, 130, 246, 0.2)' : '1px solid rgba(128, 128, 128, 0.15)',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              {order}
+            </Text>
           </div>
         );
       },
@@ -1575,12 +1647,15 @@ const Models: React.FC = () => {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 128,
+      width: 168,
       render: (_: unknown, record: ModelModel) => (
         <Space size={4}>
           {isLibrary ? (
             <>
               <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+              <Tooltip title={t('models.copy_model')}>
+                <Button icon={<CopyOutlined />} onClick={() => openCopyModal(record)} />
+              </Tooltip>
               <Tooltip title={t('models.publish_model')}>
                 <Button
                   icon={<CloudUploadOutlined />}
@@ -1595,6 +1670,9 @@ const Models: React.FC = () => {
           ) : (
             <>
               <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+              <Tooltip title={t('models.copy_model')}>
+                <Button icon={<CopyOutlined />} onClick={() => openCopyModal(record)} />
+              </Tooltip>
               <Tooltip title={t('models.unlist_model')}>
                 <Button
                   icon={<CloudDownloadOutlined />}
@@ -2264,18 +2342,25 @@ const Models: React.FC = () => {
                 <CardRow label="费率">
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {br ? <RateDisplay rule={br} currencySymbol={currencySymbol} formatPrice={formatPrice} /> : <Text type="secondary" italic>未挂载</Text>}
-                    {record.site_discount_enabled === 1 && (
-                      <div>
-                        <Tag color="volcano" variant="filled" style={{ fontSize: '10px', margin: 0, padding: '0 4px', lineHeight: '16px' }}>
-                          {`折扣限价 ${Number(record.site_discount || 1).toFixed(2)} 倍率${discountScheduleOn(record.discount_schedule) ? ' · 时段' : ''}`}
-                        </Tag>
-                      </div>
-                    )}
-                    {record.global_discount_enabled === 1 && (
-                      <div>
-                        <Tag color="purple" variant="filled" style={{ fontSize: '10px', margin: 0, padding: '0 4px', lineHeight: '16px' }}>
-                          {`全站折扣 ${Number(record.global_discount || 1).toFixed(2)} 倍率${discountScheduleOn(record.discount_schedule) ? ' · 时段' : ''}`}
-                        </Tag>
+                    {(record.site_discount_enabled === 1 || record.global_discount_enabled === 1 || discountScheduleOn(record.discount_schedule)) && (
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+                        {record.site_discount_enabled === 1 && (
+                          <Tag color="volcano" variant="filled" style={{ fontSize: '10px', margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                            {`折扣限价 ${Number(record.site_discount || 1).toFixed(2)} 倍率`}
+                          </Tag>
+                        )}
+                        {record.global_discount_enabled === 1 && (
+                          <Tag color="purple" variant="filled" style={{ fontSize: '10px', margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                            {`全站折扣 ${Number(record.global_discount || 1).toFixed(2)} 倍率`}
+                          </Tag>
+                        )}
+                        {discountScheduleOn(record.discount_schedule) && (
+                          <Tooltip title="已启用模型分时段折扣规划">
+                            <Tag color="cyan" variant="filled" style={{ fontSize: '10px', margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                              分时段折扣
+                            </Tag>
+                          </Tooltip>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2313,6 +2398,7 @@ const Models: React.FC = () => {
                   {isLibrary ? (
                     <>
                       <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => openCopyModal(record)} />
                       <Button
                         size="small"
                         icon={<CloudUploadOutlined />}
@@ -2328,6 +2414,7 @@ const Models: React.FC = () => {
                   ) : (
                     <>
                       <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => openCopyModal(record)} />
                       <Button
                         size="small"
                         icon={<CloudDownloadOutlined />}
@@ -2575,10 +2662,59 @@ const Models: React.FC = () => {
                       }}
                     </Form.Item>
 
-                    <Form.Item name="logo" label={<Text strong>模型 Logo</Text>} style={{ marginBottom: 12 }}>
+                    {/* 官方服务商与 API 服务商选择 */}
+                    <Row gutter={8} style={{ marginBottom: 12 }}>
+                      <Col span={12}>
+                        <Form.Item shouldUpdate={(prev, cur) => prev.provider_id !== cur.provider_id} noStyle>
+                          {() => {
+                            const val = form.getFieldValue('provider_id');
+                            const provider = allProviders.find(p => p.id === val);
+                            const isActive = activeRightPanel === 'provider';
+                            return (
+                              <div onClick={() => setActiveRightPanel('provider')} style={{ padding: '8px 12px', borderRadius: 6, border: isActive ? '1px solid var(--text)' : (isLight ? '1px solid #e5e4e7' : '1px solid rgba(255,255,255,0.08)'), background: isActive ? (isLight ? '#f9fafb' : 'rgba(255,255,255,0.04)') : (isLight ? '#fff' : 'rgba(255,255,255,0.02)'), cursor: 'pointer', transition: 'all 0.2s' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                                  <Text strong={isActive} style={{ color: isActive ? 'var(--text)' : 'inherit', flexShrink: 0 }}>官方服务商</Text>
+                                  <span style={{ fontSize: 13, color: isActive ? 'var(--text)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {provider ? (isEn && provider.name_en ? provider.name_en : provider.name) : <span style={{ opacity: 0.5 }}>点击选择</span>} <ArrowRightOutlined style={{ marginLeft: 4 }} />
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        </Form.Item>
+                      </Col>
+                      <Col span={12}>
+                        <Form.Item shouldUpdate={(prev, cur) => prev.api_provider_id !== cur.api_provider_id} noStyle>
+                          {() => {
+                            const val = form.getFieldValue('api_provider_id');
+                            const isActive = activeRightPanel === 'api_provider';
+                            const apiProvider = allApiProviders.find(p => p.id === val);
+                            return (
+                              <div onClick={() => setActiveRightPanel('api_provider')} style={{ padding: '8px 12px', borderRadius: 6, border: isActive ? '1px solid var(--text)' : (isLight ? '1px solid #e5e4e7' : '1px solid rgba(255,255,255,0.08)'), background: isActive ? (isLight ? '#f9fafb' : 'rgba(255,255,255,0.04)') : (isLight ? '#fff' : 'rgba(255,255,255,0.02)'), cursor: 'pointer', transition: 'all 0.2s' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                                  <Text strong={isActive} style={{ color: isActive ? 'var(--text)' : 'inherit', flexShrink: 0 }}>API服务商</Text>
+                                  <span style={{ fontSize: 13, color: isActive ? 'var(--text)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {apiProvider ? (isEn && apiProvider.name_en ? apiProvider.name_en : apiProvider.name) : <span style={{ opacity: 0.5 }}>点击选择</span>} <ArrowRightOutlined style={{ marginLeft: 4 }} />
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    <Form.Item
+                      name="logo"
+                      label={<Text strong>模型 Logo</Text>}
+                      style={{ marginBottom: 12 }}
+                      getValueFromEvent={(icon) => icon?.name || undefined}
+                    >
                       <IconPicker
-                        value={form.getFieldValue('logo')}
-                        onChange={(icon) => form.setFieldsValue({ logo: icon?.name || undefined })}
+                        onChange={(icon) => {
+                          logoManuallyEditedRef.current = Boolean(icon?.name);
+                          form.setFieldsValue({ logo: icon?.name || undefined });
+                        }}
                         placeholder="选择模型图标"
                       />
                     </Form.Item>
@@ -2595,44 +2731,6 @@ const Models: React.FC = () => {
 
                     <div style={{ marginBottom: 16 }}>
                       <Text strong style={{ display: 'block', marginBottom: 8 }}>关联设置</Text>
-                      
-                      {/* Provider */}
-                      <Form.Item shouldUpdate={(prev, cur) => prev.provider_id !== cur.provider_id} noStyle>
-                        {() => {
-                          const val = form.getFieldValue('provider_id');
-                          const provider = allProviders.find(p => p.id === val);
-                          const isActive = activeRightPanel === 'provider';
-                          return (
-                            <div onClick={() => setActiveRightPanel('provider')} style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 6, border: isActive ? '1px solid var(--text)' : (isLight ? '1px solid #e5e4e7' : '1px solid rgba(255,255,255,0.08)'), background: isActive ? (isLight ? '#f9fafb' : 'rgba(255,255,255,0.04)') : (isLight ? '#fff' : 'rgba(255,255,255,0.02)'), cursor: 'pointer', transition: 'all 0.2s' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text strong={isActive} style={{ color: isActive ? 'var(--text)' : 'inherit' }}>官方服务商</Text>
-                                <span style={{ fontSize: 13, color: isActive ? 'var(--text)' : 'var(--text-secondary)' }}>
-                                  {provider ? (isEn && provider.name_en ? provider.name_en : provider.name) : <span style={{ opacity: 0.5 }}>点击选择</span>} <ArrowRightOutlined style={{ marginLeft: 4 }} />
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        }}
-                      </Form.Item>
-
-                        {/* API 服务商选择 */}
-                        <Form.Item shouldUpdate={(prev, cur) => prev.api_provider_id !== cur.api_provider_id} noStyle>
-                          {() => {
-                            const val = form.getFieldValue('api_provider_id');
-                            const isActive = activeRightPanel === 'api_provider';
-                            const apiProvider = allApiProviders.find(p => p.id === val);
-                            return (
-                              <div onClick={() => setActiveRightPanel('api_provider')} style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 6, border: isActive ? '1px solid var(--text)' : (isLight ? '1px solid #e5e4e7' : '1px solid rgba(255,255,255,0.08)'), background: isActive ? (isLight ? '#f9fafb' : 'rgba(255,255,255,0.04)') : (isLight ? '#fff' : 'rgba(255,255,255,0.02)'), cursor: 'pointer', transition: 'all 0.2s' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <Text strong={isActive} style={{ color: isActive ? 'var(--text)' : 'inherit' }}>API服务商</Text>
-                                  <span style={{ fontSize: 13, color: isActive ? 'var(--text)' : 'var(--text-secondary)' }}>
-                                    {apiProvider ? (isEn && apiProvider.name_en ? apiProvider.name_en : apiProvider.name) : <span style={{ opacity: 0.5 }}>点击选择</span>} <ArrowRightOutlined style={{ marginLeft: 4 }} />
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          }}
-                        </Form.Item>
 
                       {/* Type */}
                       <Form.Item shouldUpdate={(prev, cur) => prev.type_id !== cur.type_id} noStyle>
@@ -2756,7 +2854,7 @@ const Models: React.FC = () => {
 
                     <Form.Item noStyle shouldUpdate={(prev: any, cur: any) => prev.site_discount_enabled !== cur.site_discount_enabled}>
                       {({ getFieldValue }: any) => getFieldValue('site_discount_enabled') ? (
-                        <Form.Item name="site_discount" label={<Text strong>折扣限价倍率</Text>} initialValue={1.0} extra="统一折扣限价。系统取折扣与渠道倍率的乘积后，与此值取 MAX 保底。全站折扣的时段规划命中时，改用该时段限价">
+                        <Form.Item name="site_discount" label={<Text strong>折扣限价倍率</Text>} initialValue={1.0} extra="统一折扣限价（兜底）。系统匹配已勾选折扣项的最低值后，与此限价取 MAX 保底（低于限价则按限价执行）。全站折扣的时段规划命中时，改用该时段限价">
                           <InputNumber style={{ width: '100%' }} precision={2} step={0.1} min={0.01} />
                         </Form.Item>
                       ) : null}
@@ -2781,7 +2879,7 @@ const Models: React.FC = () => {
                             label={<Text strong>全站折扣倍率</Text>}
                             initialValue={1.0}
                             dependencies={['site_discount', 'site_discount_enabled']}
-                            extra="统一全站折扣，参与 MIN(用户模型折扣, 全站折扣, 用户等级折扣)，再与渠道倍率相乘。下方高级设置可按星期改写此时段的全站折扣和折扣限价"
+                            extra="统一全站折扣，参与用户等级已勾选折扣项的 MIN 最低值匹配，再与模型折扣限价做 MAX 保底。下方高级设置可按星期改写此时段的全站折扣和折扣限价"
                             rules={siteEnabled ? [{
                               validator: (_: any, value: number) =>
                                 value != null && value < siteDiscount
@@ -2797,7 +2895,8 @@ const Models: React.FC = () => {
 
                     <DiscountScheduleEditor
                       isLight={isLight}
-                      timezoneName={settings?.site?.default_timezone || 'Asia/Shanghai'}
+                      operationTz={operationTz}
+                      adminTz={adminTz}
                     />
                     
                   </div>
@@ -2818,7 +2917,13 @@ const Models: React.FC = () => {
                               <Row gutter={[6, 6]}>
                                 <Col xs={6} sm={4} md={3}>
                                   <div 
-                                    onClick={() => form.setFieldsValue({ provider_id: null })}
+                                    onClick={() => {
+                                      const nextValues: Record<string, any> = { provider_id: null };
+                                      if (!logoManuallyEditedRef.current) {
+                                        nextValues.logo = undefined;
+                                      }
+                                      form.setFieldsValue(nextValues);
+                                    }}
                                     style={{ 
                                       aspectRatio: '1 / 1', 
                                       padding: '6px 4px', 
@@ -2843,7 +2948,13 @@ const Models: React.FC = () => {
                                   return (
                                     <Col xs={6} sm={4} md={3} key={p.id}>
                                       <div 
-                                        onClick={() => form.setFieldsValue({ provider_id: p.id })}
+                                        onClick={() => {
+                                          const nextValues: Record<string, any> = { provider_id: p.id };
+                                          if (!logoManuallyEditedRef.current) {
+                                            nextValues.logo = p.logo || undefined;
+                                          }
+                                          form.setFieldsValue(nextValues);
+                                        }}
                                         style={{ 
                                           aspectRatio: '1 / 1', 
                                           padding: '6px 4px', 
@@ -3006,7 +3117,9 @@ const Models: React.FC = () => {
                                     try {
                                       const defaultFeatures = JSON.parse(typeObj.default_features);
                                       if (Array.isArray(defaultFeatures)) {
-                                        options = defaultFeatures.map(v => ({ label: v, value: v }));
+                                        const values = defaultFeatures.filter((v) => typeof v === 'string');
+                                        const list = (typeObj.name || '').includes('图片') ? imageFeatureOptions(values) : values;
+                                        options = list.map(v => ({ label: v, value: v }));
                                       }
                                     } catch (e) {
                                       console.error("Failed to parse default_features:", e);
@@ -3234,6 +3347,30 @@ const Models: React.FC = () => {
           </div>
       </div>
       )}
+
+      <Modal
+        title={t('models.copy_model')}
+        open={!!copyTarget}
+        onCancel={() => setCopyTarget(null)}
+        onOk={handleCopy}
+        confirmLoading={copying}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        destroyOnHidden
+        centered
+        width={460}
+      >
+        <div style={{ padding: '8px 0' }}>
+          <Text type="secondary">{t('models.copy_hint')}</Text>
+          <Input
+            style={{ marginTop: 12 }}
+            value={copyName}
+            onChange={(e) => setCopyName(e.target.value)}
+            placeholder={copyTarget?.name}
+            onPressEnter={handleCopy}
+          />
+        </div>
+      </Modal>
 
       <ClassificationManager
         type="api_provider"

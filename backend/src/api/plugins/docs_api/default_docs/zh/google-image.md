@@ -1,6 +1,6 @@
 # 谷歌 gemini-3.1 图像生成接入指南
 
-OpenAI 兼容：`POST /v1/images/generations`。原生路径：`/v1beta/models/{model}:generateContent`。[图片生成 API](https://ai.google.dev/gemini-api/docs/image-generation?hl=zh-cn)
+OpenAI 兼容：`POST /v1/images/generations`。官方原生路径：`POST /v1/models/{model}:generateContent` (兼容 `/v1beta/models/{model}:generateContent`)。[图片生成 API](https://ai.google.dev/gemini-api/docs/image-generation?hl=zh-cn)
 
 ---
 
@@ -99,6 +99,35 @@ curl -X POST https://{{domain}}/v1/images/generations \
     "google_image_search": true,
     "ratio": "16:9",
     "resolution": "1k"
+  }'
+```
+
+### E. 官方原生 Gemini 格式生图调用 (POST /v1/models/{model}:generateContent)
+
+若您的客户端程序（如 Google GenAI SDK、ComfyUI、工作流插件等）采用 Google 官方原生请求结构，直接以本平台 API 密钥请求官方端点即可：
+
+```bash
+curl -X POST https://{{domain}}/v1/models/gemini-3-pro-image:generateContent \
+  -H "Authorization: Bearer sk-your_token_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          { "text": "阳光照耀下的日式庭院，樱花飘落，极细致光影效果，新海诚动画风格" }
+        ]
+      }
+    ],
+    "generationConfig": {
+      "imageConfig": {
+        "aspectRatio": "16:9",
+        "imageSize": "1K"
+      },
+      "responseModalities": [
+        "IMAGE"
+      ]
+    }
   }'
 ```
 

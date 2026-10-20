@@ -7,6 +7,7 @@
 
 #![allow(dead_code)]
 use crate::time_system::DbTs;
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -18,6 +19,18 @@ pub struct User {
     #[serde(skip_serializing)]
     pub password_hash: String,
     pub nickname: Option<String>,
+    /// 名
+    #[sqlx(default)]
+    pub first_name: Option<String>,
+    /// 姓氏
+    #[sqlx(default)]
+    pub last_name: Option<String>,
+    /// 出生年月，格式 YYYY-MM
+    #[sqlx(default)]
+    pub birth_ym: Option<String>,
+    /// 头像 URL
+    #[sqlx(default)]
+    pub avatar: Option<String>,
     pub mobile: Option<String>,
     pub wechat_id: Option<String>,
     pub wechat_name: Option<String>,
@@ -34,9 +47,9 @@ pub struct User {
     #[sqlx(default)]
     pub level_id: Option<i64>,
     #[sqlx(default)]
-    pub allow_view_log_details: Option<i32>,
+    pub allow_view_log_details: Option<i64>,
     #[sqlx(default)]
-    pub invoice_enabled: Option<i32>,
+    pub invoice_enabled: Option<i64>,
     #[sqlx(default)]
     pub invoice_mode: Option<String>,
     #[sqlx(default)]
@@ -69,6 +82,8 @@ pub struct User {
     #[sqlx(default)]
     pub admin_remark: Option<String>,
     #[sqlx(default)]
+    pub remark: Option<String>,
+    #[sqlx(default)]
     pub referral_history: Option<String>,
     #[sqlx(default)]
     pub gift_balance: f64,
@@ -84,9 +99,13 @@ pub struct User {
     pub credit_limit: f64,
     /// 是否允许在线支付：1-允许，0-禁止
     #[sqlx(default)]
-    pub pay_enabled: i32,
+    pub pay_enabled: i64,
     #[sqlx(default)]
     pub notification_preferences: Option<String>,
+    /// 密码最后修改时间，早于此时间的 JWT 凭据判定为失效
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_changed_at: Option<DbTs>,
     /// 列表接口填充：是否已通过个人实名
     #[sqlx(skip)]
     #[serde(default)]
@@ -123,10 +142,15 @@ pub struct CreateUserRequest {
     #[serde(default)]
     pub timezone: Option<String>,
     pub mobile: Option<String>,
+    pub wechat_id: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    /// 出生年月，格式 YYYY-MM；空字符串表示清空
+    pub birth_ym: Option<String>,
     pub balance: Option<f64>,
     pub gift_balance: Option<f64>,
     /// 是否允许在线支付
-    pub pay_enabled: Option<i32>,
+    pub pay_enabled: Option<i64>,
 }
 
 pub fn deserialize_some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -143,6 +167,10 @@ pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub password: Option<String>,
     pub nickname: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    /// 出生年月，格式 YYYY-MM；空字符串表示清空
+    pub birth_ym: Option<String>,
     pub mobile: Option<String>,
     pub wechat_id: Option<String>,
     pub google_id: Option<String>,
@@ -164,13 +192,17 @@ pub struct UpdateUserRequest {
     /// 信控额度
     pub credit_limit: Option<f64>,
     /// 是否允许在线支付
-    pub pay_enabled: Option<i32>,
+    pub pay_enabled: Option<i64>,
     pub notification_preferences: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ProfileUpdateRequest {
     pub nickname: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    /// 出生年月，格式 YYYY-MM；空字符串表示清空
+    pub birth_ym: Option<String>,
     pub old_password: Option<String>,
     pub password: Option<String>,
     pub email: Option<String>,
@@ -372,4 +404,91 @@ pub struct BindEmailRequest {
 pub struct UnbindRequest {
     /// 当前登录密码（安全校验）
     pub password: String,
+}
+
+const PERSON_NAME_MAX: usize = 32;
+
+/// 名 / 姓氏：空白视为清空，超长拒绝。
+pub fn normalize_person_name(value: &str, label: &str) -> Result<Option<String>, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().count() > PERSON_NAME_MAX {
+        return Err(format!(
+            "{label}长度最多不能超过 {PERSON_NAME_MAX} 个字符"
+        ));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+/// 出生年月：空白视为清空，只接受 YYYY-MM，且不能晚于当前月。
+pub fn normalize_birth_ym(value: &str) -> Result<Option<String>, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let mut parts = trimmed.split('-');
+    let year_s = parts.next().unwrap_or("");
+    let month_s = parts.next().unwrap_or("");
+    if parts.next().is_some() || year_s.len() != 4 || month_s.len() != 2 {
+        return Err("出生年月格式应为 YYYY-MM".to_string());
+    }
+    let year: i32 = year_s
+        .parse()
+        .map_err(|_| "出生年月格式应为 YYYY-MM".to_string())?;
+    let month: u32 = month_s
+        .parse()
+        .map_err(|_| "出生年月格式应为 YYYY-MM".to_string())?;
+    if !(1900..=2100).contains(&year) || !(1..=12).contains(&month) {
+        return Err("出生年月不合法".to_string());
+    }
+    let now = chrono::Utc::now();
+    if year > now.year() || (year == now.year() && month > now.month()) {
+        return Err("出生年月不能晚于当前月份".to_string());
+    }
+    Ok(Some(format!("{year:04}-{month:02}")))
+}
+
+/// 请求里出现的字段才覆盖；缺省字段保持原值。空字符串清空。
+pub fn assign_profile_identity(
+    first_name: &mut Option<String>,
+    last_name: &mut Option<String>,
+    birth_ym: &mut Option<String>,
+    req_first: Option<String>,
+    req_last: Option<String>,
+    req_birth: Option<String>,
+) -> Result<(), String> {
+    if let Some(value) = req_first {
+        *first_name = normalize_person_name(&value, "名")?;
+    }
+    if let Some(value) = req_last {
+        *last_name = normalize_person_name(&value, "姓氏")?;
+    }
+    if let Some(value) = req_birth {
+        *birth_ym = normalize_birth_ym(&value)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod profile_identity_tests {
+    use super::*;
+
+    #[test]
+    fn person_name_trims_and_rejects_overlong() {
+        assert_eq!(normalize_person_name("  明  ", "名").unwrap().as_deref(), Some("明"));
+        assert_eq!(normalize_person_name("   ", "名").unwrap(), None);
+        let long = "名".repeat(33);
+        assert!(normalize_person_name(&long, "名").is_err());
+    }
+
+    #[test]
+    fn birth_ym_normalizes_month() {
+        assert_eq!(normalize_birth_ym("1990-01").unwrap().as_deref(), Some("1990-01"));
+        assert_eq!(normalize_birth_ym("  ").unwrap(), None);
+        assert!(normalize_birth_ym("1990-13").is_err());
+        assert!(normalize_birth_ym("1990-1").is_err());
+        assert!(normalize_birth_ym("2999-01").is_err());
+    }
 }

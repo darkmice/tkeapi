@@ -31,7 +31,7 @@ curl -X POST https://{{domain}}/v1/video/generations \
   -H "Authorization: Bearer sk-your_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "kling-v3-omni",
+    "model": "doubao-seedance-2-5-260628",
     "prompt": "ヨーロッパ風の古典的な扉を押し開けると、目の前に幻想的な雲海の城が広がる。ドローン撮影の視点、4kレベルの詳細",
     "resolution": "1080p",
     "duration": 5

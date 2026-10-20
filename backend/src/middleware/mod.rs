@@ -24,16 +24,19 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::AppState;
 use crate::auth;
 use crate::error::AppError;
+use crate::AppState;
 
-/// API Key 脱敏：保留前8后4位，中间用 *** 替代
+/// API Key 脱敏：保留前8后4位，中间用 *** 替代（按字符边界截取，防多字节 UTF-8 越界 panic）
 fn mask_key(key: &str) -> String {
-    if key.len() <= 12 {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() <= 12 {
         return "***".to_string();
     }
-    format!("{}***{}", &key[..8], &key[key.len() - 4..])
+    let prefix: String = chars[..8].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    format!("{}***{}", prefix, suffix)
 }
 
 fn request_path(request: &Request) -> String {
@@ -55,10 +58,6 @@ fn header_flag(request: &Request, name: &str) -> bool {
     )
 }
 
-fn client_ip(request: &Request) -> &str {
-    crate::api::auth::parse_client_ip_from_headers(request.headers()).unwrap_or("127.0.0.1")
-}
-
 fn request_client_ip(request: &Request) -> String {
     let fallback = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
     let addr = request
@@ -72,21 +71,33 @@ fn request_client_ip(request: &Request) -> String {
 /// 判定请求是否具备合法的受信任 Web 浏览器环境上下文（防外部脚本单凭伪造请求头越权）
 fn is_trusted_web_context(request: &Request) -> bool {
     // 1. 浏览器不可伪造的 Fetch Metadata 凭证（现代浏览器针对同源/同站 fetch 强制添加）
-    if let Some(site) = request.headers().get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+    if let Some(site) = request
+        .headers()
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok())
+    {
         if site == "same-origin" || site == "same-site" {
             return true;
         }
     }
 
     // 2. 校验 Origin / Referer 是否与当前 Host、前端地址或本地地址匹配
-    let host = request.headers().get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let host = request
+        .headers()
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let host_is_local = host.starts_with("localhost")
+        || host.starts_with("127.0.0.1")
+        || host.starts_with("[::1]");
     let front = std::env::var("PUBLIC_FRONTEND_URL").ok();
     for header in ["origin", "referer"] {
         if let Some(val) = request.headers().get(header).and_then(|v| v.to_str().ok()) {
             if (!host.is_empty() && val.contains(host))
-                || val.contains("localhost")
-                || val.contains("127.0.0.1")
-                || front.as_deref().is_some_and(|f| !f.is_empty() && val.contains(f))
+                || (host_is_local && (val.contains("localhost") || val.contains("127.0.0.1")))
+                || front
+                    .as_deref()
+                    .is_some_and(|f| !f.is_empty() && val.contains(f))
             {
                 return true;
             }
@@ -95,7 +106,10 @@ fn is_trusted_web_context(request: &Request) -> bool {
 
     // 3. 开发环境宽松放行（避免本地无头测试受阻）
     matches!(
-        std::env::var("APP_ENV").unwrap_or_default().to_lowercase().as_str(),
+        std::env::var("APP_ENV")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
         "development" | "dev"
     )
 }
@@ -118,6 +132,10 @@ fn playground_allowed(token: &crate::models::ApiToken, request: &Request) -> boo
     if !has_pg_flag {
         return false;
     }
+    // 原生 App 没有浏览器来源上下文，移动端专用令牌只凭创作中心2026 请求头放行
+    if crate::api::tokens::is_mobile_app_token(&token.name, token.only_playground_2026) {
+        return true;
+    }
 
     // 来源防御：受限令牌必须由合法的 Web 演练场前端发起，防止外部命令行或脚本伪装
     is_trusted_web_context(request)
@@ -127,7 +145,7 @@ fn ip_whitelisted(token: &crate::models::ApiToken, request: &Request) -> bool {
     if token.allowed_ips.is_empty() {
         return true;
     }
-    let ip = client_ip(request);
+    let ip = request_client_ip(request);
     token.allowed_ips.split(',').any(|s| ip == s.trim())
 }
 
@@ -183,6 +201,8 @@ pub async fn auth_middleware(
         Err(_) => return AppError::Unauthorized.into_response(),
     };
 
+    crate::relay::vendor_callback::note_browser_origin(request.headers());
+
     // 高频只读观测接口：仅校验 JWT，跳过 is_active 查库（减轻看板轮询对连接池压力）
     let path = request.uri().path();
     if path.ends_with("/metrics/live") {
@@ -190,18 +210,26 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Verify user still exists and is active
-    let is_active: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
-        &state
-            .db
-            .format_query("SELECT is_active FROM users WHERE id = ?"),
-    )
-    .bind(&claims.sub)
-    .fetch_optional(&state.db.pool)
-    .await;
+    // Verify user still exists, is active, and token was issued after last password change
+    let user_row: Result<Option<(i64, Option<crate::time_system::DbTs>)>, sqlx::Error> =
+        sqlx::query_as(
+            &state
+                .db
+                .format_query("SELECT is_active, password_changed_at FROM users WHERE id = ?"),
+        )
+        .bind(&claims.sub)
+        .fetch_optional(&state.db.pool)
+        .await;
 
-    match is_active {
-        Ok(Some(active)) if active != 0 => {
+    match user_row {
+        Ok(Some((active, password_changed_at))) if active != 0 => {
+            if let Some(changed_at) = password_changed_at {
+                if let Some(changed_utc) = changed_at.to_utc() {
+                    if (claims.iat as i64) < changed_utc.timestamp() {
+                        return AppError::Unauthorized.into_response();
+                    }
+                }
+            }
             let user_id = claims.sub.clone();
             let ip = request_client_ip(&request);
             crate::api::auth::note_last_active_ip(&state, &user_id, &ip);
@@ -350,13 +378,16 @@ pub async fn api_key_middleware(
         }
     };
 
-    let api_key = match auth_header.strip_prefix("Bearer ") {
+    let api_key = match auth_header
+        .strip_prefix("Bearer ")
+        .or_else(|| auth_header.strip_prefix("Token "))
+    {
         Some(k) => k,
         None => {
             crate::relay_debug!(
                 "[Auth] {} | Bearer 格式错误, header={}",
                 path,
-                &auth_header[..auth_header.len().min(20)]
+                auth_header.chars().take(20).collect::<String>()
             );
             record_auth_error(
                 &state,
@@ -485,7 +516,7 @@ pub async fn api_key_middleware(
     }
 
     if !ip_whitelisted(&token, &request) {
-        let msg = format!("IP {} not whitelisted", client_ip(&request));
+        let msg = format!("IP {} not whitelisted", request_client_ip(&request));
         record_auth_error(
             &state,
             skip_log,

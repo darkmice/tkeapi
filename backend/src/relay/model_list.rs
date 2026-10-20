@@ -62,17 +62,20 @@ pub async fn list_models(
         })));
     }
 
-    // 3. 统计可用渠道支持的模型范围
+    // 3. 统计可用渠道支持的模型范围（空模型渠道不作为通配渠道）
     let has_wildcard_channel = usable_channels.iter().any(|c| {
         let m = c.models.trim();
-        m.is_empty() || m == "[]"
+        m.contains("\"*\"")
     });
 
     let (supported_mids, supported_model_ids): (
         std::collections::HashSet<String>,
         std::collections::HashSet<String>,
     ) = if has_wildcard_channel {
-        (std::collections::HashSet::new(), std::collections::HashSet::new())
+        (
+            std::collections::HashSet::new(),
+            std::collections::HashSet::new(),
+        )
     } else {
         let mut mids = std::collections::HashSet::new();
         let mut model_ids = std::collections::HashSet::new();
@@ -212,4 +215,3 @@ fn parse_timestamp(s: &str) -> i64 {
     }
     0
 }
-

@@ -11,7 +11,7 @@ pub mod default_docs;
 
 use axum::{
     extract::{Extension, Path, Query, State},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use std::sync::Arc;
@@ -94,6 +94,13 @@ static WAN_VID_ZH: LazyLock<String> = LazyLock::new(|| {
         include_str!("default_docs/zh/common-errors.md")
     )
 });
+static VIDU_VID_ZH: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{}\n\n{}",
+        include_str!("default_docs/zh/vidu-video.md"),
+        include_str!("default_docs/zh/common-errors.md")
+    )
+});
 use crate::{
     auth,
     error::{AppError, AppResult},
@@ -106,29 +113,35 @@ use sqlx::{FromRow, Pool, Postgres};
 
 #[derive(Debug, Serialize, Deserialize, FromRow, Clone)]
 pub struct PluginDoc {
-    pub id: i32,
-    pub parent_id: Option<i32>,
+    pub id: i64,
+    pub parent_id: Option<i64>,
     pub title: String,
     pub content: Option<String>,
-    pub is_dir: i32,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub is_dir: i64,
+    pub sort_order: i64,
+    pub is_active: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
     pub slug: Option<String>,
-    pub category_id: Option<i32>,
+    pub category_id: Option<i64>,
+    /// 1 = 系统内置预设（重置初始化时覆盖）；0 = 管理员手动添加（重置时保留）
+    pub is_preset: i64,
+    /// 1 = 用户端 API 教程默认展开该目录；0 = 默认收起。文章节点忽略。
+    pub default_expanded: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct DocTreeNode {
-    pub id: i32,
-    pub parent_id: Option<i32>,
+    pub id: i64,
+    pub parent_id: Option<i64>,
     pub title: String,
     pub is_dir: bool,
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub is_active: bool,
     pub slug: Option<String>,
-    pub category_id: Option<i32>,
+    pub category_id: Option<i64>,
+    pub is_preset: bool,
+    pub default_expanded: bool,
     pub children: Vec<DocTreeNode>,
 }
 
@@ -140,26 +153,26 @@ pub struct TranslationInput {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDocReq {
-    pub parent_id: Option<i32>,
+    pub parent_id: Option<i64>,
     pub title: String,
     pub content: Option<String>,
-    pub is_dir: i32,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub is_dir: i64,
+    pub sort_order: i64,
+    pub is_active: i64,
     pub slug: Option<String>,
-    pub category_id: Option<i32>,
+    pub category_id: Option<i64>,
     pub translations: Option<std::collections::HashMap<String, TranslationInput>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateDocReq {
-    pub parent_id: Option<i32>,
+    pub parent_id: Option<i64>,
     pub title: String,
     pub content: Option<String>,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub sort_order: i64,
+    pub is_active: i64,
     pub slug: Option<String>,
-    pub category_id: Option<i32>,
+    pub category_id: Option<i64>,
     pub translations: Option<std::collections::HashMap<String, TranslationInput>>,
 }
 
@@ -172,17 +185,18 @@ pub struct DocTranslation {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocDetailResp {
-    pub id: i32,
-    pub parent_id: Option<i32>,
+    pub id: i64,
+    pub parent_id: Option<i64>,
     pub title: String,
     pub content: Option<String>,
-    pub is_dir: i32,
-    pub sort_order: i32,
-    pub is_active: i32,
+    pub is_dir: i64,
+    pub sort_order: i64,
+    pub is_active: i64,
     pub created_at: String,
     pub updated_at: String,
     pub slug: Option<String>,
-    pub category_id: Option<i32>,
+    pub category_id: Option<i64>,
+    pub is_preset: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translations: Option<std::collections::HashMap<String, TranslationInput>>,
 }
@@ -204,10 +218,71 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/docs/import-default", post(import_default_docs))
         .route("/docs/clear-all", post(clear_all_docs))
         .route("/docs/translate", post(translate_content))
+        .route("/docs/images", post(upload_doc_image))
         .route(
             "/docs/{id}",
             get(get_doc_detail).put(update_doc).delete(delete_doc),
         )
+        .route(
+            "/docs/{id}/default-expanded",
+            put(set_doc_default_expanded),
+        )
+}
+
+const DOCS_PLUGIN: &str = "docs_api";
+const STORAGE_REQUIRED: &str = "请配置站点存储才可以上传图片";
+
+/// 文档插图上传到站点存储 `plugins/docs_api/images/`。
+async fn upload_doc_image(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<auth::Claims>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    check_admin(&state, &claims.sub).await?;
+    let store = crate::api::plugins::site_store_for_plugin(&state, DOCS_PLUGIN)
+        .await
+        .ok_or_else(|| AppError::BadRequest(STORAGE_REQUIRED.to_string()))?;
+
+    let mut file: Option<(Vec<u8>, String, String)> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::BadRequest("读取上传内容失败".to_string()))?
+    {
+        if field.name() == Some("file") {
+            let mime = field.content_type().unwrap_or("").to_string();
+            let name = field.file_name().unwrap_or("").to_string();
+            let data = field
+                .bytes()
+                .await
+                .map_err(|_| AppError::BadRequest("读取文件失败".to_string()))?;
+            file = Some((data.to_vec(), mime, name));
+        }
+    }
+
+    let (data, mime, name) =
+        file.ok_or_else(|| AppError::BadRequest("请选择要上传的图片".to_string()))?;
+    if !mime.starts_with("image/") {
+        return Err(AppError::BadRequest("只支持上传图片格式的文件".to_string()));
+    }
+    if data.len() > 5 * 1024 * 1024 {
+        return Err(AppError::BadRequest("图片大小不能超过 5MB".to_string()));
+    }
+
+    let ext = crate::services::object_store::upload_ext(&name, "png");
+    let object_key = store.full_key(&format!("images/{}.{}", uuid::Uuid::new_v4().simple(), ext));
+    let file_url = store
+        .upload_file(&object_key, data, &mime, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!("文档图片上传失败 {}: {}", object_key, e);
+            AppError::Internal("图片上传失败，请稍后重试".to_string())
+        })?;
+
+    Ok(Json(json!({
+        "file_url": file_url,
+        "object_key": object_key,
+    })))
 }
 
 /// 管理员：获取完整的文档树形结构（包含禁用的）
@@ -255,7 +330,7 @@ pub async fn list_docs_public(
     let docs: Vec<PluginDoc> = if let Some(ref l) = lang {
         sqlx::query_as(
             &state.db.format_query(
-                "SELECT p.id, p.parent_id, p.is_dir, p.sort_order, p.is_active, p.slug, p.created_at, p.updated_at, p.category_id, \
+                "SELECT p.id, p.parent_id, p.is_dir, p.sort_order, p.is_active, p.slug, p.created_at, p.updated_at, p.category_id, p.is_preset, p.default_expanded, \
                  COALESCE(NULLIF(i.title, ''), p.title) AS title, \
                  COALESCE(NULLIF(i.content, ''), p.content) AS content \
                  FROM plugin_docs p \
@@ -283,14 +358,14 @@ pub async fn list_docs_public(
 pub async fn get_doc_detail(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DocQuery>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     let lang = query.lang.filter(|l| !l.is_empty() && l != "zh");
 
     let doc: Option<PluginDoc> = if let Some(ref l) = lang {
         sqlx::query_as(
             &state.db.format_query(
-                "SELECT p.id, p.parent_id, p.is_dir, p.sort_order, p.is_active, p.slug, p.created_at, p.updated_at, p.category_id, \
+                "SELECT p.id, p.parent_id, p.is_dir, p.sort_order, p.is_active, p.slug, p.created_at, p.updated_at, p.category_id, p.is_preset, p.default_expanded, \
                  COALESCE(NULLIF(i.title, ''), p.title) AS title, \
                  COALESCE(NULLIF(i.content, ''), p.content) AS content \
                  FROM plugin_docs p \
@@ -356,6 +431,7 @@ pub async fn get_doc_detail(
             updated_at: doc.updated_at.into_string(),
             slug: doc.slug,
             category_id: doc.category_id,
+            is_preset: doc.is_preset,
             translations,
         }
     })))
@@ -369,12 +445,30 @@ async fn create_doc(
 ) -> AppResult<Json<serde_json::Value>> {
     check_admin(&state, &claims.sub).await?;
 
+    let slug = payload.slug.unwrap_or_default().trim().to_string();
+    if slug.is_empty() {
+        return Err(AppError::BadRequest("路由英文名不能为空".to_string()));
+    }
+    if let Some(pid) = payload.parent_id {
+        let parent_is_dir: Option<i64> = sqlx::query_scalar(
+            &state
+                .db
+                .format_query("SELECT is_dir FROM plugin_docs WHERE id = ?"),
+        )
+        .bind(pid)
+        .fetch_optional(&state.db.pool)
+        .await?;
+        if parent_is_dir != Some(1) {
+            return Err(AppError::BadRequest("只能放到目录下面".to_string()));
+        }
+    }
+
     let mut tx = state.db.pool.begin().await?;
 
     let doc: PluginDoc = sqlx::query_as(
         &state.db.format_query(
-            "INSERT INTO plugin_docs (parent_id, title, content, is_dir, sort_order, is_active, slug, category_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+            "INSERT INTO plugin_docs (parent_id, title, content, is_dir, sort_order, is_active, slug, category_id, is_preset, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
              RETURNING *"
         )
     )
@@ -384,7 +478,7 @@ async fn create_doc(
     .bind(payload.is_dir)
     .bind(payload.sort_order)
     .bind(payload.is_active)
-    .bind(payload.slug.unwrap_or_default())
+    .bind(&slug)
     .bind(payload.category_id)
     .fetch_one(&mut *tx)
     .await?;
@@ -415,7 +509,7 @@ async fn create_doc(
 /// 管理员：修改文档/分类
 async fn update_doc(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<UpdateDocReq>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -470,24 +564,78 @@ async fn update_doc(
     Ok(Json(json!({ "doc": updated })))
 }
 
+#[derive(Debug, Deserialize)]
+struct SetDefaultExpandedReq {
+    default_expanded: i64,
+}
+
+/// 管理员：设置目录在用户端 API 教程中是否默认展开。
+async fn set_doc_default_expanded(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Extension(claims): Extension<auth::Claims>,
+    Json(payload): Json<SetDefaultExpandedReq>,
+) -> AppResult<Json<serde_json::Value>> {
+    check_admin(&state, &claims.sub).await?;
+
+    let flag: i64 = if payload.default_expanded == 0 { 0 } else { 1 };
+    let updated = sqlx::query(&state.db.format_query(
+        "UPDATE plugin_docs SET default_expanded = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND is_dir = 1",
+    ))
+    .bind(flag)
+    .bind(id)
+    .execute(&state.db.pool)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        return Err(AppError::BadRequest("只有目录可以设置默认展开".to_string()));
+    }
+
+    Ok(Json(json!({ "id": id, "default_expanded": flag == 1 })))
+}
+
 /// 管理员：删除文档/分类 (级联删除)
 async fn delete_doc(
     State(state): State<Arc<AppState>>,
-    Path(id): Path<i32>,
+    Path(id): Path<i64>,
     Extension(claims): Extension<auth::Claims>,
 ) -> AppResult<Json<serde_json::Value>> {
     check_admin(&state, &claims.sub).await?;
 
-    // PostgreSQL 支持级联外键关联或者我们在这里直接级联删除。
-    // 我们的表结构 `REFERENCES plugin_docs(id) ON DELETE CASCADE` 可以实现自动级联删除。
-    sqlx::query(
-        &state
-            .db
-            .format_query("DELETE FROM plugin_docs WHERE id = ?"),
-    )
-    .bind(id)
-    .execute(&state.db.pool)
-    .await?;
+    let mut tx = state.db.pool.begin().await?;
+
+    let is_preset: Option<i64> = sqlx::query_scalar("SELECT is_preset FROM plugin_docs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+    // 删预设目录时，外键是 ON DELETE CASCADE。先把挂在这棵预设子树上的自建文档
+    // 挂到被删节点的父级，避免手写文章跟着预设一起被级联删掉。
+    if is_preset == Some(1) {
+        sqlx::query(
+            r#"WITH RECURSIVE doomed AS (
+                   SELECT id FROM plugin_docs WHERE id = $1 AND is_preset = 1
+                   UNION ALL
+                   SELECT d.id FROM plugin_docs d
+                   JOIN doomed ON d.parent_id = doomed.id
+                   WHERE d.is_preset = 1
+               )
+               UPDATE plugin_docs AS c
+               SET parent_id = (SELECT parent_id FROM plugin_docs WHERE id = $1)
+               WHERE c.is_preset = 0
+                 AND c.parent_id IN (SELECT id FROM doomed)"#,
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    sqlx::query("DELETE FROM plugin_docs WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
 
     Ok(Json(json!({ "message": "deleted" })))
 }
@@ -621,7 +769,9 @@ async fn import_default_docs(
 
     seed_default_docs_direct(&state.db.pool).await?;
 
-    Ok(Json(json!({ "message": "imported" })))
+    Ok(Json(json!({
+        "message": "已重置系统预设文档。单独添加的文档已保留；对预设文档的修改已恢复为初始内容。"
+    })))
 }
 
 /// 管理员：一键清空所有文档数据
@@ -654,7 +804,7 @@ async fn check_admin(state: &AppState, user_id: &str) -> AppResult<()> {
 
 fn build_tree(docs: &[PluginDoc], active_only: bool) -> Vec<DocTreeNode> {
     let mut root_nodes: Vec<DocTreeNode> = Vec::new();
-    let mut children_map: std::collections::HashMap<i32, Vec<DocTreeNode>> =
+    let mut children_map: std::collections::HashMap<i64, Vec<DocTreeNode>> =
         std::collections::HashMap::new();
 
     // 第一次遍历：创建所有树形节点并存入哈希表
@@ -671,6 +821,8 @@ fn build_tree(docs: &[PluginDoc], active_only: bool) -> Vec<DocTreeNode> {
             is_active: doc.is_active == 1,
             slug: doc.slug.clone(),
             category_id: doc.category_id,
+            is_preset: doc.is_preset == 1,
+            default_expanded: doc.is_dir == 1 && doc.default_expanded == 1,
             children: Vec::new(),
         };
 
@@ -684,7 +836,7 @@ fn build_tree(docs: &[PluginDoc], active_only: bool) -> Vec<DocTreeNode> {
     // 递归填充子节点
     fn fill_children(
         node: &mut DocTreeNode,
-        map: &std::collections::HashMap<i32, Vec<DocTreeNode>>,
+        map: &std::collections::HashMap<i64, Vec<DocTreeNode>>,
     ) {
         if let Some(child_list) = map.get(&node.id) {
             let mut list = child_list.clone();
@@ -706,81 +858,196 @@ fn build_tree(docs: &[PluginDoc], active_only: bool) -> Vec<DocTreeNode> {
 
 // ── 种子数据初始化 ──
 
-pub async fn seed_default_docs_direct(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
-    // 1. 清空旧的文档数据
-    sqlx::query("TRUNCATE TABLE plugin_docs RESTART IDENTITY CASCADE")
-        .execute(pool)
+struct BuiltinDocSeed<'a> {
+    parent_id: Option<i64>,
+    title: &'a str,
+    content: &'a str,
+    is_dir: i64,
+    sort_order: i64,
+    is_active: i64,
+    slug: &'a str,
+}
+
+async fn ensure_docs_preset_column(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "ALTER TABLE plugin_docs ADD COLUMN IF NOT EXISTS is_preset BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE plugin_docs ADD COLUMN IF NOT EXISTS default_expanded BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// 按 slug 覆盖或插入一条系统预设。已有预设行保持原 id，挂在下面的自建文档不用搬家。
+async fn upsert_builtin_doc(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    doc: BuiltinDocSeed<'_>,
+) -> Result<i64, sqlx::Error> {
+    let existing_id: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM plugin_docs WHERE is_preset = 1 AND slug = $1 ORDER BY id ASC LIMIT 1",
+    )
+    .bind(doc.slug)
+    .fetch_optional(&mut **tx)
+    .await?;
+
+    let id = if let Some(id) = existing_id {
+        sqlx::query(
+            "UPDATE plugin_docs SET parent_id = $1, title = $2, content = $3, is_dir = $4, \
+             sort_order = $5, is_active = $6, updated_at = CURRENT_TIMESTAMP WHERE id = $7",
+        )
+        .bind(doc.parent_id)
+        .bind(doc.title)
+        .bind(doc.content)
+        .bind(doc.is_dir)
+        .bind(doc.sort_order)
+        .bind(doc.is_active)
+        .bind(id)
+        .execute(&mut **tx)
+        .await?;
+        id
+    } else {
+        let default_expanded: i64 = if doc.is_dir == 1 && doc.slug == "quickstart" {
+            1
+        } else {
+            0
+        };
+        sqlx::query_scalar(
+            "INSERT INTO plugin_docs (parent_id, title, content, is_dir, sort_order, is_active, slug, is_preset, default_expanded, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id",
+        )
+        .bind(doc.parent_id)
+        .bind(doc.title)
+        .bind(doc.content)
+        .bind(doc.is_dir)
+        .bind(doc.sort_order)
+        .bind(doc.is_active)
+        .bind(doc.slug)
+        .bind(default_expanded)
+        .fetch_one(&mut **tx)
+        .await?
+    };
+
+    sqlx::query("DELETE FROM plugin_docs_intl WHERE doc_id = $1")
+        .bind(id)
+        .execute(&mut **tx)
         .await?;
 
+    Ok(id)
+}
+
+pub fn builtin_doc_slugs() -> Vec<String> {
+    let mut slugs = Vec::new();
+    for (_, cat_slug, _, articles) in get_default_docs_data() {
+        slugs.push(cat_slug.to_string());
+        for (_, art_slug, _, _) in articles {
+            slugs.push(art_slug.to_string());
+        }
+    }
+    slugs
+}
+
+pub async fn seed_default_docs_direct(pool: &Pool<Postgres>) -> Result<(), sqlx::Error> {
+    ensure_docs_preset_column(pool).await?;
+
+    let mut tx = pool.begin().await?;
+    let mut kept_ids: Vec<i64> = Vec::new();
     let default_data = get_default_docs_data();
 
     for (cat_title, cat_slug, cat_order, articles) in default_data {
-        // 插入目录
-        let cat_id: i32 = sqlx::query_scalar(
-            "INSERT INTO plugin_docs (parent_id, title, content, is_dir, sort_order, is_active, slug, created_at, updated_at) \
-             VALUES (NULL, $1, '', 1, $2, 1, $3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id"
+        let cat_id = upsert_builtin_doc(
+            &mut tx,
+            BuiltinDocSeed {
+                parent_id: None,
+                title: cat_title,
+                content: "",
+                is_dir: 1,
+                sort_order: cat_order,
+                is_active: 1,
+                slug: cat_slug,
+            },
         )
-        .bind(cat_title)
-        .bind(cat_order)
-        .bind(cat_slug)
-        .fetch_one(pool)
         .await?;
+        kept_ids.push(cat_id);
 
-        // 插入目录的翻译
-        let cat_translations = default_docs::get_category_translations(cat_slug);
-        for (lang, trans_title) in cat_translations {
+        for (lang, trans_title) in default_docs::get_category_translations(cat_slug) {
             sqlx::query(
                 "INSERT INTO plugin_docs_intl (doc_id, lang, title, content, created_at, updated_at) \
-                 VALUES ($1, $2, $3, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                 VALUES ($1, $2, $3, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
             )
             .bind(cat_id)
             .bind(lang)
             .bind(trans_title)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
         }
 
-        // 插入属于该目录的文章
         for (art_title, art_slug, art_order, art_content) in articles {
             let is_active = if art_slug == "volcengine-mediakit" { 0 } else { 1 };
-            let art_id: i32 = sqlx::query_scalar(
-                "INSERT INTO plugin_docs (parent_id, title, content, is_dir, sort_order, is_active, slug, created_at, updated_at) \
-                 VALUES ($1, $2, $3, 0, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id"
+            let art_id = upsert_builtin_doc(
+                &mut tx,
+                BuiltinDocSeed {
+                    parent_id: Some(cat_id),
+                    title: art_title,
+                    content: art_content,
+                    is_dir: 0,
+                    sort_order: art_order,
+                    is_active,
+                    slug: art_slug,
+                },
             )
-            .bind(cat_id)
-            .bind(art_title)
-            .bind(art_content)
-            .bind(art_order)
-            .bind(is_active)
-            .bind(art_slug)
-            .fetch_one(pool)
             .await?;
+            kept_ids.push(art_id);
 
-            // 插入文章的翻译
-            let art_translations = default_docs::get_article_translations(art_slug);
-            for trans in art_translations {
+            for trans in default_docs::get_article_translations(art_slug) {
                 sqlx::query(
                     "INSERT INTO plugin_docs_intl (doc_id, lang, title, content, created_at, updated_at) \
-                     VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                     VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
                 )
                 .bind(art_id)
                 .bind(trans.lang)
                 .bind(trans.title)
                 .bind(trans.content)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
             }
         }
     }
 
+    // 目录里已经拿掉的预设：自建子文档先挂到仍保留的父级，再删预设行。
+    sqlx::query(
+        r#"UPDATE plugin_docs AS c
+           SET parent_id = CASE
+               WHEN parent_row.parent_id = ANY($1) THEN parent_row.parent_id
+               ELSE NULL
+           END
+           FROM plugin_docs AS parent_row
+           WHERE c.parent_id = parent_row.id
+             AND c.is_preset = 0
+             AND parent_row.is_preset = 1
+             AND NOT (parent_row.id = ANY($1))"#,
+    )
+    .bind(&kept_ids)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("DELETE FROM plugin_docs WHERE is_preset = 1 AND NOT (id = ANY($1))")
+        .bind(&kept_ids)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
 pub fn get_default_docs_data() -> Vec<(
     &'static str,
     &'static str,
-    i32,
-    Vec<(&'static str, &'static str, i32, &'static str)>,
+    i64,
+    Vec<(&'static str, &'static str, i64, &'static str)>,
 )> {
     vec![
         (
@@ -798,7 +1065,7 @@ pub fn get_default_docs_data() -> Vec<(
                     "开放端点一览表",
                     "endpoints",
                     20,
-                    "# 开放端点一览表\n\n使用本平台 API 密钥即可调用以下端点：\n\n### 1. OpenAI 协议路由\n| 端点名称 | 路径 (Path) | 请求方式 | 协议类型 |\n| :--- | :--- | :--- | :--- |\n| OpenAI 聊天对话 | `/v1/chat/completions` | `POST` | OpenAI 兼容 |\n| Responses | `/v1/responses` | `POST` | OpenAI 兼容 |\n| 向量化 (Embeddings) | `/v1/embeddings` | `POST` | OpenAI 兼容 |\n| 图像生成 (Text2Image) | `/v1/images/generations` | `POST` | OpenAI 兼容 |\n| 图像编辑 (Image Edit) | `/v1/images/edits` | `POST` | OpenAI 兼容 |\n| 异步视频任务提交 | `/v1/video/generations` | `POST` | OpenAI 兼容 |\n| 异步视频任务状态查询 | `/v1/video/generations/{task_id}` | `GET` | OpenAI 兼容 |\n| 异步视频任务取消 | `/v1/video/generations/{task_id}` | `DELETE` | OpenAI 兼容 |\n| 文本语音合成 (Text-to-Speech) | `/v1/audio/speech` | `POST` | OpenAI 兼容 |\n| 令牌可用额度查询 | `/v1/balance` | `GET` | 账户信息 |\n| 账户总余额查询 | `/v1/user/balance` | `GET` | 账户信息 |\n| 可用模型列表 | `/v1/models` | `GET` | 账户信息 |\n\n### 2. 火山引擎(方舟) (Volcengine) 路由\n| 端点名称 | 路径 (Path) | 请求方式 | 协议类型 |\n| :--- | :--- | :--- | :--- |\n| 聊天对话 (OpenAI 兼容) | `/api/v3/chat/completions` | `POST` | 火山引擎(方舟) |\n| 原生响应 (Responses) | `/api/v3/responses` | `POST` | 火山引擎(方舟) |\n| 多模态向量化 (Multimodal Embeddings) | `/api/v3/embeddings/multimodal` | `POST` | 火山引擎(方舟) |\n| 图像生成 (Generations) | `/api/v3/images/generations` | `POST` | 火山引擎(方舟) |\n| 异步视频任务提交 | `/api/v3/contents/generations/tasks` | `POST` | 火山引擎(方舟) |\n| 异步视频任务查询 | `/api/v3/contents/generations/tasks/{task_id}` | `GET` | 火山引擎(方舟) |\n| 异步视频任务取消 | `/api/v3/contents/generations/tasks/{task_id}` | `DELETE` | 火山引擎(方舟) |\n| 语音合成 (SSE 文本流) | `/api/v3/tts/unidirectional/sse` | `POST` | 火山引擎(方舟) |\n| 语音合成 (Chunked 二进制) | `/api/v3/tts/unidirectional` | `POST` | 火山引擎(方舟) |\n| 视频画质增强 (标准/专业) | `/api/v1/tools/enhance-video` | `POST` | 火山 MediaKit |\n| 视频画质增强 (极速版) | `/api/v1/tools/enhance-video-fast` | `POST` | 火山 MediaKit |\n| 视频画质增强 (大模型版) | `/api/v1/tools/enhance-video-generative` | `POST` | 火山 MediaKit |\n| 视频字幕擦除 | `/api/v1/tools/erase-video-subtitle` | `POST` | 火山 MediaKit |\n| 媒体任务状态查询 | `/api/v1/tasks/{task_id}` | `GET` | 火山 MediaKit |\n\n### 3. 其他厂商原生路由\n| 厂商名称 | 端点名称 | 路径 (Path) | 请求方式 |\n| :--- | :--- | :--- | :--- |\n| 阿里百炼 | 万相视频生成 (提交) | `/api/v1/services/aigc/video-generation/video-synthesis` | `POST` |\n| 阿里百炼 | 万相生图任务 (提交) | `/api/v1/services/aigc/multimodal-generation/generation` | `POST` |\n| 阿里百炼 | 异步任务查询 (通用) | `/api/v1/tasks/{task_id}` | `GET` |\n| 阿里百炼 | 文本向量化 | `/compatible-mode/v1/embeddings` | `POST` |\n| 阿里百炼 | 文档重排序 (Rerank) | `/compatible-api/v1/reranks` | `POST` |\n| 可灵 AI | 文生视频 (Kling) | `/v1/videos/text2video` | `POST` |\n| 可灵 AI | 图生视频 (Kling) | `/v1/videos/image2video` | `POST` |\n| 可灵 AI | 任务状态查询 (视频/图片) | `/v1/videos/{endpoint}/{task_id}` | `GET` |\n| Google | Gemini 文本生成 | `/v1beta/models/{model}:generateContent` | `POST` |\n| Google | Gemini 流式文本生成 | `/v1beta/models/{model}:streamGenerateContent` | `POST` |\n| Anthropic | Claude 原生消息 | `/v1/messages` | `POST` |\n| MiniMax | Anthropic 兼容 Messages | `/anthropic/v1/messages` | `POST` |"
+                    "# 开放端点一览表\n\n使用本平台 API 密钥即可调用以下端点：\n\n### 1. OpenAI 协议路由\n| 端点名称 | 路径 (Path) | 请求方式 | 协议类型 |\n| :--- | :--- | :--- | :--- |\n| OpenAI 聊天对话 | `/v1/chat/completions` | `POST` | OpenAI 兼容 |\n| Responses | `/v1/responses` | `POST` | OpenAI 兼容 |\n| 向量化 (Embeddings) | `/v1/embeddings` | `POST` | OpenAI 兼容 |\n| 图像生成 (Text2Image) | `/v1/images/generations` | `POST` | OpenAI 兼容 |\n| 图像编辑 (Image Edit) | `/v1/images/edits` | `POST` | OpenAI 兼容 |\n| 异步视频任务提交 | `/v1/video/generations` | `POST` | OpenAI 兼容 |\n| 异步视频任务状态查询 | `/v1/video/generations/{task_id}` | `GET` | OpenAI 兼容 |\n| 异步视频任务取消 | `/v1/video/generations/{task_id}` | `DELETE` | OpenAI 兼容 |\n| 文本语音合成 (Text-to-Speech) | `/v1/audio/speech` | `POST` | OpenAI 兼容 |\n| 令牌可用额度查询 | `/v1/balance` | `GET` | 账户信息 |\n| 账户总余额查询 | `/v1/user/balance` | `GET` | 账户信息 |\n| 可用模型列表 | `/v1/models` | `GET` | 账户信息 |\n\n### 2. 火山引擎(方舟) (Volcengine) 路由\n| 端点名称 | 路径 (Path) | 请求方式 | 协议类型 |\n| :--- | :--- | :--- | :--- |\n| 聊天对话 (OpenAI 兼容) | `/api/v3/chat/completions` | `POST` | 火山引擎(方舟) |\n| 原生响应 (Responses) | `/api/v3/responses` | `POST` | 火山引擎(方舟) |\n| 多模态向量化 (Multimodal Embeddings) | `/api/v3/embeddings/multimodal` | `POST` | 火山引擎(方舟) |\n| 图像生成 (Generations) | `/api/v3/images/generations` | `POST` | 火山引擎(方舟) |\n| 异步视频任务提交 | `/api/v3/contents/generations/tasks` | `POST` | 火山引擎(方舟) |\n| 异步视频任务查询 | `/api/v3/contents/generations/tasks/{task_id}` | `GET` | 火山引擎(方舟) |\n| 异步视频任务取消 | `/api/v3/contents/generations/tasks/{task_id}` | `DELETE` | 火山引擎(方舟) |\n| 语音合成 (SSE 文本流) | `/api/v3/tts/unidirectional/sse` | `POST` | 火山引擎(方舟) |\n| 语音合成 (Chunked 二进制) | `/api/v3/tts/unidirectional` | `POST` | 火山引擎(方舟) |\n| 视频画质增强 (标准/专业) | `/api/v1/tools/enhance-video` | `POST` | 火山 MediaKit |\n| 视频画质增强 (极速版) | `/api/v1/tools/enhance-video-fast` | `POST` | 火山 MediaKit |\n| 视频画质增强 (大模型版) | `/api/v1/tools/enhance-video-generative` | `POST` | 火山 MediaKit |\n| 视频字幕擦除 | `/api/v1/tools/erase-video-subtitle` | `POST` | 火山 MediaKit |\n| 媒体任务状态查询 | `/api/v1/tasks/{task_id}` | `GET` | 火山 MediaKit |\n\n### 3. 其他厂商原生路由\n| 厂商名称 | 端点名称 | 路径 (Path) | 请求方式 |\n| :--- | :--- | :--- | :--- |\n| 阿里百炼 | 万相视频生成 (提交) | `/api/v1/services/aigc/video-generation/video-synthesis` | `POST` |\n| 阿里百炼 | 万相生图任务 (提交) | `/api/v1/services/aigc/multimodal-generation/generation` | `POST` |\n| 阿里百炼 | 异步任务查询 (通用) | `/api/v1/tasks/{task_id}` | `GET` |\n| 阿里百炼 | 文本向量化 | `/compatible-mode/v1/embeddings` | `POST` |\n| 阿里百炼 | 文档重排序 (Rerank) | `/compatible-api/v1/reranks` | `POST` |\n| 可灵 AI | 文生视频 (官方原生) | `/text-to-video/{model_id}` | `POST` |\n| 可灵 AI | 图生视频 (官方原生) | `/image-to-video/{model_id}` | `POST` |\n| 可灵 AI | Omni 视频 (官方原生) | `/omni-video/{model_id}` | `POST` |\n| 可灵 AI | 任务状态查询 (官方原生) | `/tasks` | `GET` |\n| Google | Gemini 内容生成 (官方原生) | `/v1/models/{model}:generateContent` | `POST` |\n| Google | Gemini 流式生成 (官方原生) | `/v1/models/{model}:streamGenerateContent` | `POST` |\n| Google | Gemini 内容生成 (v1beta) | `/v1beta/models/{model}:generateContent` | `POST` |\n| Google | Gemini 流式生成 (v1beta) | `/v1beta/models/{model}:streamGenerateContent` | `POST` |\n| Google | Gemini Interactions 交互 (官方原生) | `/v1/interactions` | `POST` |\n| Google | Gemini Interactions 交互 (v1beta) | `/v1beta/interactions` | `POST` |\n| Anthropic | Claude 原生消息 | `/v1/messages` | `POST` |\n| MiniMax | Anthropic 兼容 Messages | `/anthropic/v1/messages` | `POST` |\n| Vidu | 文生视频 (官方原生) | `/ent/v2/text2video` | `POST` |\n| Vidu | 图生视频 (官方原生) | `/ent/v2/img2video` | `POST` |\n| Vidu | 首尾帧生视频 (官方原生) | `/ent/v2/start-end2video` | `POST` |\n| Vidu | 参考生视频 (官方原生) | `/ent/v2/reference2video` | `POST` |\n| Vidu | 任务状态查询 (官方原生) | `/ent/v2/tasks/{task_id}/creations` | `GET` |"
                 )
             ]
         ),
@@ -817,6 +1084,7 @@ pub fn get_default_docs_data() -> Vec<(
                 ("Kling-v3 视频生成", "kling-video", 70, &*KLING_VID_ZH),
                 ("千问 图像生成", "wan-image", 75, &*WAN_IMG_ZH),
                 ("万相 视频生成", "wan-video", 76, &*WAN_VID_ZH),
+                ("Vidu Q4 视频生成", "vidu-video", 85, &*VIDU_VID_ZH),
                 ("MiniMax 视频生成", "minimax-video", 90, &*MINIMAX_VID_ZH),
             ]
         ),
@@ -867,7 +1135,7 @@ curl -X POST https://{{domain}}/v1/images/generations \
   -H "Authorization: Bearer sk-your_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "dall-e-3",
+    "model": "gpt-image-2",
     "prompt": "一只在太空中漂浮的宇航员猫，写实赛博朋克风格",
     "size": "1024x1024",
     "n": 1
@@ -931,7 +1199,7 @@ curl -X POST https://{{domain}}/v1/images/edits \
   *调用示例：*
   ```json
   {
-    "model": "kling-v3-image",
+    "model": "gpt-image-2",
     "prompt": "将这只猫的毛发颜色变成金黄色，写实风格",
     "image": "https://example.com/assets/cat.png"
   }
@@ -942,7 +1210,7 @@ curl -X POST https://{{domain}}/v1/images/edits \
   *调用示例：*
   ```json
   {
-    "model": "kling-v3-image",
+    "model": "gpt-image-2",
     "prompt": "将图一中的角色融入到图二的赛博朋克街景中",
     "image_urls": [
       "https://example.com/character.png",
@@ -956,7 +1224,7 @@ curl -X POST https://{{domain}}/v1/images/edits \
   *调用示例：*
   ```json
   {
-    "model": "kling-v3-image",
+    "model": "gpt-image-2",
     "prompt": "参考图一人物重绘画面",
     "image_urls": [
       {
@@ -1007,7 +1275,7 @@ curl -X POST https://{{domain}}/v1/video/generations \
   -H "Authorization: Bearer sk-your_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "kling-v3-omni",
+    "model": "doubao-seedance-2-5-260628",
     "prompt": "推开欧式古典大门，展现眼前的奇幻云海城堡，航拍视角，4k 级细节",
     "resolution": "1080p",
     "duration": 5
@@ -1064,7 +1332,7 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
 *调用示例：*
 ```json
 {
-  "model": "kling-v3-omni",
+  "model": "doubao-seedance-2-5-260628",
   "prompt": "画面从第一张图平滑过渡到第二张图的古风场景",
   "images": [
     "https://example.com/first_frame.png",
@@ -1082,7 +1350,7 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
 *调用示例：*
 ```json
 {
-  "model": "doubao-seedance-2-0",
+  "model": "doubao-seedance-2-5-260628",
   "prompt": "一只奔跑的哈士奇",
   "images": [
     {
@@ -1128,7 +1396,7 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
             ]
         ),
         (
-            "5.阿里百炼与可灵协议",
+            "5.厂商原生协议(百炼/可灵/MiniMax/Vidu)",
             "ali-kling",
             50,
             vec![
@@ -1142,13 +1410,19 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
                     "可灵AI(Kling)原生接入",
                     "kling-ai",
                     20,
-                    "# 可灵 AI (Kling) 原生协议说明\n\n可灵兼容路径。使用本平台 API 密钥调用即可。[图片生成 API](https://klingai.com/document-api/apiReference/model/OmniImage) | [视频生成 API](https://klingai.com/document-api/apiReference/model/OmniVideo)\n\n### 1. 视频模型接口\n* **文生视频**: `/v1/videos/text2video` (`POST`)\n* **图生视频**: `/v1/videos/image2video` (`POST`)\n* **Omni 视频参考生视频**: `/v1/videos/omni-video` (`POST`)\n* **任务状态查询**: `/v1/videos/{endpoint}/{task_id}` (`GET`)\n\n*注：在查询接口中，`{endpoint}` 对应您提交任务时所用的服务类型（如 `text2video`、`image2video` 等）。*\n\n### 2. 图像模型接口\n* **标准文/图生图**: `/v1/images/generations` (`POST`)\n* **多图生图**: `/v1/images/multi-image2image` (`POST`)\n* **Omni 生图**: `/v1/images/omni-image` (`POST`)\n* **任务状态查询**: `/v1/images/{endpoint}/{task_id}` (`GET`)\n\n### 3. 可灵官方文档参考\n详细的请求载荷结构（例如 `camera_control` 镜头控制、`aspect_ratio` 比例控制、首尾帧图片等）请对照官方标准。您可以从这里跳转官方文档说明：\n* [可灵 OmniVideo 官方规范](https://klingai.com/document-api/apiReference/model/OmniVideo)\n* [可灵 OmniImage 官方规范](https://klingai.com/document-api/apiReference/model/OmniImage)"
+                    "# 可灵 AI (Kling) 原生协议说明\n\n可灵官方原生协议路径。使用本平台 API 密钥调用即可。[图片生成 API](https://klingai.com/document-api/apiReference/model/OmniImage) | [视频生成 API](https://klingai.com/document-api/apiReference/model/OmniVideo)\n\n### 1. 视频模型接口 (官方原生)\n* **文生视频**: `/text-to-video/{model_id}` (`POST`)\n* **图生视频**: `/image-to-video/{model_id}` (`POST`)\n* **Omni 视频参考生视频**: `/omni-video/{model_id}` (`POST`)\n* **任务状态查询**: `/tasks?task_ids={task_id}` (`GET`)\n\n*注：查询接口支持通过 URL query 参数 `task_ids` 批量或单个查询任务状态。*\n\n### 2. 图像模型接口\n* **标准文/图生图**: `/v1/images/generations` (`POST`)\n* **多图生图**: `/v1/images/multi-image2image` (`POST`)\n* **Omni 生图**: `/v1/images/omni-image` (`POST`)\n* **任务状态查询**: `/v1/images/{endpoint}/{task_id}` (`GET`)\n\n### 3. 可灵官方文档参考\n详细的请求载荷结构（例如 `camera_control` 镜头控制、`aspect_ratio` 比例控制、首尾帧图片等）请对照官方标准。您可以从这里跳转官方文档说明：\n* [可灵 OmniVideo 官方规范](https://klingai.com/document-api/apiReference/model/OmniVideo)\n* [可灵 OmniImage 官方规范](https://klingai.com/document-api/apiReference/model/OmniImage)"
                 ),
                 (
                     "MiniMax 视频原生接入",
                     "minimax-native",
                     30,
                     "# MiniMax 视频原生接口说明\n\n若客户端已使用 MiniMax 官方视频请求体，可直接把 Base URL 改为本平台，并继续使用 MiniMax 的原生路径与字段。[视频生成 API](https://platform.minimax.cn/docs/api-reference/video-generation-v2-create)\n\n### 1. 提交视频任务\n* **路径**: `/v2/video_generation`\n* **请求方式**: `POST`\n\n支持官方 `content` 多模态数组，以及 `resolution`、`ratio`、`duration`、`callback_url`、`aigc_watermark` 等原生字段。\n\n### 2. 查询任务状态\n* **路径**: `/v2/query/video_generation/{task_id}`\n* **请求方式**: `GET`\n\n### 3. 兼容说明\n* 若您使用 OpenAI SDK，继续走 `/v1/video/generations`\n* 若您已接入 MiniMax 官方 SDK / 请求体，直接走 `/v2/video_generation`\n* 两种入口复用同一套模型权限、渠道路由、计费与日志"
+                ),
+                (
+                    "Vidu 官方原生接入",
+                    "vidu-native",
+                    40,
+                    include_str!("default_docs/zh/vidu-native.md"),
                 )
             ]
         ),
@@ -1161,7 +1435,7 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
                     "GoogleGemini原生接入",
                     "google-gemini",
                     10,
-                    "# Google Gemini 原生接口说明\n\n若使用 Google SDK 或 Gemini 请求格式，按下方路径并以本平台 API 密钥调用即可。[Gemini API 官方文档](https://ai.google.dev/gemini-api/docs)\n\n### 1. 文本生成 (Non-stream)\n* **路径**: `/v1beta/models/{model}:generateContent`\n* **请求方式**: `POST`\n\n### 2. 流式生成 (Streaming)\n* **路径**: `/v1beta/models/{model}:streamGenerateContent`\n* **请求方式**: `POST`\n\n#### 核心请求载荷示例\n```json\n{\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"请扮演我的私人旅行助手，规划一份 3 天的京都赏樱路线。\"\n        }\n      ]\n    }\n  ],\n  \"systemInstruction\": {\n    \"parts\": [\n      {\n        \"text\": \"你是一个专业的旅行规划师，语气亲切幽默。\"\n      }\n    ]\n  },\n  \"generationConfig\": {\n    \"temperature\": 0.4,\n    \"maxOutputTokens\": 2000,\n    \"responseMimeType\": \"text/plain\"\n  }\n}\n```\n\n#### 鉴权方式（三选一）\n* 标准头: `Authorization: Bearer sk-your_token`\n* Google 头: `X-Goog-Api-Key: sk-your_token`\n* URL 尾部参数: `?key=sk-your_token`"
+                    "# Google Gemini 原生接口说明\n\n若使用 Google SDK 或 Gemini 请求格式，按下方路径并以本平台 API 密钥调用即可。[Gemini API 官方文档](https://ai.google.dev/gemini-api/docs/generate-content/image-generation?hl=zh-cn)\n\n### 1. 文本生成 (Non-stream)\n* **官方原生路径**: `/v1/models/{model}:generateContent` (兼容 `/v1beta/models/{model}:generateContent`)\n* **请求方式**: `POST`\n\n### 2. 流式生成 (Streaming)\n* **官方原生路径**: `/v1/models/{model}:streamGenerateContent` (兼容 `/v1beta/models/{model}:streamGenerateContent`)\n* **请求方式**: `POST`\n\n#### 核心请求载荷示例\n```json\n{\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"请扮演我的私人旅行助手，规划一份 3 天的京都赏樱路线。\"\n        }\n      ]\n    }\n  ],\n  \"systemInstruction\": {\n    \"parts\": [\n      {\n        \"text\": \"你是一个专业的旅行规划师，语气亲切幽默。\"\n      }\n    ]\n  },\n  \"generationConfig\": {\n    \"temperature\": 0.4,\n    \"maxOutputTokens\": 2000,\n    \"responseMimeType\": \"text/plain\"\n  }\n}\n```\n\n### 3. Interactions 统一交互接口 (v1 / v1beta)\n* **官方原生路径**: `/v1/interactions` (兼容 `/v1beta/interactions`)\n* **请求方式**: `POST`\n\nGoogle Gemini 全新统一交互接口，支持直接指定 `model`（或 `agent`）与 `input`（文本、多模态或多轮交互），并支持 `system_instruction`、`tools`、`response_format` 等原生参数。\n\n#### 核心请求载荷示例\n```json\n{\n  \"model\": \"gemini-2.5-flash\",\n  \"input\": \"请帮我制定一份 3 天的京都赏樱路线。\",\n  \"system_instruction\": \"你是一个专业的旅行规划师，语气亲切幽默。\",\n  \"stream\": false\n}\n```\n\n#### 鉴权方式（三选一）\n* 标准头: `Authorization: Bearer sk-your_token`\n* Google 头: `X-Goog-Api-Key: sk-your_token`\n* URL 尾部参数: `?key=sk-your_token`"
                 ),
                 (
                     "AnthropicClaude原生接入",
@@ -1221,4 +1495,20 @@ curl -X DELETE https://{{domain}}/v1/video/generations/video_task_abc123xyz789 \
             )],
         )
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_doc_slugs;
+
+    #[test]
+    fn builtin_doc_slugs_are_unique_and_nonempty() {
+        let slugs = builtin_doc_slugs();
+        assert!(!slugs.is_empty());
+        let mut seen = std::collections::HashSet::new();
+        for slug in &slugs {
+            assert!(!slug.trim().is_empty());
+            assert!(seen.insert(slug.clone()), "duplicate builtin slug: {slug}");
+        }
+    }
 }

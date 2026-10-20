@@ -14,6 +14,9 @@
 <meta name="description" content="{% block meta_desc %}{{ seo.meta_description | default(value="统一 AI 模型 API 接入平台，一个接口调用数百个主流大模型") }}{% endblock %}">
 <meta name="keywords" content="{{ seo.meta_keywords | default(value="AI,API,大模型,GPT,Claude,DeepSeek") }}">
 <meta name="robots" content="index, follow">
+{% if favicon_href | length > 0 %}
+<link rel="icon" href="{{ favicon_href }}">
+{% endif %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -193,7 +196,8 @@ strong{color:var(--text-primary);font-weight:600}
 .btn-icon svg{width:18px;height:18px;fill:currentColor}
 .hdr-avatar-link { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; border-radius: 50% !important; overflow: hidden; background: var(--brand-primary); color: #fff !important; width: 36px; height: 36px; transition: transform var(--transition-fast), box-shadow var(--transition-fast); box-shadow: var(--shadow-sm); }
 .hdr-avatar-link:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); filter: brightness(1.1); }
-.hdr-avatar { font-size: 16px; font-weight: 600; text-transform: uppercase; user-select: none; }
+.hdr-user-meta, .hdr-logout-btn, .hdr-tool-text, .hdr-tool-chevron, .hdr-drawer-foot { display: none; }
+.hdr-act[style*="display: none"] { display: none !important; }
 
 /* Mobile Menu Button */
 .mob-btn{display:none;background:none;border:none;color:var(--text-primary);cursor:pointer;padding:8px;z-index:1000}
@@ -266,16 +270,53 @@ strong{color:var(--text-primary);font-weight:600}
   .ftr-links{flex-wrap:wrap;gap:32px}
 }
 @media(max-width:768px){
-  .hdr-menu{position:fixed;top:var(--nav-height);left:0;right:0;bottom:0;background:var(--bg-primary);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-direction:column;padding:32px 24px;z-index:999;align-items:stretch;justify-content:flex-start;gap:24px;opacity:0;pointer-events:none;transform:translateY(-10px);transition:all var(--transition-normal)}
-  .navbar.menu-open .hdr-menu{opacity:1;pointer-events:auto;transform:translateY(0)}
-  .hdr-nav{flex-direction:column;gap:12px}
-  .hdr-nav a{padding:10px 16px;font-size:16px}
+  .hdr-in{justify-content:space-between}
+  .hdr-menu{
+    position:fixed;
+    top:calc(var(--nav-height) + var(--portal-notice-h, 0px));
+    left:0;
+    right:0;
+    bottom:0;
+    background:var(--bg-primary);
+    backdrop-filter:blur(20px);
+    -webkit-backdrop-filter:blur(20px);
+    flex-direction:column;
+    padding:24px 20px calc(32px + env(safe-area-inset-bottom, 0px));
+    z-index:999;
+    align-items:stretch;
+    justify-content:flex-start;
+    gap:18px;
+    opacity:0;
+    pointer-events:none;
+    transform:translateY(-8px);
+    transition:opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+  }
+  .hdr-menu.open,
+  .hdr.menu-open .hdr-menu,
+  .navbar.menu-open .hdr-menu{
+    opacity:1 !important;
+    pointer-events:auto !important;
+    transform:translateY(0) !important;
+  }
+  .hdr-nav{flex-direction:column;gap:8px}
+  .hdr-nav a{padding:10px 14px;font-size:15px;display:flex;align-items:center}
   .hdr-sep{display:none}
-  .hdr-act{flex-direction:column;gap:12px;margin-top:16px}
-  .hdr-act .btn-s{width:100%;padding:12px;font-size:16px}
-  .mob-btn{display:block}
-  .hdr-search-mob{display:block;position:relative;width:100%;margin-bottom:8px}
-  .hdr-search-mob input{width:100%;background:rgba(0,0,0,0.1);border:1px solid var(--border-color);border-radius:6px;padding:10px 12px 10px 36px;color:var(--text-primary);font-size:15px;outline:none}
+  .hdr-act{flex-direction:column;gap:10px;margin-top:8px}
+  .hdr-act .btn-s{width:100%;height:42px;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .mob-btn{display:flex;flex-direction:column;justify-content:center;align-items:center;width:40px;height:40px;padding:0;margin-left:auto}
+  .mob-btn span{display:block;width:20px;height:2px;background:currentColor;margin:3px 0;transition:transform 0.25s ease, opacity 0.25s ease;border-radius:1px;transform-origin:center}
+  .mob-btn.active span:nth-child(1),
+  .hdr.menu-open .mob-btn span:nth-child(1){transform:translateY(8px) rotate(45deg)}
+  .mob-btn.active span:nth-child(2),
+  .hdr.menu-open .mob-btn span:nth-child(2){opacity:0;transform:scaleX(0)}
+  .mob-btn.active span:nth-child(3),
+  .hdr.menu-open .mob-btn span:nth-child(3){transform:translateY(-8px) rotate(-45deg)}
+  body.portal-menu-locked{overflow:hidden !important;touch-action:none}
+  .hdr-search-mob{display:block;position:relative;width:100%;margin-bottom:4px}
+  .hdr-search-mob input{width:100%;background:rgba(0,0,0,0.06);border:1px solid var(--border-color);border-radius:6px;padding:10px 12px 10px 36px;color:var(--text-primary);font-size:14px;outline:none}
   [data-theme="light"] .hdr-search-mob input{background:rgba(255,255,255,0.8)}
   .hdr-search-mob svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;fill:var(--text-muted)}
   .ct-grid{grid-template-columns:1fr}
@@ -292,55 +333,321 @@ body.dark .invert-dark,
   filter: brightness(0) invert(1) !important;
 }
 
+/* ── Theme Switch & Segmented Switch ── */
+.theme-segmented-switch,
+.hdr-theme-toggle-mob {
+  display: none !important;
+}
+.hdr-theme-toggle-desk {
+  display: inline-flex !important;
+}
+
+@media (max-width: 768px) {
+  .hdr-theme-toggle-desk {
+    display: none !important;
+  }
+  .theme-segmented-switch,
+  .hdr-theme-toggle-mob {
+    display: flex !important;
+  }
+  .hdr-tools {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    width: 100% !important;
+    margin: 4px 0 !important;
+  }
+  .hdr-tools .lang-dropdown {
+    width: 100% !important;
+    position: relative !important;
+    display: block !important;
+  }
+  .hdr-tools .lang-dropdown-btn {
+    width: 100% !important;
+    height: 44px !important;
+    padding: 0 14px !important;
+    border-radius: 12px !important;
+    background: rgba(0, 0, 0, 0.04) !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    color: inherit !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    cursor: pointer !important;
+  }
+  [data-theme="dark"] .hdr-tools .lang-dropdown-btn {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  }
+  .hdr-tools .lang-dropdown-btn .hdr-tool-text {
+    display: block !important;
+    flex: 1 !important;
+    text-align: left !important;
+    font-size: 14px !important;
+    font-weight: 550 !important;
+    white-space: nowrap !important;
+  }
+  .hdr-tools .lang-dropdown-btn .hdr-tool-chevron {
+    display: inline-flex !important;
+    width: 16px !important;
+    height: 16px !important;
+    margin-left: auto !important;
+    opacity: 0.6 !important;
+  }
+  .hdr-tools .lang-dropdown-menu {
+    position: absolute !important;
+    top: calc(100% + 6px) !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    z-index: 1000 !important;
+  }
+}
+
+/* 保护描边 SVG 避免被全局 .btn-icon svg { fill: currentColor; } 强行填成实心黑圆 */
+svg.lang-globe-icon,
+svg.lang-globe-icon *,
+.theme-seg-btn svg.seg-icon,
+.theme-seg-btn svg.seg-icon * {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+.theme-segmented-switch {
+  position: relative;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+[data-theme="dark"] .theme-segmented-switch {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.theme-segmented-switch .theme-switch-slider {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 9px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+  transform: translateX(0);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease, box-shadow 0.2s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+[data-theme="dark"] .theme-segmented-switch .theme-switch-slider {
+  transform: translateX(100%);
+  background: #27272a;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.theme-seg-btn {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.2s ease, transform 0.15s ease;
+}
+.theme-seg-btn:active {
+  transform: scale(0.97);
+}
+.theme-seg-btn .seg-icon {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), stroke 0.2s ease;
+}
+html:not([data-theme="dark"]) .theme-seg-btn[data-theme-val="light"] {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+html:not([data-theme="dark"]) .theme-seg-btn[data-theme-val="light"] .seg-icon {
+  transform: rotate(20deg) scale(1.1);
+  stroke: var(--text-primary);
+}
+html[data-theme="dark"] .theme-seg-btn[data-theme-val="dark"] {
+  color: #ffffff;
+  font-weight: 650;
+}
+html[data-theme="dark"] .theme-seg-btn[data-theme-val="dark"] .seg-icon {
+  transform: rotate(-15deg) scale(1.1);
+  stroke: #ffffff;
+}
+
 /* ── Language Dropdown ── */
 .lang-dropdown {
   position: relative;
   display: inline-block;
 }
+.lang-dropdown-btn {
+  cursor: pointer;
+}
+.lang-dropdown-btn .lang-globe-icon {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.lang-dropdown-btn .hdr-tool-chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lang-dropdown.open .lang-dropdown-btn .hdr-tool-chevron {
+  transform: rotate(180deg);
+}
+
+@media (min-width: 769px) {
+  .theme-segmented-switch,
+  .hdr-theme-toggle-mob {
+    display: none !important;
+  }
+  .hdr-theme-toggle-desk {
+    display: inline-flex !important;
+  }
+  .hdr-tools {
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    margin-left: 8px !important;
+    width: auto !important;
+  }
+  .hdr-tools .lang-dropdown {
+    display: inline-block !important;
+    width: auto !important;
+  }
+  .hdr-tools .lang-dropdown-btn {
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .hdr-tools .lang-dropdown-btn .hdr-tool-text,
+  .hdr-tools .lang-dropdown-btn .hdr-tool-chevron {
+    display: none !important;
+  }
+}
 .lang-dropdown-menu {
-  display: none;
+  display: block;
+  opacity: 0;
+  visibility: hidden;
   position: absolute;
   top: 100%;
   right: 0;
   margin-top: 6px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 10px;
   box-shadow: var(--shadow-lg);
-  padding: 4px;
-  min-width: 120px;
+  padding: 5px;
+  min-width: 140px;
   z-index: 1000;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  opacity: 0;
-  transform: translateY(-8px);
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transform: translateY(-8px) scale(0.97);
+  transform-origin: top right;
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s;
+  pointer-events: none;
 }
 .lang-dropdown.open .lang-dropdown-menu {
-  display: block;
   opacity: 1;
-  transform: translateY(0);
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
 }
-.lang-dropdown-menu a {
-  display: block;
-  padding: 8px 12px;
+.lang-dropdown-menu a,
+.lang-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: 6px;
   transition: all var(--transition-fast);
   text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.lang-dropdown-menu a:hover {
+.lang-item-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(128, 128, 128, 0.12);
+  color: var(--text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+}
+.lang-item-label {
+  flex: 1;
+  white-space: nowrap;
+}
+.lang-item-check {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lang-dropdown-menu a:hover,
+.lang-item:hover {
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-primary);
 }
-[data-theme="light"] .lang-dropdown-menu a:hover {
+[data-theme="light"] .lang-dropdown-menu a:hover,
+[data-theme="light"] .lang-item:hover {
   background: rgba(0, 0, 0, 0.05);
 }
-.lang-dropdown-menu a.active {
-  background: var(--brand-gradient);
+.lang-dropdown-menu a.active,
+.lang-item.active {
+  background: var(--brand-primary);
   color: #ffffff !important;
+}
+.lang-item.active .lang-item-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+.lang-item.active .lang-item-check {
+  opacity: 1;
+  transform: scale(1);
+  color: #ffffff;
 }
 </style>
 {{ scripts.analytics | default(value="") | safe }}
@@ -368,7 +675,7 @@ body.dark .invert-dark,
     {% endif %}
     <nav class="hdr-nav">
       {% if nav.items %}{% for item in nav.items %}{% if item.enabled != false %}
-      <a href="{{ item.path | default(value='#') | safe }}"{% if current_page is defined and item.key is defined and current_page == item.key %} class="on"{% endif %} {% if item.key %}data-i18n-title="nav_{{ item.key }}" title="{{ item.label }}"{% endif %}{% if item.target_blank is defined and item.target_blank %} target="_blank" rel="noopener noreferrer"{% endif %}>
+      <a href="{{ item.path | default(value='#') | safe }}"{% if current_page is defined and item.key is defined and current_page == item.key %} class="on"{% endif %}{% if item.target_blank is defined and item.target_blank %} target="_blank" rel="noopener noreferrer"{% endif %}>
         {% if item.icon %}
           {{ item.icon | safe }}
         {% else %}
@@ -378,22 +685,59 @@ body.dark .invert-dark,
       </a>
       {% endif %}{% endfor %}{% endif %}
     </nav>
-    <div class="hdr-tools" style="display:flex;align-items:center;gap:4px;margin-left:8px;">
-      <button class="btn-icon" onclick="toggleTheme()" data-i18n-title="theme_toggle" title="切换主题">
+    <div class="hdr-tools">
+      <button class="btn-icon hdr-theme-toggle-desk" onclick="toggleTheme()" data-i18n-title="theme_toggle" title="切换主题">
         <svg id="icon-sun" viewBox="0 0 24 24" style="display:none;"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"></path></svg>
         <svg id="icon-moon" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-3.03 0-5.5-2.47-5.5-5.5 0-1.82.89-3.42 2.26-4.4C12.92 3.04 12.46 3 12 3z"></path></svg>
       </button>
+      <div class="theme-segmented-switch hdr-theme-toggle-mob" role="radiogroup" aria-label="主题外观选择">
+        <div class="theme-switch-slider" aria-hidden="true"></div>
+        <button type="button" class="theme-seg-btn" data-theme-val="light" onclick="setPortalTheme('light'); event.stopPropagation();" aria-label="浅色模式">
+          <svg class="seg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <span data-i18n-dynamic="浅色|Light|ライト|라이트|Sáng">浅色</span>
+        </button>
+        <button type="button" class="theme-seg-btn" data-theme-val="dark" onclick="setPortalTheme('dark'); event.stopPropagation();" aria-label="深色模式">
+          <svg class="seg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <span data-i18n-dynamic="深色|Dark|ダーク|다克|Tối">深色</span>
+        </button>
+      </div>
       <div class="lang-dropdown">
-        <button class="btn-icon" onclick="toggleLang(); event.stopPropagation();" data-i18n-title="lang_toggle" title="切换语言">
-          <svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"></path></svg>
+        <button class="btn-icon lang-dropdown-btn" onclick="toggleLang(); event.stopPropagation();" data-i18n-title="lang_toggle" title="切换语言" aria-expanded="false">
+          <svg class="lang-globe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+          <span class="hdr-tool-text" id="hdr-lang-text">简体中文</span>
+          <svg class="hdr-tool-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>
         </button>
         <div class="lang-dropdown-menu" id="lang-menu">
-          <a href="javascript:void(0)" onclick="changeLang('zh')" data-lang="zh">简体中文</a>
-          <a href="javascript:void(0)" onclick="changeLang('zh-TW')" data-lang="zh-TW">繁體中文</a>
-          <a href="javascript:void(0)" onclick="changeLang('en')" data-lang="en">English</a>
-          <a href="javascript:void(0)" onclick="changeLang('ja')" data-lang="ja">日本語</a>
-          <a href="javascript:void(0)" onclick="changeLang('ko')" data-lang="ko">한국어</a>
-          <a href="javascript:void(0)" onclick="changeLang('vi')" data-lang="vi">Tiếng Việt</a>
+          <a href="javascript:void(0)" onclick="changeLang('zh')" data-lang="zh" class="lang-item">
+            <span class="lang-item-badge">ZH</span>
+            <span class="lang-item-label">简体中文</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
+          <a href="javascript:void(0)" onclick="changeLang('zh-TW')" data-lang="zh-TW" class="lang-item">
+            <span class="lang-item-badge">繁</span>
+            <span class="lang-item-label">繁體中文</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
+          <a href="javascript:void(0)" onclick="changeLang('en')" data-lang="en" class="lang-item">
+            <span class="lang-item-badge">EN</span>
+            <span class="lang-item-label">English</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
+          <a href="javascript:void(0)" onclick="changeLang('ja')" data-lang="ja" class="lang-item">
+            <span class="lang-item-badge">JA</span>
+            <span class="lang-item-label">日本語</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
+          <a href="javascript:void(0)" onclick="changeLang('ko')" data-lang="ko" class="lang-item">
+            <span class="lang-item-badge">KO</span>
+            <span class="lang-item-label">한국어</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
+          <a href="javascript:void(0)" onclick="changeLang('vi')" data-lang="vi" class="lang-item">
+            <span class="lang-item-badge">VI</span>
+            <span class="lang-item-label">Tiếng Việt</span>
+            <svg class="lang-item-check" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+          </a>
         </div>
       </div>
     </div>
@@ -403,12 +747,22 @@ body.dark .invert-dark,
       <a href="{% if nav.register_link %}{{ nav.register_link | safe }}{% else %}/register{% endif %}" class="btn-s btn-primary" data-i18n-dynamic="{{ nav.register_text | default(value="") }}" {% if not nav.register_text %}data-i18n-key="nav_register"{% endif %}>{{ nav.register_text | default(value="免费注册") }}</a>
     </div>
     <div class="hdr-act" id="hdr-user-profile" style="display: none;">
-      <a href="/" class="hdr-avatar-link">
-        <div class="hdr-avatar" id="hdr-avatar-text">U</div>
-      </a>
+      <div class="hdr-user-card-wrap">
+        <a href="/" class="hdr-avatar-link">
+          <div class="hdr-avatar" id="hdr-avatar-text">U</div>
+          <div class="hdr-user-meta">
+            <span class="hdr-user-name" id="hdr-username-text">用户中心</span>
+            <span class="hdr-user-role" data-i18n="nav_dashboard">进入工作台 →</span>
+          </div>
+        </a>
+        <button type="button" class="hdr-logout-btn" onclick="portalLogout(); event.stopPropagation();" title="退出登录" aria-label="Logout">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span data-i18n="logout">退出</span>
+        </button>
+      </div>
     </div>
   </div>
-  <button class="mob-btn" onclick="document.querySelector('.hdr-menu').classList.toggle('open')"><span></span><span></span><span></span></button>
+  <button class="mob-btn" aria-label="Toggle navigation menu" onclick="togglePortalMobileMenu(); event.stopPropagation();"><span></span><span></span><span></span></button>
 </div>
 </header>
 
@@ -424,11 +778,13 @@ body.dark .invert-dark,
       {% if footer.description %}
       <p data-i18n-dynamic="{{ footer.description }}">{{ footer.description }}</p>
       {% endif %}
+      {% if not style or style.current_style != "fai_art" %}
       {% if footer.company_name or footer.company_address %}
       <div class="ftr-meta">
         {% if footer.company_name %}<p>{{ footer.company_name }}</p>{% endif %}
         {% if footer.company_address %}<p>{{ footer.company_address }}</p>{% endif %}
       </div>
+      {% endif %}
       {% endif %}
     </div>
     <div class="ftr-links">
@@ -460,6 +816,7 @@ body.dark .invert-dark,
         {% endif %}
       </div>
       {% endif %}
+      {% if not style or style.current_style != "fai_art" %}
       {% if ((footer.terms_enabled is not defined or footer.terms_enabled) and footer.terms_text) or ((footer.privacy_enabled is not defined or footer.privacy_enabled) and footer.privacy_text) or footer.icp_number %}
       <div class="ftr-col">
         <h4>LEGAL</h4>
@@ -474,10 +831,30 @@ body.dark .invert-dark,
         {% endif %}
       </div>
       {% endif %}
+      {% endif %}
     </div>
   </div>
-  <div class="ftr-btm">
+  <div class="ftr-btm{% if style and style.current_style == "fai_art" %} ftr-legal{% endif %}">
+    {% if style and style.current_style == "fai_art" %}
+    <div class="ftr-legal-meta">
+      <span data-i18n-dynamic="{{ footer.copyright | default(value='© 2026 TkeAPI. All rights reserved.') }}">{{ footer.copyright | default(value="© 2026 TkeAPI. All rights reserved.") }}</span>
+      {% if footer.company_name %}<span>{{ footer.company_name }}</span>{% endif %}
+      {% if footer.company_address %}<span>{{ footer.company_address }}</span>{% endif %}
+    </div>
+    <div class="ftr-legal-links">
+      {% if (footer.terms_enabled is not defined or footer.terms_enabled) and footer.terms_text %}
+      <a href="{{ footer.terms_link | default(value='/legal/terms') | safe }}" data-i18n-dynamic="{{ footer.terms_text }}">{{ footer.terms_text }}</a>
+      {% endif %}
+      {% if (footer.privacy_enabled is not defined or footer.privacy_enabled) and footer.privacy_text %}
+      <a href="{{ footer.privacy_link | default(value='/legal/privacy') | safe }}" data-i18n-dynamic="{{ footer.privacy_text }}">{{ footer.privacy_text }}</a>
+      {% endif %}
+      {% if footer.icp_number %}
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">{{ footer.icp_number }}</a>
+      {% endif %}
+    </div>
+    {% else %}
     <span data-i18n-dynamic="{{ footer.copyright | default(value='© 2026 TkeAPI. All rights reserved.') }}">{{ footer.copyright | default(value="© 2026 TkeAPI. All rights reserved.") }}</span>
+    {% endif %}
   </div>
 </div>
 </footer>
@@ -560,10 +937,21 @@ body.dark .invert-dark,
     }
   }
 
-  function toggleTheme() {
+  function updateHdrThemeText(isDarkTheme) {
+    const el = document.getElementById('hdr-theme-text');
+    if (el) el.textContent = isDarkTheme ? '深色外观' : '浅色外观';
+    document.querySelectorAll('.theme-seg-btn').forEach(btn => {
+      const val = btn.getAttribute('data-theme-val');
+      if (val === (isDarkTheme ? 'dark' : 'light')) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+  }
+
+  function setPortalTheme(newTheme) {
     const htmlElement = document.documentElement;
-    const currentTheme = htmlElement.getAttribute('data-theme') || 'dark';
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
     htmlElement.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
     
@@ -573,8 +961,26 @@ body.dark .invert-dark,
       document.body.classList.remove('dark');
     }
     
-    document.getElementById('icon-sun').style.display = newTheme === 'dark' ? 'block' : 'none';
-    document.getElementById('icon-moon').style.display = newTheme === 'dark' ? 'none' : 'block';
+    const iconSun = document.getElementById('icon-sun');
+    const iconMoon = document.getElementById('icon-moon');
+    if (iconSun) iconSun.style.display = newTheme === 'dark' ? 'block' : 'none';
+    if (iconMoon) iconMoon.style.display = newTheme === 'dark' ? 'none' : 'block';
+    updateHdrThemeText(newTheme === 'dark');
+  }
+
+  function toggleTheme() {
+    const htmlElement = document.documentElement;
+    const currentTheme = htmlElement.getAttribute('data-theme') || 'dark';
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    setPortalTheme(newTheme);
+  }
+
+  function portalLogout() {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('user');
+    window.location.reload();
   }
 
   // Set initial theme
@@ -588,8 +994,11 @@ body.dark .invert-dark,
   } else {
     document.body.classList.remove('dark');
   }
-  document.getElementById('icon-sun').style.display = isDark ? 'block' : 'none';
-  document.getElementById('icon-moon').style.display = isDark ? 'none' : 'block';
+  const _iconSun = document.getElementById('icon-sun');
+  const _iconMoon = document.getElementById('icon-moon');
+  if (_iconSun) _iconSun.style.display = isDark ? 'block' : 'none';
+  if (_iconMoon) _iconMoon.style.display = isDark ? 'none' : 'block';
+  updateHdrThemeText(isDark);
 
   const locales = {
     'zh': {{ portal_locales_zh | safe }},
@@ -600,7 +1009,7 @@ body.dark .invert-dark,
     'vi': {{ portal_locales_vi | safe }}
   };
 
-  const LANG_INDEXES = { 'zh': 0, 'zh-TW': 0, 'en': 1, 'ja': 2, 'ko': 3, 'vi': 4 };
+  const LANG_INDEXES = { 'zh': 0, 'zh-TW': 1, 'en': 2, 'ja': 3, 'ko': 4, 'vi': 5 };
 
   function normalizeLang(lang) {
     if (!lang) return 'zh';
@@ -628,20 +1037,92 @@ body.dark .invert-dark,
     return zhReverseMap;
   }
 
-  function translateText(text, rawLang) {
-    if (!text) return '';
+  function translateText(text, rawLang, key) {
+    if (!text && !key) return '';
     const lang = normalizeLang(rawLang);
-    if (text.includes('|')) {
-      const parts = text.split('|');
-      const idx = LANG_INDEXES[lang] || 0;
-      const fallback = (lang === 'zh' || lang === 'zh-TW') ? parts[0] : (parts[1] || parts[0]);
-      return (parts[idx] || fallback).trim();
-    }
-    const dict = locales[lang] || locales['zh'];
-    if (dict[text]) return dict[text];
+    const dict = locales[lang] || locales['zh'] || {};
     const rev = getZhReverseMap();
-    if (rev[text] && dict[rev[text]]) return dict[rev[text]];
-    return text;
+
+    // 优先通过显式 key 查词典
+    if (key && dict[key]) {
+      return dict[key];
+    }
+    if (!text) return '';
+
+    // 不含竖线的普通文案
+    if (!text.includes('|')) {
+      const configured = text.trim();
+      const zhDict = locales['zh'] || {};
+      const keyDefault = key ? String(zhDict[key] || '').trim() : '';
+      const isDefaultCopy = !configured || (keyDefault !== '' && configured === keyDefault);
+      if (!isDefaultCopy && rev[configured]) key = rev[configured];
+      if ((isDefaultCopy || !key) && key && dict[key]) {
+        return dict[key];
+      } else if (!isDefaultCopy && rev[configured] && dict[rev[configured]]) {
+        return dict[rev[configured]];
+      } else if (dict[configured]) {
+        return dict[configured];
+      }
+      return configured;
+    }
+
+    const parts = text.split('|').map(function (s) { return s.trim(); });
+    if (parts.length === 0) return '';
+
+    // 1. 六段规范：zh | zh-TW | en | ja | ko | vi
+    if (parts.length >= 6) {
+      const idxMap = { 'zh': 0, 'zh-TW': 1, 'en': 2, 'ja': 3, 'ko': 4, 'vi': 5 };
+      const i = idxMap[lang] ?? 0;
+      if (parts[i]) return parts[i];
+      if (lang === 'zh-TW') return parts[0] || '';
+      return parts[2] || parts[0] || '';
+    }
+
+    // 2. 五段规范：zh | en | ja | ko | vi
+    if (parts.length === 5) {
+      if (lang === 'zh-TW') {
+        const zh = parts[0];
+        if (key && dict[key]) return dict[key];
+        if (rev[zh] && dict[rev[zh]]) return dict[rev[zh]];
+        return zh;
+      }
+      const idxMap = { 'zh': 0, 'en': 1, 'ja': 2, 'ko': 3, 'vi': 4 };
+      const i = idxMap[lang] ?? 0;
+      if (parts[i]) return parts[i];
+      return parts[1] || parts[0] || '';
+    }
+
+    // 3. 两段规范：zh | en（最常用）
+    if (parts.length === 2) {
+      const zh = parts[0];
+      const en = parts[1] || parts[0];
+      if (lang === 'zh') return zh;
+      if (lang === 'zh-TW') {
+        if (key && dict[key]) return dict[key];
+        if (rev[zh] && dict[rev[zh]]) return dict[rev[zh]];
+        return zh;
+      }
+      if (lang === 'en') return en;
+      // ja, ko, vi: 优先查内置字典，缺失时回退至英文 en，绝不回退至中文
+      if (key && dict[key]) return dict[key];
+      if (rev[zh] && dict[rev[zh]]) return dict[rev[zh]];
+      return en;
+    }
+
+    // 4. 三段或四段
+    const zh = parts[0];
+    const en = parts[1] || parts[0];
+    if (lang === 'zh') return zh;
+    if (lang === 'zh-TW') {
+      if (key && dict[key]) return dict[key];
+      if (rev[zh] && dict[rev[zh]]) return dict[rev[zh]];
+      return zh;
+    }
+    if (lang === 'en') return en;
+    if (lang === 'ja') return parts[2] || (key && dict[key]) || (rev[zh] && dict[rev[zh]]) || en;
+    if (lang === 'ko') return parts[3] || (key && dict[key]) || (rev[zh] && dict[rev[zh]]) || en;
+    if (lang === 'vi') return parts[4] || (key && dict[key]) || (rev[zh] && dict[rev[zh]]) || en;
+    return en;
   }
 
   function applyLanguage(rawLang) {
@@ -672,25 +1153,8 @@ body.dark .invert-dark,
 
     document.querySelectorAll('[data-i18n-dynamic]').forEach(el => {
       const text = el.getAttribute('data-i18n-dynamic') || el.innerHTML.trim();
-      if (text.includes('|')) {
-        const parts = text.split('|');
-        const idx = LANG_INDEXES[lang] || 0;
-        const fallback = (lang === 'zh' || lang === 'zh-TW') ? parts[0] : (parts[1] || parts[0]);
-        el.innerHTML = (parts[idx] || fallback).trim();
-      } else {
-        let key = el.getAttribute('data-i18n-key');
-        if (!key || !dict[key]) {
-          const rev = getZhReverseMap();
-          if (rev[text]) key = rev[text];
-        }
-        if (key && dict[key]) {
-          el.innerHTML = dict[key];
-        } else if (dict[text]) {
-          el.innerHTML = dict[text];
-        } else {
-          el.innerHTML = text;
-        }
-      }
+      const key = el.getAttribute('data-i18n-key') || el.getAttribute('data-key');
+      el.innerHTML = translateText(text, lang, key);
     });
 
     document.querySelectorAll('[title]').forEach(el => {
@@ -700,7 +1164,20 @@ body.dark .invert-dark,
       }
     });
 
-    // Update Dropdown active states
+    // Update Dropdown active states and current trigger text
+    const langNames = {
+      'zh': '简体中文',
+      'zh-TW': '繁體中文',
+      'en': 'English',
+      'ja': '日本語',
+      'ko': '한국어',
+      'vi': 'Tiếng Việt'
+    };
+    const hdrLangText = document.getElementById('hdr-lang-text');
+    if (hdrLangText && langNames[lang]) {
+      hdrLangText.textContent = langNames[lang];
+    }
+
     document.querySelectorAll('#lang-menu a').forEach(a => {
       if (a.getAttribute('data-lang') === lang) {
         a.classList.add('active');
@@ -738,7 +1215,19 @@ body.dark .invert-dark,
       const modelId = pathParts[pathParts.length - 1] || '';
       document.title = `${modelId} ${modelDetailTitle} - ${siteName}`;
     }
+    syncLegalLinks(lang);
     window.dispatchEvent(new CustomEvent('languageChanged', { detail: { lang } }));
+  }
+
+  function syncLegalLinks(lang) {
+    const useZh = String(lang || '').toLowerCase().indexOf('zh') === 0;
+    const suffix = useZh ? '' : '?lang=en';
+    document.querySelectorAll('a[href]').forEach(function (a) {
+      const path = (a.getAttribute('href') || '').split('?')[0];
+      if (path === '/legal/terms' || path === '/legal/privacy' || path === '/legal/tos') {
+        a.setAttribute('href', (path === '/legal/tos' ? '/legal/terms' : path) + suffix);
+      }
+    });
   }
 
   const DEFAULT_LANG = "{{ default_language | default(value='zh') }}";
@@ -752,7 +1241,11 @@ body.dark .invert-dark,
 
   function toggleLang() {
     const dropdown = document.querySelector('.lang-dropdown');
-    if (dropdown) dropdown.classList.toggle('open');
+    if (dropdown) {
+      const isOpen = dropdown.classList.toggle('open');
+      const btn = dropdown.querySelector('.lang-dropdown-btn');
+      if (btn) btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    }
   }
 
   // Close dropdown on outside click
@@ -760,6 +1253,8 @@ body.dark .invert-dark,
     const dropdown = document.querySelector('.lang-dropdown');
     if (dropdown && !dropdown.contains(e.target)) {
       dropdown.classList.remove('open');
+      const btn = dropdown.querySelector('.lang-dropdown-btn');
+      if (btn) btn.setAttribute('aria-expanded', 'false');
     }
   });
 
@@ -779,8 +1274,18 @@ body.dark .invert-dark,
           const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
           if (userStr) {
             const user = JSON.parse(userStr);
-            const username = user.username || user.email || 'U';
-            document.getElementById('hdr-avatar-text').innerText = username.charAt(0).toUpperCase();
+            const username = user.username || user.name || user.email || 'User';
+            const avatarTextEl = document.getElementById('hdr-avatar-text');
+            if (avatarTextEl) {
+              const avatarSrc = user.avatar || user.avatar_url;
+              if (avatarSrc) {
+                avatarTextEl.innerHTML = `<img src="${avatarSrc}" alt="${username}" />`;
+              } else {
+                avatarTextEl.innerText = username.charAt(0).toUpperCase();
+              }
+            }
+            const usernameEl = document.getElementById('hdr-username-text');
+            if (usernameEl) usernameEl.innerText = username;
             
             // Set link to dashboard based on role
             const avatarLink = document.querySelector('.hdr-avatar-link');
@@ -811,29 +1316,48 @@ body.dark .invert-dark,
   let lastScrollY = window.scrollY;
   const navbar = document.querySelector('.hdr');
 
-  window.addEventListener('scroll', () => {
-    if (window.scrollY > lastScrollY && window.scrollY > 80) {
-      navbar.classList.add('hidden');
-    } else {
-      navbar.classList.remove('hidden');
-    }
-    lastScrollY = window.scrollY;
-  });
-
-  // Mobile menu toggle
-  const mobBtn = document.querySelector('.mob-btn');
-  if (mobBtn) {
-    mobBtn.addEventListener('click', () => {
-      navbar.classList.toggle('menu-open');
-    });
+  if (navbar) {
+    window.addEventListener('scroll', () => {
+      if (navbar.classList.contains('menu-open')) return;
+      if (window.scrollY > lastScrollY && window.scrollY > 80) {
+        navbar.classList.add('hidden');
+      } else {
+        navbar.classList.remove('hidden');
+      }
+      lastScrollY = window.scrollY;
+    }, { passive: true });
   }
 
-  // Close mobile menu when clicking a link
-  const navLinksList = document.querySelectorAll('.hdr-nav a, .hdr-act a');
-  navLinksList.forEach(link => {
-    link.addEventListener('click', () => {
-      navbar.classList.remove('menu-open');
-    });
+  // Unified Mobile Menu Toggle
+  function togglePortalMobileMenu(forceClose) {
+    const hdr = document.querySelector('.hdr');
+    const menu = document.querySelector('.hdr-menu');
+    const btn = document.querySelector('.mob-btn');
+    if (!menu) return;
+    const willOpen = forceClose ? false : !menu.classList.contains('open');
+    menu.classList.toggle('open', willOpen);
+    if (hdr) hdr.classList.toggle('menu-open', willOpen);
+    if (btn) btn.classList.toggle('active', willOpen);
+    document.body.classList.toggle('portal-menu-locked', willOpen);
+  }
+
+  // Close mobile menu when clicking nav links or buttons
+  document.addEventListener('click', (e) => {
+    const menu = document.querySelector('.hdr-menu');
+    const btn = document.querySelector('.mob-btn');
+    if (!menu || !menu.classList.contains('open')) return;
+    if (e.target.closest('.hdr-nav a') || e.target.closest('.hdr-act a')) {
+      togglePortalMobileMenu(true);
+      return;
+    }
+    if (!menu.contains(e.target) && !btn.contains(e.target)) {
+      togglePortalMobileMenu(true);
+    }
+  });
+
+  // Close on ESC
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') togglePortalMobileMenu(true);
   });
 </script>
 

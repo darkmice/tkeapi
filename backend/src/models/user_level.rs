@@ -15,7 +15,7 @@ pub struct UserLevel {
     pub group_key: String,
     pub discount: f64,
     #[sqlx(default)]
-    pub discount_type: i32,
+    pub discount_type: i64,
     #[sqlx(default)]
     pub commission_ratio: f64,
     /// consumption=按系统钱包实际消费，recharge=按充值入账
@@ -38,19 +38,22 @@ pub struct UserLevel {
     pub marketing_enabled: i64,
     #[sqlx(default)]
     pub is_default: i64,
+    /// 1=会员卡券方案可以把用户升到这个等级
+    #[sqlx(default)]
+    pub purchasable: i64,
     #[sqlx(default)]
     pub max_token_count: i64,
     #[sqlx(default)]
-    pub allow_view_log_details: Option<i32>,
+    pub allow_view_log_details: Option<i64>,
     #[sqlx(default)]
-    pub invoice_enabled: Option<i32>,
+    pub invoice_enabled: Option<i64>,
     #[sqlx(default)]
     pub invoice_mode: Option<String>,
     #[sqlx(default)]
     pub invoice_config: Option<String>,
     pub description: String,
     #[sqlx(default)]
-    pub sort_order: i32,
+    pub sort_order: i64,
     pub created_at: DbTs,
     pub updated_at: DbTs,
     #[sqlx(default)]
@@ -62,7 +65,7 @@ pub struct CreateUserLevelRequest {
     pub name: String,
     pub group_key: String,
     pub discount: f64,
-    pub discount_type: Option<i32>,
+    pub discount_type: Option<i64>,
     pub commission_ratio: Option<f64>,
     pub commission_basis: Option<String>,
     pub commission_transfer_min: Option<f64>,
@@ -72,13 +75,14 @@ pub struct CreateUserLevelRequest {
     pub daily_invite_limit: Option<i64>,
     pub marketing_enabled: Option<i64>,
     pub is_default: Option<i64>,
+    pub purchasable: Option<i64>,
     pub max_token_count: Option<i64>,
-    pub allow_view_log_details: Option<i32>,
-    pub invoice_enabled: Option<i32>,
+    pub allow_view_log_details: Option<i64>,
+    pub invoice_enabled: Option<i64>,
     pub invoice_mode: Option<String>,
     pub invoice_config: Option<String>,
     pub description: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,7 +90,7 @@ pub struct UpdateUserLevelRequest {
     pub name: Option<String>,
     pub group_key: Option<String>,
     pub discount: Option<f64>,
-    pub discount_type: Option<i32>,
+    pub discount_type: Option<i64>,
     pub commission_ratio: Option<f64>,
     pub commission_basis: Option<String>,
     pub commission_transfer_min: Option<f64>,
@@ -96,13 +100,14 @@ pub struct UpdateUserLevelRequest {
     pub daily_invite_limit: Option<i64>,
     pub marketing_enabled: Option<i64>,
     pub is_default: Option<i64>,
+    pub purchasable: Option<i64>,
     pub max_token_count: Option<i64>,
-    pub allow_view_log_details: Option<i32>,
-    pub invoice_enabled: Option<i32>,
+    pub allow_view_log_details: Option<i64>,
+    pub invoice_enabled: Option<i64>,
     pub invoice_mode: Option<String>,
     pub invoice_config: Option<String>,
     pub description: Option<String>,
-    pub sort_order: Option<i32>,
+    pub sort_order: Option<i64>,
 }
 
 fn default_commission_basis() -> String {

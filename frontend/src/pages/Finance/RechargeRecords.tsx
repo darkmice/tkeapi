@@ -50,6 +50,7 @@ const RechargeRecords: React.FC = () => {
   const [rechargeTypes, setRechargeTypes] = useState<string[]>([]);
   const [selectedType, setSelectedType] = useState<string | undefined>();
   const [totalAmount, setTotalAmount] = useState<number>(0);
+  const [voucherWriteoff, setVoucherWriteoff] = useState<number>(0);
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(() => defaultMonthRange());
 
   useEffect(() => {
@@ -78,10 +79,11 @@ const RechargeRecords: React.FC = () => {
           wallet_type: 'system',
           ...toTimeRangeParams(dateRange),
         }
-      }) as unknown as Promise<{ data: RechargeRecord[]; total: number; total_amount: number }>);
+      }) as unknown as Promise<{ data: RechargeRecord[]; total: number; total_amount: number; voucher_writeoff_amount?: number }>);
       setData(resp.data);
       setTotal(resp.total);
       setTotalAmount(resp.total_amount || 0);
+      setVoucherWriteoff(resp.voucher_writeoff_amount || 0);
     } catch (e) {
       console.error(e);
     } finally {
@@ -197,6 +199,9 @@ const RechargeRecords: React.FC = () => {
             <Title level={2} style={{ margin: 0, fontSize: screens.xs ? 20 : 24 }}>{t('finance.recharge_title')}</Title>
             <Text type="secondary" style={{ marginLeft: screens.xs ? 0 : 8 }}>
               金额合计: <Text strong style={{ color: '#1677ff', fontSize: 16 }}>{currencySymbol}{totalAmount.toFixed(6)}</Text>
+              <span style={{ marginLeft: 12 }}>
+                卡券核销金额: <Text strong style={{ color: '#d48806', fontSize: 16 }}>{currencySymbol}{voucherWriteoff.toFixed(6)}</Text>
+              </span>
             </Text>
         </Space>
         <Space wrap style={{ width: screens.xs ? '100%' : 'auto' }}>

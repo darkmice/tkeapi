@@ -14,7 +14,15 @@ use std::collections::BTreeMap;
 
 pub const SYSTEM_NEWAPI: &str = "newapi";
 
-pub const UPSTREAM_SYSTEMS: &[&str] = &["兼容", "官方", "newapi", "Tkeapi", "akeapi", "火山引擎", "阿里云"];
+pub const UPSTREAM_SYSTEMS: &[&str] = &[
+    "兼容",
+    "官方",
+    "newapi",
+    "Tkeapi",
+    "akeapi",
+    "火山引擎",
+    "阿里云",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpstreamGroupRatio {
@@ -38,7 +46,10 @@ struct NewapiPricingBody {
 }
 
 pub fn is_known_upstream_system(value: &str) -> bool {
-    value.is_empty() || UPSTREAM_SYSTEMS.iter().any(|&s| s.eq_ignore_ascii_case(value))
+    value.is_empty()
+        || UPSTREAM_SYSTEMS
+            .iter()
+            .any(|&s| s.eq_ignore_ascii_case(value))
 }
 
 pub fn normalize_newapi_origin(base_url: &str) -> Result<String, String> {
@@ -72,7 +83,10 @@ pub fn normalize_newapi_origin(base_url: &str) -> Result<String, String> {
 }
 
 pub fn newapi_pricing_url(base_url: &str) -> Result<String, String> {
-    Ok(format!("{}/api/pricing", normalize_newapi_origin(base_url)?))
+    Ok(format!(
+        "{}/api/pricing",
+        normalize_newapi_origin(base_url)?
+    ))
 }
 
 /// 上游货币与本站计价货币换算：
@@ -97,10 +111,7 @@ pub fn convert_currency_ratio(
         1.0
     };
     let is_cny = |c: &str| {
-        c.eq_ignore_ascii_case("CNY")
-            || c.eq_ignore_ascii_case("RMB")
-            || c == "人民币"
-            || c == "元"
+        c.eq_ignore_ascii_case("CNY") || c.eq_ignore_ascii_case("RMB") || c == "人民币" || c == "元"
     };
     let is_usd = |c: &str| c.eq_ignore_ascii_case("USD") || c == "美元" || c == "$";
 
@@ -135,7 +146,7 @@ pub fn applied_channel_rate(
     (total * 10000.0).round() / 10000.0
 }
 
-pub fn is_sync_due(synced_at: Option<&str>, interval_minutes: i32, now: DateTime<Utc>) -> bool {
+pub fn is_sync_due(synced_at: Option<&str>, interval_minutes: i64, now: DateTime<Utc>) -> bool {
     if interval_minutes <= 0 {
         return false;
     }
@@ -145,7 +156,8 @@ pub fn is_sync_due(synced_at: Option<&str>, interval_minutes: i32, now: DateTime
     let Ok(last) = DateTime::parse_from_rfc3339(raw) else {
         return true;
     };
-    now.signed_duration_since(last.with_timezone(&Utc)) >= Duration::minutes(interval_minutes as i64)
+    now.signed_duration_since(last.with_timezone(&Utc))
+        >= Duration::minutes(interval_minutes)
 }
 
 pub fn parse_newapi_groups(body: &str) -> Result<Vec<UpstreamGroupRatio>, String> {
@@ -190,11 +202,7 @@ pub fn parse_newapi_groups(body: &str) -> Result<Vec<UpstreamGroupRatio>, String
         .into_iter()
         .map(|(name, ratio)| {
             let label = labels.get(&name).cloned().unwrap_or_default();
-            UpstreamGroupRatio {
-                name,
-                ratio,
-                label,
-            }
+            UpstreamGroupRatio { name, ratio, label }
         })
         .collect();
     groups.sort_by(|a, b| a.name.cmp(&b.name));

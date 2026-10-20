@@ -111,7 +111,7 @@ function ChartTooltipBox({
           style={{ backgroundColor: item.fill || item.color }}
         />
         <span className="text-muted-foreground">{valueLabel}</span>
-        <span className="ml-auto font-mono font-medium tabular-nums text-foreground">
+        <span className="ml-auto font-medium tabular-nums text-foreground">
           {formatValue(value)}
         </span>
       </div>

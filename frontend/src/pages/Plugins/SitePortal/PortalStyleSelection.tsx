@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Typography, Button, Spin, App, Alert, Switch, Space } from 'antd';
+import { Typography, Button, Spin, App, Alert } from 'antd';
 import { SaveOutlined, CheckCircleFilled, LayoutOutlined, EyeOutlined } from '@ant-design/icons';
 import request from '../../../utils/request';
 import { useThemeStore } from '../../../store/theme';
@@ -75,6 +75,7 @@ const PortalStyleSelection: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState('classic');
+  const [savedStyle, setSavedStyle] = useState('classic');
   const [customHomepageEnabled, setCustomHomepageEnabled] = useState(false);
   const [manualMode, setManualMode] = useState(false);
 
@@ -88,6 +89,7 @@ const PortalStyleSelection: React.FC = () => {
       const res = await (request.get('/plugins/site-portal/portal-config') as Promise<any>);
       if (res.style_config?.current_style) {
         setSelectedStyle(res.style_config.current_style);
+        setSavedStyle(res.style_config.current_style);
       }
       setCustomHomepageEnabled(res.custom_homepage?.enabled === true);
       setManualMode(res.static_gen_config?.manual_mode === true);
@@ -99,15 +101,17 @@ const PortalStyleSelection: React.FC = () => {
   };
 
   const handleSave = async () => {
+    const styleToSave = selectedStyle;
     try {
       setSaving(true);
       await request.post('/plugins/site-portal/portal-config', {
         section: 'style',
         data: {
-          current_style: selectedStyle,
+          current_style: styleToSave,
           apply_to_homepage: !customHomepageEnabled,
         },
       });
+      setSavedStyle(styleToSave);
       message.success(
         manualMode
           ? '风格已保存，请到「门户管理 → 静态生成」执行全站生成'
@@ -394,7 +398,7 @@ const PortalStyleSelection: React.FC = () => {
   return (
     <div style={{ maxWidth: 900 }}>
       {/* Header section with Shadcn theme style */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <LayoutOutlined style={{ fontSize: 20, color: _isLight ? '#09090b' : '#fafafa' }} />
           <div>
@@ -404,28 +408,6 @@ const PortalStyleSelection: React.FC = () => {
             </Text>
           </div>
         </div>
-
-        <Space>
-
-          <Button
-            type="primary"
-            icon={<SaveOutlined />}
-            loading={saving}
-            onClick={handleSave}
-            style={{
-              background: _isLight ? '#09090b' : '#fafafa',
-              borderColor: _isLight ? '#09090b' : '#fafafa',
-              color: _isLight ? '#fff' : '#09090b',
-              borderRadius: 6,
-              fontWeight: 500,
-              fontSize: 13,
-              boxShadow: 'none',
-              height: 36
-            }}
-          >
-            保存配置
-          </Button>
-        </Space>
       </div>
 
       <Alert
@@ -434,8 +416,8 @@ const PortalStyleSelection: React.FC = () => {
         message="生效范围"
         description={
           <span style={{ fontSize: 13 }}>
-            风格始终影响 <Text code>/home/contact</Text>、<Text code>/home/about</Text>、<Text code>/portal/models</Text> 等 Tera 页。
-            互动模型广场 <Text code>/home/models</Text> 为独立 React 页，不受此处风格控制。
+            风格始终影响首页、<Text code>/home/contact</Text>、<Text code>/home/about</Text>，以及同一套导航和底部。
+            模型广场使用系统主页面 <Text code>/home/models</Text>，不在站点门户里单独做一页。
             {manualMode
               ? ' 当前为手动静态生成：保存后请到「门户管理 → 静态生成」执行全站生成。'
               : ' 当前为自动更新：保存后会后台刷新静态页。'}
@@ -468,7 +450,52 @@ const PortalStyleSelection: React.FC = () => {
               )}
 
               {/* Layout Preview component */}
-              {renderMiniPreview(style.key, isSelected)}
+              <div style={{ position: 'relative' }}>
+                {renderMiniPreview(style.key, isSelected)}
+                {isSelected && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 8,
+                      display: 'flex',
+                      justifyContent: 'center',
+                      zIndex: 6,
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {selectedStyle !== savedStyle ? (
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<SaveOutlined />}
+                        loading={saving}
+                        onClick={handleSave}
+                        style={{
+                          background: _isLight ? '#09090b' : '#fafafa',
+                          borderColor: _isLight ? '#09090b' : '#fafafa',
+                          color: _isLight ? '#fff' : '#09090b',
+                          borderRadius: 6,
+                          fontWeight: 500,
+                          boxShadow: 'none',
+                        }}
+                      >
+                        保存
+                      </Button>
+                    ) : (
+                      <Button
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => window.open('/home', '_blank')}
+                        style={{ borderRadius: 6 }}
+                      >
+                        预览
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>

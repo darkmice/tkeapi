@@ -221,6 +221,7 @@ const SchemeIoEditor: React.FC<SchemeIoEditorProps> = ({
   const seedanceEdition = inferSeedanceEdition(displayInputs);
   const minimaxEdition = inferMinimaxH3Edition(displayInputs, params);
   const chatMode = schemeType === 'chat';
+  const imageMode = schemeType === 'image';
 
   const bindOptions = (params || [])
     .filter((p) => p?.key)
@@ -370,7 +371,9 @@ const SchemeIoEditor: React.FC<SchemeIoEditorProps> = ({
             <div style={{ width: 140 }}>
               <Text style={fieldHint}>
                 {t('admin_io_max_count', '数量上限')}{' '}
-                <Tooltip title={t('admin_io_max_tip', '工作流与生成工具中，该口可上传或接入的最大数量。参考图/参考视频/参考音频会同步限制用户端提示词附件。编辑视频与延长视频默认为 1。')}>
+                <Tooltip title={imageMode && isReferenceMediaPort(port)
+                  ? t('admin_io_image_max_tip', '数量上限为 1 时是图文生图，大于 1 时是多图文生图。同步限制用户端提示词可附的参考图数量。')
+                  : t('admin_io_max_tip', '工作流与生成工具中，该口可上传或接入的最大数量。参考图/参考视频/参考音频会同步限制用户端提示词附件。编辑视频与延长视频默认为 1。')}>
                   <QuestionCircleOutlined style={{ color: muted, cursor: 'help' }} />
                 </Tooltip>
               </Text>
@@ -409,7 +412,13 @@ const SchemeIoEditor: React.FC<SchemeIoEditorProps> = ({
       }
       if (isReferenceMediaPort(port) && refIndices.length) {
         refIndices.forEach((i) => used.add(i));
-        inputBlocks.push({ type: 'group', title: t('admin_io_ref_i2v', '参考生视频'), indices: refIndices });
+        inputBlocks.push({
+          type: 'group',
+          title: imageMode
+            ? t('admin_io_image_ref_group', '图文生图 / 多图文生图')
+            : t('admin_io_ref_i2v', '参考生视频'),
+          indices: refIndices,
+        });
         return;
       }
       used.add(idx);
@@ -437,7 +446,9 @@ const SchemeIoEditor: React.FC<SchemeIoEditorProps> = ({
               ? t('admin_io_minimax_intro', 'MiniMax H3 按官方能力配置：文生 / 图生（首尾帧）/ 多模态参考。可切换 MiniMax-H3 与 MiniMax-H3-Max。')
             : chatMode
               ? t('admin_io_chat_thinking_intro', '深度思考是能力开关：打开后用户端聊天栏显示深度思考按钮。关闭则不显示、请求不带 thinking。模型 IO 可单独覆盖方案。')
-              : t('admin_io_generic_intro', '全部口固定展示；关闭「启用」后其余字段不可改。方案列表点「重置」可恢复默认参数与 IO。')}
+              : imageMode
+                ? t('admin_io_image_intro', '图片方案按文生图、图文生图、多图文生图配置。提示词是文生图入口；参考图关闭为文生图，数量上限为 1 是图文生图，大于 1 是多图文生图。')
+                : t('admin_io_generic_intro', '全部口固定展示；关闭「启用」后其余字段不可改。方案列表点「重置」可恢复默认参数与 IO。')}
       </Text>
 
       <div style={{ marginBottom: 8 }}>
@@ -564,7 +575,9 @@ const SchemeIoEditor: React.FC<SchemeIoEditorProps> = ({
               )}
               {!omniFamilyMode && !minimaxMode && (
                 <Text style={{ display: 'block', marginBottom: 10, fontSize: 11, color: muted }}>
-                  {t('admin_io_ref_group_rule', '参考图、参考视频、参考音频同属一组功能，可单独开关并设置数量上限。')}
+                  {imageMode
+                    ? t('admin_io_image_ref_group_rule', '关闭参考图为文生图。数量上限为 1 是图文生图；大于 1 是多图文生图。')
+                    : t('admin_io_ref_group_rule', '参考图、参考视频、参考音频同属一组功能，可单独开关并设置数量上限。')}
                 </Text>
               )}
               {block.indices.map((idx) => renderInputCard(displayInputs[idx], idx, true))}

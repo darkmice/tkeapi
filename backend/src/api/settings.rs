@@ -10,12 +10,12 @@ use crate::error::{AppError, AppResult};
 use crate::models::{
     build_public_payment_channels, merge_payment_channels_ui, public_payment_status_from_channels,
     AgreementSettings, AllSettings, CurrencySettings, DatabaseSettings, GoogleOAuthSettings,
-    InvoiceSettings, LoginSettings, LogCleanupSettings, MarketingSettings, PaymentAlipaySettings,
-    PaymentAllinpaySettings, PaymentChannelsUiSettings,
-    PaymentGatewayEnableFlags, PaymentHyperbcSettings, PaymentStripeSettings,
-    PaymentWechatSettings, PublicMarketingSettings, PublicNotificationSettings,
-    PublicRegistrationSettings, PublicSettings, RegistrationSettings, RelaySettings, SMTPSettings,
-    SiteSettings, SmsSettings, StorageSettings, UpdateSettingsRequest, WechatOAuthSettings,
+    InvoiceSettings, LogCleanupSettings, LoginSettings, MarketingSettings, PaymentAlipaySettings,
+    PaymentAllinpaySettings, PaymentChannelsUiSettings, PaymentGatewayEnableFlags,
+    PaymentHyperbcSettings, PaymentStripeSettings, PaymentWechatSettings, PublicMarketingSettings,
+    PublicNotificationSettings, PublicRegistrationSettings, PublicSettings, RegistrationSettings,
+    RelaySettings, SMTPSettings, SiteSettings, SmsSettings, StorageSettings, UpdateSettingsRequest,
+    WechatOAuthSettings,
 };
 use crate::AppState;
 use axum::{
@@ -40,7 +40,11 @@ pub async fn get_public_settings(
     // 注册 IP 名单只给管理端，公开接口不带子公司内网段
     site.ip_blacklist.clear();
     site.ip_whitelist.clear();
-    let currency = get_setting(&state, "currency_settings", default_currency_settings()).await?;
+    let mut currency =
+        get_setting(&state, "currency_settings", default_currency_settings()).await?;
+    let fx_snapshot = crate::services::fx_rates::load_snapshot(&state).await;
+    let now = chrono::Utc::now().timestamp();
+    crate::services::fx_rates::derive_auxiliary(&mut currency, fx_snapshot.as_ref(), now);
     let login = get_setting(&state, "login_settings", default_login_settings()).await?;
     let registration: RegistrationSettings = get_setting(
         &state,
@@ -51,26 +55,31 @@ pub async fn get_public_settings(
     let marketing: MarketingSettings =
         get_setting(&state, "marketing_settings", default_marketing_settings()).await?;
     let agreement = get_setting(&state, "agreement_settings", default_agreement_settings()).await?;
-    let menu_config = get_setting(
+    let mut menu_config = get_setting(
         &state,
         "menu_config_settings",
         default_menu_config_settings(),
     )
     .await?;
+    menu_config
+        .items
+        .retain(|item| item.key != "/assets" && item.key != "/assets-intl");
     let notification: crate::models::NotificationSettings =
         get_setting(&state, "notification_settings", Default::default()).await?;
 
     // OAuth 仅提取 client_id / app_id，不暴露 secret
-    let wechat_oauth_app_id =
+    let wechat_oauth_setting =
         get_setting::<Option<crate::models::WechatOAuthSettings>>(&state, "wechat_oauth", None)
-            .await?
-            .and_then(|w| {
-                if w.app_id.is_empty() {
-                    None
-                } else {
-                    Some(w.app_id)
-                }
-            });
+            .await?;
+    let wechat_oauth_app_id = wechat_oauth_setting
+        .as_ref()
+        .filter(|w| !w.app_id.is_empty())
+        .map(|w| w.app_id.clone());
+    let wechat_oauth_callback_domain = wechat_oauth_setting
+        .as_ref()
+        .map(|w| w.callback_domain.trim())
+        .filter(|s| !s.is_empty())
+        .map(crate::api::auth::normalize_origin);
     let google_oauth_client_id =
         get_setting::<Option<crate::models::GoogleOAuthSettings>>(&state, "google_oauth", None)
             .await?
@@ -106,7 +115,17 @@ pub async fn get_public_settings(
         &gateway,
     );
     let payment_channels = build_public_payment_channels(&channels_ui, &gateway);
+    #[cfg(all(plugin_pay, plugin_payment))]
+    let payment_channels = crate::api::plugins::pay::annotate_public_channels(
+        payment_channels,
+        &channels_ui,
+        &currency,
+        fx_snapshot.as_ref(),
+        now,
+    );
     let payment = public_payment_status_from_channels(&payment_channels);
+    // 加价比例、手动汇率等仅管理端可见
+    currency.fx = Default::default();
 
     let invoices = get_setting(
         &state,
@@ -131,6 +150,7 @@ pub async fn get_public_settings(
         payment_channels,
         agreement,
         wechat_oauth_app_id,
+        wechat_oauth_callback_domain,
         google_oauth_client_id,
         menu_config: Some(menu_config),
         notification: PublicNotificationSettings::from(&notification),
@@ -139,12 +159,30 @@ pub async fn get_public_settings(
 }
 
 /// 管理员专属接口 — 返回完整设置（含所有密钥），需 admin_middleware 保护
-pub async fn get_settings(State(state): State<Arc<AppState>>) -> AppResult<Json<AllSettings>> {
+/// 支付网关密钥（payment_*）仅对具备 `settings.payment` 查看权限的管理员返回
+pub async fn get_settings(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<crate::auth::Claims>,
+) -> AppResult<Json<AllSettings>> {
+    let ctx = crate::admin_permission::load_admin_context(&state, &claims.sub).await?;
     let mut all = load_all_settings(&state).await?;
-    // timesystem 固定 UTC，与站点 default_timezone（timedisplay）解耦
+    redact_payment_secrets(&ctx, &mut all);
+    // timesystem 固定 UTC，与站点运营/管理展示时区解耦
     all.server_timezone = Some(crate::time_system::TIMESYSTEM_TZ.to_string());
     all.server_time = Some(crate::time_system::utc_naive_string());
     Ok(Json(all))
+}
+
+/// 无「支付设置」查看权限的管理员不下发任何支付网关配置（私钥 / API Key / Webhook Secret）
+fn redact_payment_secrets(ctx: &AdminContext, all: &mut AllSettings) {
+    if crate::admin_permission::can_view(ctx, "settings.payment") {
+        return;
+    }
+    all.payment_wechat = None;
+    all.payment_alipay = None;
+    all.payment_stripe = None;
+    all.payment_hyperbc = None;
+    all.payment_allinpay = None;
 }
 
 fn require_settings_fields(ctx: &AdminContext, req: &UpdateSettingsRequest) -> AppResult<()> {
@@ -234,13 +272,39 @@ pub async fn update_settings(
         validate_site_ip_lists(&merged)?;
         let saved =
             merge_and_save_setting(&state, "site_settings", v, default_site_settings()).await?;
-        crate::relay::relay_settings::put_cached_site_timezone(saved.default_timezone);
+        crate::relay::relay_settings::put_cached_site_timezones(&saved);
         notify_schedule_changed();
         currency_or_site_changed = true;
+        if let Ok(agreement) = get_setting::<AgreementSettings>(
+            &state,
+            "agreement_settings",
+            default_agreement_settings(),
+        )
+        .await
+        {
+            let _ = crate::api::legal::generate_and_save_legal_static_files(
+                &state.config.data_dir,
+                &agreement,
+                &saved,
+            )
+            .await;
+        }
     }
-    if let Some(v) = request.currency {
-        merge_and_save_setting(&state, "currency_settings", &v, default_currency_settings())
-            .await?;
+    if let Some(mut v) = request.currency {
+        // 符号 / 单位由货币目录决定，辅助货币由汇率推导，均不接受客户端写入
+        if let Some(obj) = v.as_object_mut() {
+            for key in ["currency_symbol", "currency_unit", "auxiliary_currencies"] {
+                obj.remove(key);
+            }
+        }
+        let fx_in_patch = v.get("fx").is_some();
+        let mut prev =
+            get_setting(&state, "currency_settings", default_currency_settings()).await?;
+        crate::services::fx_rates::seed_legacy_auxiliary(&mut prev);
+        let mut next = merge_patch(&prev, &v)?;
+        crate::services::fx_rates::normalize_currency_settings(&prev, &mut next, fx_in_patch)
+            .map_err(AppError::BadRequest)?;
+        save_setting(&state, "currency_settings", &next).await?;
         currency_or_site_changed = true;
     }
     if let Some(v) = request.login {
@@ -352,6 +416,7 @@ pub async fn update_settings(
         .await?;
     }
     if let Some(v) = request.payment_channels_ui {
+        reject_invalid_channel_recharge_limits(&v)?;
         merge_and_save_setting::<PaymentChannelsUiSettings>(
             &state,
             "payment_channels_ui",
@@ -379,13 +444,21 @@ pub async fn update_settings(
         .await?;
     }
     if let Some(v) = request.agreement {
-        merge_and_save_setting(
+        let saved_agreement = merge_and_save_setting(
             &state,
             "agreement_settings",
             &v,
             default_agreement_settings(),
         )
         .await?;
+        let site =
+            get_setting::<SiteSettings>(&state, "site_settings", default_site_settings()).await?;
+        let _ = crate::api::legal::generate_and_save_legal_static_files(
+            &state.config.data_dir,
+            &saved_agreement,
+            &site,
+        )
+        .await;
     }
     if let Some(v) = request.storage {
         merge_and_save_setting::<StorageSettings>(
@@ -445,7 +518,8 @@ pub async fn update_settings(
     }
 
     let mut all = load_all_settings(&state).await?;
-    // timesystem 固定 UTC，与站点 default_timezone（timedisplay）解耦
+    redact_payment_secrets(&ctx, &mut all);
+    // timesystem 固定 UTC，与站点运营/管理展示时区解耦
     all.server_timezone = Some(crate::time_system::TIMESYSTEM_TZ.to_string());
     all.server_time = Some(crate::time_system::utc_naive_string());
     Ok(Json(all))
@@ -642,8 +716,8 @@ struct DatabaseInfoRow {
     size_pretty: String,
     table_count: i64,
     encoding: String,
-    backends: i32,
-    max_connections: i32,
+    backends: i64,
+    max_connections: i64,
     xact_commit: i64,
     xact_rollback: i64,
     blks_hit: i64,
@@ -669,8 +743,8 @@ pub async fn database_info(
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
               WHERE n.nspname = 'public' AND c.relkind = 'r') AS table_count, \
             pg_encoding_to_char(d.encoding) AS encoding, \
-            st.numbackends AS backends, \
-            current_setting('max_connections')::int AS max_connections, \
+            st.numbackends::bigint AS backends, \
+            current_setting('max_connections')::bigint AS max_connections, \
             st.xact_commit::bigint AS xact_commit, \
             st.xact_rollback::bigint AS xact_rollback, \
             st.blks_hit::bigint AS blks_hit, \
@@ -742,10 +816,7 @@ pub async fn initialize_database(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let phrase = body
-        .get("confirm")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let phrase = body.get("confirm").and_then(|v| v.as_str()).unwrap_or("");
     if !is_db_reset_confirm(phrase) {
         return Err(AppError::BadRequest(
             "请输入确认文案：确认清空当前数据".to_string(),
@@ -753,9 +824,12 @@ pub async fn initialize_database(
     }
 
     let rebuild_err = {
-        let mut conn = state.db.pool.acquire().await.map_err(|e| {
-            AppError::Internal(format!("无法获取数据库连接: {e}"))
-        })?;
+        let mut conn = state
+            .db
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Internal(format!("无法获取数据库连接: {e}")))?;
         let _ = sqlx::query(
             r#"SELECT pg_terminate_backend(pid)
                FROM pg_stat_activity
@@ -805,9 +879,7 @@ pub async fn initialize_database(
     state.reset_runtime_after_db_wipe().await;
 
     if let Some(e) = migrate_err {
-        return Err(AppError::Internal(format!(
-            "重新初始化表结构失败: {e}"
-        )));
+        return Err(AppError::Internal(format!("重新初始化表结构失败: {e}")));
     }
 
     Ok(Json(serde_json::json!({
@@ -854,7 +926,11 @@ pub async fn backup_database(
     let username = parsed.username.clone();
     let database = parsed.database.clone();
     let password = parsed.password.clone();
-    let sslmode = if parsed.ssl_mode { "require" } else { "disable" };
+    let sslmode = if parsed.ssl_mode {
+        "require"
+    } else {
+        "disable"
+    };
     let dump_path = output_path.clone();
 
     let result = tokio::task::spawn_blocking(move || {
@@ -914,7 +990,11 @@ pub async fn test_storage_connection(
     Json(req): Json<TestStorageConnectionRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
     use crate::services::object_store::{ObjectStore, StoreKind};
-    let kind = StoreKind::parse(req.provider.as_deref().unwrap_or(&req.storage.default_provider));
+    let kind = StoreKind::parse(
+        req.provider
+            .as_deref()
+            .unwrap_or(&req.storage.default_provider),
+    );
     let Some(store) = ObjectStore::from_settings_for(&req.storage, kind) else {
         return Ok(Json(serde_json::json!({
             "success": false,
@@ -927,6 +1007,102 @@ pub async fn test_storage_connection(
             serde_json::json!({"success": false, "message": format!("测试失败: {}", e)}),
         )),
     }
+}
+
+pub type ListStorageBucketsRequest = crate::services::object_store::ListBucketsQuery;
+
+/// 用 AK/SK 调用 TOS 或 COS ListBuckets，返回桶名、地域和内外网地址。
+pub async fn list_storage_buckets(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ListStorageBucketsRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let saved = crate::relay::tos_persist::load_storage_settings(&state).await;
+    let saved_tos = saved
+        .as_ref()
+        .map(|s| (s.tos_access_key.as_str(), s.tos_secret_key.as_str()));
+    let saved_cos = saved
+        .as_ref()
+        .map(|s| (s.cos_secret_id.as_str(), s.cos_secret_key.as_str()));
+    match crate::services::object_store::list_buckets_auto(&req, saved_tos, saved_cos).await {
+        Ok(buckets) => Ok(Json(serde_json::json!({ "success": true, "buckets": buckets }))),
+        Err(e) => Ok(Json(serde_json::json!({ "success": false, "message": e }))),
+    }
+}
+
+/// 基础设置图片（站点 Logo 等）上传到站点存储 `settings/`；`slot` 为图片用途，用作文件名前缀
+pub async fn upload_settings_image(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<AdminContext>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    require_edit(&ctx, "settings.basic")?;
+    let store = crate::relay::tos_persist::load_system_object_store(&state)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "上传图片需要先在「数据库/存储 → 存储设置」中配置对象存储".to_string(),
+            )
+        })?;
+
+    let mut slot = String::new();
+    let mut file: Option<(Vec<u8>, String, String)> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::BadRequest("读取上传内容失败".to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "slot" => slot = field.text().await.unwrap_or_default(),
+            "file" => {
+                let mime = field.content_type().unwrap_or("").to_string();
+                let name = field.file_name().unwrap_or("").to_string();
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|_| AppError::BadRequest("读取文件失败".to_string()))?;
+                file = Some((data.to_vec(), mime, name));
+            }
+            _ => {}
+        }
+    }
+
+    let (data, mime, name) =
+        file.ok_or_else(|| AppError::BadRequest("请选择要上传的图片".to_string()))?;
+    if !mime.starts_with("image/") {
+        return Err(AppError::BadRequest("只支持上传图片格式的文件".to_string()));
+    }
+    if data.len() > 5 * 1024 * 1024 {
+        return Err(AppError::BadRequest("图片大小不能超过 5MB".to_string()));
+    }
+    let ext = crate::services::object_store::upload_ext(&name, "png");
+    let slot: String = slot
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(32)
+        .collect();
+    let object_key = store.site_key(
+        crate::services::object_store::SiteFolder::Settings,
+        &format!(
+            "{}_{}.{}",
+            if slot.is_empty() { "image" } else { &slot },
+            chrono::Utc::now().timestamp_millis(),
+            ext
+        ),
+    );
+
+    let file_url = store
+        .upload_file(&object_key, data, &mime, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!("基础设置图片上传失败 {}: {}", object_key, e);
+            AppError::Internal("图片上传失败，请稍后重试".to_string())
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "file_url": file_url,
+        "object_key": object_key,
+    })))
 }
 
 // ======================== 内部工具函数 ========================
@@ -1024,9 +1200,17 @@ pub async fn load_all_settings(state: &Arc<AppState>) -> AppResult<AllSettings> 
 
     let site = get_setting(state, "site_settings", default_site_settings()).await?;
 
+    let mut currency = get_setting(state, "currency_settings", default_currency_settings()).await?;
+    let fx_snapshot = crate::services::fx_rates::load_snapshot(state).await;
+    crate::services::fx_rates::derive_auxiliary(
+        &mut currency,
+        fx_snapshot.as_ref(),
+        chrono::Utc::now().timestamp(),
+    );
+
     Ok(AllSettings {
         site,
-        currency: get_setting(state, "currency_settings", default_currency_settings()).await?,
+        currency,
         login: get_setting(state, "login_settings", default_login_settings()).await?,
         registration: get_setting(
             state,
@@ -1057,20 +1241,24 @@ pub async fn load_all_settings(state: &Arc<AppState>) -> AppResult<AllSettings> 
         agreement: get_setting(state, "agreement_settings", default_agreement_settings()).await?,
         storage: get_setting(state, "storage_settings", None).await?,
         log_cleanup: Some(load_log_cleanup_settings(state).await?),
-        menu_config: Some(
-            get_setting(
+        menu_config: Some({
+            let mut mc = get_setting(
                 state,
                 "menu_config_settings",
                 default_menu_config_settings(),
             )
-            .await?,
-        ),
+            .await?;
+            mc.items
+                .retain(|item| item.key != "/assets" && item.key != "/assets-intl");
+            mc
+        }),
         notification: get_setting(state, "notification_settings", Default::default()).await?,
         relay: get_setting(state, "relay_settings", default_relay_settings())
             .await?
             .prepared(),
         invoices: Some({
-            let mut inv = get_setting(state, "invoice_settings", InvoiceSettings::default()).await?;
+            let mut inv =
+                get_setting(state, "invoice_settings", InvoiceSettings::default()).await?;
             inv.clear_placeholder_issuer();
             inv
         }),
@@ -1127,7 +1315,7 @@ pub fn subscribe_schedule_changed() -> tokio::sync::watch::Receiver<u64> {
         .subscribe()
 }
 
-async fn get_setting<T: serde::de::DeserializeOwned + Clone>(
+pub(crate) async fn get_setting<T: serde::de::DeserializeOwned + Clone>(
     state: &Arc<AppState>,
     key: &str,
     default: T,
@@ -1161,6 +1349,19 @@ async fn save_setting<T: serde::Serialize>(
     .execute(&state.db.pool)
     .await?;
     Ok(())
+}
+
+fn reject_invalid_channel_recharge_limits(v: &serde_json::Value) -> AppResult<()> {
+    let Some(channels) = v.get("channels").and_then(|c| c.as_array()) else {
+        return Ok(());
+    };
+    let mut parsed = Vec::with_capacity(channels.len());
+    for channel in channels {
+        let item: crate::models::PaymentChannelUiItem = serde_json::from_value(channel.clone())
+            .map_err(|e| AppError::BadRequest(format!("支付渠道配置格式错误: {}", e)))?;
+        parsed.push(item);
+    }
+    crate::models::validate_channel_recharge_limits(&parsed).map_err(AppError::BadRequest)
 }
 
 fn merge_json(old: &mut serde_json::Value, new: &serde_json::Value) {
@@ -1222,7 +1423,7 @@ async fn merge_and_save_setting<T: serde::de::DeserializeOwned + serde::Serializ
 
 // ======================== 默认值函数 ========================
 
-/// 首次安装初始化管理员时，只写入站点默认业务时区（timedisplay）。
+/// 首次安装初始化管理员时，只写入站点运营时区。
 /// 不改 timesystem：进程 TZ、数据库 TIME ZONE、`server_timezone` 仍固定 UTC。
 pub async fn apply_initial_site_timezone(
     state: &Arc<AppState>,
@@ -1234,8 +1435,8 @@ pub async fn apply_initial_site_timezone(
     let patch = serde_json::json!({ "default_timezone": name });
     let saved =
         merge_and_save_setting(state, "site_settings", &patch, default_site_settings()).await?;
-    crate::relay::relay_settings::put_cached_site_timezone(saved.default_timezone);
-    tracing::info!("Initial site default timezone set to {name}");
+    crate::relay::relay_settings::put_cached_site_timezones(&saved);
+    tracing::info!("Initial site operation timezone set to {name}");
     Ok(())
 }
 
@@ -1256,6 +1457,7 @@ pub fn default_site_settings() -> SiteSettings {
         supported_languages: vec!["zh".to_string(), "en".to_string()],
         default_language: "zh".to_string(),
         default_timezone: crate::time_system::DEFAULT_TIMEDISPLAY.to_string(),
+        admin_display_timezone: String::new(),
         show_timezone: true,
         enable_theme_toggle: true,
         default_theme: "dark".to_string(),
@@ -1311,6 +1513,7 @@ pub fn default_currency_settings() -> CurrencySettings {
         currency_unit: "元".to_string(),
         token_ratio: 1.0,
         auxiliary_currencies: vec![],
+        fx: Default::default(),
         quick_amounts: vec![20.0, 50.0, 100.0, 500.0, 1000.0, 5000.0],
         min_recharge_amount: 5.0,
         max_recharge_amount: 10000.0,
@@ -1331,6 +1534,40 @@ pub async fn get_currency_settings(state: &crate::AppState) -> CurrencySettings 
     .unwrap_or_else(default_currency_settings)
 }
 
+async fn build_currency_fx_overview(
+    state: &Arc<AppState>,
+) -> AppResult<crate::services::fx_rates::FxOverview> {
+    let currency = get_setting(state, "currency_settings", default_currency_settings()).await?;
+    let channels_ui = merge_payment_channels_ui(
+        get_setting(state, "payment_channels_ui", None).await?,
+        &PaymentGatewayEnableFlags::default(),
+    );
+    let snapshot = crate::services::fx_rates::load_snapshot(state).await;
+    Ok(crate::services::fx_rates::build_overview(
+        &currency,
+        snapshot.as_ref(),
+        &channels_ui,
+        chrono::Utc::now().timestamp(),
+    ))
+}
+
+/// 汇率概览：可选货币目录、实时汇率与各支付渠道收款币种
+pub async fn get_currency_fx(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<crate::services::fx_rates::FxOverview>> {
+    Ok(Json(build_currency_fx_overview(&state).await?))
+}
+
+/// 立即从免费汇率源拉取一次
+pub async fn refresh_currency_fx(
+    State(state): State<Arc<AppState>>,
+) -> AppResult<Json<crate::services::fx_rates::FxOverview>> {
+    crate::services::fx_rates::refresh_manually(&state)
+        .await
+        .map_err(AppError::BadRequest)?;
+    Ok(Json(build_currency_fx_overview(&state).await?))
+}
+
 pub fn default_login_settings() -> LoginSettings {
     LoginSettings {
         enable_username_login: true,
@@ -1344,6 +1581,7 @@ pub fn default_login_settings() -> LoginSettings {
 pub fn default_registration_settings() -> RegistrationSettings {
     RegistrationSettings {
         enable_username_registration: true,
+        username_ip_daily_limit: Some(3),
         enable_email_registration: false,
         enable_mobile_registration: false,
         enable_password_recovery: false,
@@ -1364,6 +1602,8 @@ pub fn default_registration_settings() -> RegistrationSettings {
         enable_user_kyc: false,
         max_accounts_per_email: 5,
         max_accounts_per_mobile: 5,
+        max_accounts_per_wechat: 5,
+        allow_international_mobile: false,
     }
 }
 
@@ -1620,24 +1860,6 @@ pub fn default_menu_config_settings() -> crate::models::MenuConfigSettings {
                 allowed_levels: "all".to_string(),
             },
             crate::models::MenuItemConfig {
-                key: "/assets".to_string(),
-                label_zh: "资产素材".to_string(),
-                label_en: "Assets".to_string(),
-                icon: "PictureOutlined".to_string(),
-                enabled: true,
-                sort_order: 8,
-                allowed_levels: "all".to_string(),
-            },
-            crate::models::MenuItemConfig {
-                key: "/assets-intl".to_string(),
-                label_zh: "国际充值".to_string(),
-                label_en: "Assets Intl".to_string(),
-                icon: "FolderOpenOutlined".to_string(),
-                enabled: true,
-                sort_order: 9,
-                allowed_levels: "all".to_string(),
-            },
-            crate::models::MenuItemConfig {
                 key: "/advanced-marketing".to_string(),
                 label_zh: "高级推广".to_string(),
                 label_en: "Advanced Marketing".to_string(),
@@ -1685,4 +1907,3 @@ pub async fn trigger_maintenance(
         "message": "全量系统日常维护任务已在后台触发执行"
     })))
 }
-

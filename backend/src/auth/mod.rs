@@ -21,6 +21,30 @@ pub struct Claims {
     pub username: String,
     pub role: String,
     pub exp: usize,
+    /// 签发时间（秒）。旧 token 无此字段时按 0 处理，改过密码即失效
+    #[serde(default)]
+    pub iat: usize,
+}
+
+pub const PASSWORD_MIN_CHARS: usize = 6;
+pub const PASSWORD_MAX_CHARS: usize = 128;
+
+/// 用户端设置密码（注册、找回、个人改密）统一长度规则
+pub fn validate_password(password: &str) -> AppResult<()> {
+    let n = password.chars().count();
+    if n < PASSWORD_MIN_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "密码长度至少为 {} 位",
+            PASSWORD_MIN_CHARS
+        )));
+    }
+    if n > PASSWORD_MAX_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "密码长度不能超过 {} 位",
+            PASSWORD_MAX_CHARS
+        )));
+    }
+    Ok(())
 }
 
 /// Hash a password using Argon2
@@ -54,7 +78,8 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<bool> {
 
 /// Create a JWT token
 pub fn create_token(user_id: &str, username: &str, role: &str, secret: &str) -> AppResult<String> {
-    let expiration = chrono::Utc::now()
+    let now = chrono::Utc::now();
+    let expiration = now
         .checked_add_signed(chrono::Duration::days(7))
         .expect("valid timestamp")
         .timestamp() as usize;
@@ -64,6 +89,7 @@ pub fn create_token(user_id: &str, username: &str, role: &str, secret: &str) -> 
         username: username.to_string(),
         role: role.to_string(),
         exp: expiration,
+        iat: now.timestamp() as usize,
     };
 
     encode(

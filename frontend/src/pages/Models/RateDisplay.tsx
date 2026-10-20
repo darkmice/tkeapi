@@ -7,10 +7,23 @@
 
 import React from 'react';
 import { Space, Tag, Typography, Tooltip } from 'antd';
+import { useTranslation } from 'react-i18next';
 import { resolveFreeImageCount } from '../../utils/billingFreeImages';
-import { formatWeekdayRange, isAllWeekdays } from '../../utils/timeMultipliers';
+import { formatWeekdayRange, isAllWeekdays, isFreeTimeMultiplier } from '../../utils/timeMultipliers';
 
 const ZH_WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
+const EN_WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const JA_WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日'];
+const KO_WEEKDAY_LABELS = ['월', '화', '수', '목', '금', '토', '일'];
+const VI_WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+
+const getWeekdayLabels = (lang?: string) => {
+  if (lang?.startsWith('zh')) return ZH_WEEKDAY_LABELS;
+  if (lang?.startsWith('ja')) return JA_WEEKDAY_LABELS;
+  if (lang?.startsWith('ko')) return KO_WEEKDAY_LABELS;
+  if (lang?.startsWith('vi')) return VI_WEEKDAY_LABELS;
+  return EN_WEEKDAY_LABELS;
+};
 
 const { Text } = Typography;
 
@@ -23,9 +36,9 @@ const RULE_LABELS: Record<string, string> = {
   tiered: '阶梯计费',
   doubao_chat: '豆包聊天阶梯',
   volcengine: '火山多模态(旧)',
-  'seedance2.0': 'Seedance 2.0',
-  'seedance1.5pro': 'Seedance 1.5 Pro',
-  'seedance1.0': 'Seedance 1.0',
+  'seedance2.0': 'Seedance 2 规则',
+  'seedance1.5pro': 'Seedance 1.5 规则',
+  'seedance1.0': 'Seedance 1 规则',
   volc_seedream_pro: '火山 Seedream 5.0 Pro',
   fixed: '固定费率',
   per_image: '按张收费',
@@ -42,7 +55,7 @@ const RULE_LABELS: Record<string, string> = {
   vidu_video: 'Vidu 视频',
   vidu_image: 'Vidu 图片',
   characters: '字符计费',
-  volc_enhance_cascade: '火山级联增强',
+  volc_enhance_cascade: '火山级联封装',
 };
 
 interface BillingRuleInfo {
@@ -75,6 +88,8 @@ interface RateDisplayProps {
  * 用于 Models 列表和 BillingRules 列表
  */
 const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatPrice, siteDiscount, siteDiscountEnabled, hideRuleLabel }) => {
+  const { t, i18n } = useTranslation();
+  const isZh = i18n.language?.startsWith('zh');
   const siteDiscountActive = !!(siteDiscountEnabled && siteDiscount && siteDiscount > 0 && siteDiscount < 1);
   const fp = (val: number | string | undefined | null) => {
     if (val === undefined || val === null || val === '') return '-';
@@ -89,11 +104,50 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
     }
     return origStr;
   };
-  const ruleLabel = RULE_LABELS[rule.billing_rule] || rule.billing_rule;
+
+  const getRuleLabel = (billingRule: string): string => {
+    switch (billingRule) {
+      case 'standard': return t('rate_display.standard', '标准计费');
+      case 'glm_5_3': return 'glm 5.3';
+      case 'multimodal': return t('rate_display.multimodal', '多模态计费');
+      case 'gpt_billing': return t('rate_display.gpt_billing', 'GPT图片计费');
+      case 'tiered': return t('rate_display.tiered', '阶梯计费');
+      case 'doubao_chat': return t('rate_display.doubao_chat', '豆包聊天阶梯');
+      case 'volcengine': return t('rate_display.volcengine', '火山多模态(旧)');
+      case 'seedance2.0': return 'Seedance 2 规则';
+      case 'seedance1.5pro': return 'Seedance 1.5 规则';
+      case 'seedance1.0': return 'Seedance 1 规则';
+      case 'volc_seedream_pro': return '火山 Seedream 5.0 Pro';
+      case 'fixed': return t('rate_display.fixed', '固定费率');
+      case 'per_image': return t('rate_display.per_image_rule', '按张收费');
+      case 'image_resolution': return t('rate_display.image_resolution', '分辨率 K');
+      case 'image_resolution_io': return t('rate_display.image_resolution_io', '分辨率 K(双向)');
+      case 'image_size_pixel': return t('rate_display.image_size_pixel', '分辨率像素');
+      case 'video_resolution': return t('rate_display.video_resolution', '分辨率阶梯');
+      case 'minimax_h3': return t('rate_display.minimax_h3', '海螺 (秒价+参考图)');
+      case 'video_seconds_io': return t('rate_display.video_seconds_io', '双向秒价 + 参考图');
+      case 'video_seconds_ref': return t('rate_display.video_seconds_ref', '双向秒价 + 参考视频');
+      case 'fal_ref_video': return 'fal H3-MAX';
+      case 'video_quality': return t('rate_display.video_quality', '画质与帧率');
+      case 'kling_video': return t('rate_display.kling_video', '可灵视频');
+      case 'vidu_video': return t('rate_display.vidu_video', 'Vidu 视频');
+      case 'vidu_image': return t('rate_display.vidu_image', 'Vidu 图片');
+      case 'characters': return t('rate_display.characters', '字符计费');
+      case 'volc_enhance_cascade': return t('rate_display.volc_enhance_cascade', '火山级联封装');
+      default: return RULE_LABELS[billingRule] || billingRule;
+    }
+  };
+
+  const ruleLabel = getRuleLabel(rule.billing_rule);
+  const weekdayLabels = getWeekdayLabels(i18n.language);
   const s = { fontSize: '11px', lineHeight: 1.2 } as const;
 
+  const discountLabel = isZh
+    ? `${Number.parseFloat((siteDiscount! * 10).toFixed(2))}折`
+    : `${Math.round((1 - siteDiscount!) * 100)}% OFF`;
+
   const discountTag = siteDiscountActive 
-    ? <Tag color="error" variant="filled" style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', marginLeft: 6 }}>{Number.parseFloat((siteDiscount! * 10).toFixed(2))}折</Tag> 
+    ? <Tag color="error" variant="filled" style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px', marginLeft: 6 }}>{discountLabel}</Tag> 
     : null;
 
   // 解析 extended_config
@@ -119,52 +173,55 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
     if (activeValues.length > 0) {
       const min = Math.min(...activeValues);
       const max = Math.max(...activeValues);
+      const unitLabel = unit === '张' ? t('rate_display.per_image', '/ 张').replace(/^\/\s*/, '') : unit === 's' ? t('rate_display.per_second', '/秒').replace(/^\/\s*/, '') : unit;
       return (
         <Space direction="vertical" size={0}>
-          <Text type="secondary" style={s}>查表: {fp(min)}~{fp(max)}/{unit} (属性×分辨率)</Text>
+          <Text type="secondary" style={s}>
+            {t('rate_display.table_summary', '查表')}: {fp(min)}~{fp(max)}/{unitLabel} ({t('rate_display.table_attr_res', '属性×分辨率')})
+          </Text>
           {extra}
         </Space>
       );
     }
-    return <Text type="secondary" style={s}>查表 (无有效条目)</Text>;
+    return <Text type="secondary" style={s}>{t('rate_display.table_empty', '查表 (无有效条目)')}</Text>;
   };
 
   const renderDetails = () => {
     if (rule.billing_type === 'tokens') {
       if (rule.billing_rule === 'tiered') {
-        if (tiers.length === 0) return <Text type="secondary" style={s}>阶梯定价 (无配置)</Text>;
+        if (tiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.tiered_empty', '阶梯定价 (无配置)')}</Text>;
         
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {tiers.map((t, idx) => (
+            {tiers.map((tierItem, idx) => (
               <Text key={idx} type="secondary" style={s}>
-                {t.max_prompt_tokens ? `≤${t.max_prompt_tokens}k` : '不限'}入 | {t.max_completion_tokens ? `≤${t.max_completion_tokens}k` : '不限'}出 : 入 {fp(t.prompt_rate)}/1M 出 {fp(t.completion_rate)}/1M
-                {t.cached_rate ? <> 读 {fp(t.cached_rate)}/1M</> : null}
-                {t.cache_write_rate ? <> 写 {fp(t.cache_write_rate)}/1M</> : null}
+                {tierItem.max_prompt_tokens ? `≤${tierItem.max_prompt_tokens}k` : t('rate_display.unlimited', '不限')}{t('rate_display.in', '入')} | {tierItem.max_completion_tokens ? `≤${tierItem.max_completion_tokens}k` : t('rate_display.unlimited', '不限')}{t('rate_display.out', '出')} : {t('rate_display.in', '入')} {fp(tierItem.prompt_rate)}/1M {t('rate_display.out', '出')} {fp(tierItem.completion_rate)}/1M
+                {tierItem.cached_rate ? <> {t('rate_display.read', '读')} {fp(tierItem.cached_rate)}/1M</> : null}
+                {tierItem.cache_write_rate ? <> {t('rate_display.write', '写')} {fp(tierItem.cache_write_rate)}/1M</> : null}
               </Text>
             ))}
           </div>
         );
       }
       if (rule.billing_rule === 'doubao_chat') {
-        if (tiers.length === 0) return <Text type="secondary" style={s}>豆包聊天阶梯 (无配置)</Text>;
-        const hasFast = tiers.some((t: any) => t.fast_prompt_rate > 0 || t.fast_completion_rate > 0);
+        if (tiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.doubao_empty', '豆包聊天阶梯 (无配置)')}</Text>;
+        const hasFast = tiers.some((tierItem: any) => tierItem.fast_prompt_rate > 0 || tierItem.fast_completion_rate > 0);
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {tiers.map((t: any, idx: number) => {
-              const range = t.max_prompt_tokens ? `≤${t.max_prompt_tokens}k` : '无限制';
+            {tiers.map((tierItem: any, idx: number) => {
+              const range = tierItem.max_prompt_tokens ? `≤${tierItem.max_prompt_tokens}k` : t('rate_display.unlimited', '无限制');
               return (
                 <Text key={idx} type="secondary" style={s}>
-                  {range} | P:{fp(t.prompt_rate)}/1M C:{fp(t.completion_rate)}/1M
-                  {t.audio_prompt_rate > 0 ? <> 音P:{fp(t.audio_prompt_rate)}/1M</> : null}
-                  {t.cached_rate > 0 ? <> 缓存:{fp(t.cached_rate)}/1M</> : null}
-                  {t.audio_cached_rate > 0 ? <> 音缓:{fp(t.audio_cached_rate)}/1M</> : null}
+                  {range} | P:{fp(tierItem.prompt_rate)}/1M C:{fp(tierItem.completion_rate)}/1M
+                  {tierItem.audio_prompt_rate > 0 ? <> {t('rate_display.audio_p', '音P')}:{fp(tierItem.audio_prompt_rate)}/1M</> : null}
+                  {tierItem.cached_rate > 0 ? <> {t('rate_display.cache', '缓存')}:{fp(tierItem.cached_rate)}/1M</> : null}
+                  {tierItem.audio_cached_rate > 0 ? <> {t('rate_display.audio_cache', '音缓')}:{fp(tierItem.audio_cached_rate)}/1M</> : null}
                   {hasFast ? (
                     <>
-                      {' | '}快P:{fp(t.fast_prompt_rate || t.prompt_rate)}/1M 快C:{fp(t.fast_completion_rate || t.completion_rate)}/1M
-                      {t.fast_cached_rate > 0 ? <> 快缓:{fp(t.fast_cached_rate)}/1M</> : null}
-                      {t.fast_audio_prompt_rate > 0 ? <> 快音P:{fp(t.fast_audio_prompt_rate)}/1M</> : null}
-                      {t.fast_audio_cached_rate > 0 ? <> 快音缓:{fp(t.fast_audio_cached_rate)}/1M</> : null}
+                      {' | '}{t('rate_display.fast_p', '快P')}:{fp(tierItem.fast_prompt_rate || tierItem.prompt_rate)}/1M {t('rate_display.fast_c', '快C')}:{fp(tierItem.fast_completion_rate || tierItem.completion_rate)}/1M
+                      {tierItem.fast_cached_rate > 0 ? <> {t('rate_display.fast_cache', '快缓')}:{fp(tierItem.fast_cached_rate)}/1M</> : null}
+                      {tierItem.fast_audio_prompt_rate > 0 ? <> {t('rate_display.fast_audio_p', '快音P')}:{fp(tierItem.fast_audio_prompt_rate)}/1M</> : null}
+                      {tierItem.fast_audio_cached_rate > 0 ? <> {t('rate_display.fast_audio_cache', '快音缓')}:{fp(tierItem.fast_audio_cached_rate)}/1M</> : null}
                     </>
                   ) : null}
                 </Text>
@@ -178,51 +235,51 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
         const activeRes = Object.keys(rates);
 
         if (activeRes.length === 0) {
-          return <Text type="secondary" style={s}>无独立分辨率设置(自动兜底计费)</Text>;
+          return <Text type="secondary" style={s}>{t('rate_display.seedance_fallback', '无独立分辨率设置(自动兜底计费)')}</Text>;
         }
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {activeRes.map(r => (
               <Text key={r} type="secondary" style={s}>
-                {r}: {fp(rates[r].with_video)}(含视) / {fp(rates[r].without_video)}(无视)
+                {r}: {fp(rates[r].with_video)}({t('rate_display.with_video', '含视')}) / {fp(rates[r].without_video)}({t('rate_display.without_video', '无视')})
               </Text>
             ))}
           </div>
         );
       }
       if (rule.billing_rule === 'seedance1.5pro') {
-        const discountStr = ext.offline_discount !== undefined ? `(离线折扣: ${ext.offline_discount})` : '';
+        const discountStr = ext.offline_discount !== undefined ? `(${t('rate_display.offline_discount', '离线折扣')}: ${ext.offline_discount})` : '';
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <Text type="secondary" style={s}>带语音: {fp(ext.audio_rate)}/1M {discountStr}</Text>
-            <Text type="secondary" style={s}>无语音: {fp(ext.base_rate)}/1M {discountStr}</Text>
+            <Text type="secondary" style={s}>{t('rate_display.with_audio', '带语音')}: {fp(ext.audio_rate)}/1M {discountStr}</Text>
+            <Text type="secondary" style={s}>{t('rate_display.without_audio', '无语音')}: {fp(ext.base_rate)}/1M {discountStr}</Text>
           </div>
         );
       }
       if (rule.billing_rule === 'seedance1.0') {
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <Text type="secondary" style={s}>在线: {fp(ext.online_rate)}/1M</Text>
-            <Text type="secondary" style={s}>离线: {fp(ext.offline_rate)}/1M</Text>
+            <Text type="secondary" style={s}>{t('rate_display.online', '在线')}: {fp(ext.online_rate)}/1M</Text>
+            <Text type="secondary" style={s}>{t('rate_display.offline', '离线')}: {fp(ext.offline_rate)}/1M</Text>
           </div>
         );
       }
       if (rule.billing_rule === 'volcengine') {
         const lines: React.ReactNode[] = [];
-        if (ext.volc_video_enabled) lines.push(<Text key="v" type="secondary" style={s}>含视频: {fp(ext.volc_video_rate)}/1M</Text>);
-        if (ext.volc_audio_enabled) lines.push(<Text key="a" type="secondary" style={s}>含音频: {fp(ext.volc_audio_rate)}/1M</Text>);
-        if (ext.volc_base_enabled) lines.push(<Text key="b" type="secondary" style={s}>纯文本: {fp(ext.volc_base_rate)}/1M</Text>);
+        if (ext.volc_video_enabled) lines.push(<Text key="v" type="secondary" style={s}>{t('rate_display.with_video_full', '含视频')}: {fp(ext.volc_video_rate)}/1M</Text>);
+        if (ext.volc_audio_enabled) lines.push(<Text key="a" type="secondary" style={s}>{t('rate_display.with_audio_full', '含音频')}: {fp(ext.volc_audio_rate)}/1M</Text>);
+        if (ext.volc_base_enabled) lines.push(<Text key="b" type="secondary" style={s}>{t('rate_display.text_only', '纯文本')}: {fp(ext.volc_base_rate)}/1M</Text>);
         return <>{lines}</>;
       }
       if (rule.billing_rule === 'gpt_billing') {
         const gptConfig = (ext && typeof ext.gpt_config === 'object' && ext.gpt_config !== null) ? ext.gpt_config : {};
         const items = [
-          { key: 'input_text', label: '文输' },
-          { key: 'input_image', label: '图输' },
-          { key: 'output_image', label: '图出' },
-          { key: 'cached_input_text', label: '文缓' },
-          { key: 'cached_input_image', label: '图缓' },
+          { key: 'input_text', label: t('rate_display.gpt_input_text', '文输') },
+          { key: 'input_image', label: t('rate_display.gpt_input_image', '图输') },
+          { key: 'output_image', label: t('rate_display.gpt_output_image', '图出') },
+          { key: 'cached_input_text', label: t('rate_display.gpt_cached_input_text', '文缓') },
+          { key: 'cached_input_image', label: t('rate_display.gpt_cached_input_image', '图缓') },
         ];
         const lines: React.ReactNode[] = [];
         items.forEach(item => {
@@ -236,7 +293,7 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
           }
         });
         if (lines.length === 0) {
-          return <Text type="secondary" style={s}>GPT图片计费(未启用计费项)</Text>;
+          return <Text type="secondary" style={s}>{t('rate_display.gpt_no_items', 'GPT图片计费(未启用计费项)')}</Text>;
         }
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -246,10 +303,13 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
       }
       if (rule.billing_rule === 'multimodal') {
         const imgRate = ext.image_prompt_rate || 0;
+        const imgCompRate = ext.image_completion_rate || 0;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <Text type="secondary" style={s}>文本P: {fp(rule.prompt_rate)}/1M</Text>
-            <Text type="secondary" style={s}>图片P: {fp(imgRate)}/1M</Text>
+            <Text type="secondary" style={s}>{t('rate_display.text_p', '文本P')}: {fp(rule.prompt_rate)}/1M  {t('rate_display.image_p', '图片P')}: {fp(imgRate)}/1M</Text>
+            {(rule.completion_rate > 0 || imgCompRate > 0) && (
+              <Text type="secondary" style={s}>{t('rate_display.text_c', '文本C')}: {fp(rule.completion_rate)}/1M  {t('rate_display.image_c', '图片C')}: {fp(imgCompRate)}/1M</Text>
+            )}
           </div>
         );
       }
@@ -262,26 +322,26 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
             P: {fp(rule.prompt_rate)}/1M  C: {fp(rule.completion_rate)}/1M
             {rule.cached_rate && rule.cached_rate > 0 ? <> Cache: {fp(rule.cached_rate)}/1M</> : null}
           </Text>
-          {ccCreate > 0 && <Text type="secondary" style={s}>Claude创建: {fp(ccCreate)}/1M</Text>}
-          {ccRead > 0 && <Text type="secondary" style={s}>Claude读取: {fp(ccRead)}/1M</Text>}
+          {ccCreate > 0 && <Text type="secondary" style={s}>{t('rate_display.claude_cache_create', 'Claude创建')}: {fp(ccCreate)}/1M</Text>}
+          {ccRead > 0 && <Text type="secondary" style={s}>{t('rate_display.claude_cache_read', 'Claude读取')}: {fp(ccRead)}/1M</Text>}
         </div>
       );
     }
 
     if (rule.billing_type === 'requests') {
-      const imgRefStr = ext.image_ref_multiplier && ext.image_ref_multiplier !== 1 ? `图生图×${ext.image_ref_multiplier}` : '';
-      const promptExtStr = ext.prompt_extend_multiplier && ext.prompt_extend_multiplier !== 1 ? `扩写×${ext.prompt_extend_multiplier}` : '';
+      const imgRefStr = ext.image_ref_multiplier && ext.image_ref_multiplier !== 1 ? `${t('rate_display.img2img_mult', '图生图×')}${ext.image_ref_multiplier}` : '';
+      const promptExtStr = ext.prompt_extend_multiplier && ext.prompt_extend_multiplier !== 1 ? `${t('rate_display.prompt_extend_mult', '扩写×')}${ext.prompt_extend_multiplier}` : '';
       // 合并倍率摘要（过滤空值，用空格分隔）
       const multiplierParts = [imgRefStr, promptExtStr].filter(Boolean);
       const multiplierStr = multiplierParts.length > 0 ? ` (${multiplierParts.join(' ')})` : '';
       if (rule.billing_rule === 'image_resolution') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
-        if (activeTiers.length === 0) return <Text type="secondary" style={s}>按分辨率K (无有效配置){multiplierStr}</Text>;
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
+        if (activeTiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.resolution_k_empty', '按分辨率K (无有效配置)')}{multiplierStr}</Text>;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {activeTiers.map((t, idx) => (
+            {activeTiers.map((tierItem: any, idx: number) => (
               <Text key={idx} type="secondary" style={s}>
-                {t.resolution}: {fp(t.rate)} / 张
+                {tierItem.resolution}: {fp(tierItem.rate)} {t('rate_display.per_image', '/ 张')}
               </Text>
             ))}
             {multiplierStr && <Text type="secondary" style={s}>{multiplierStr}</Text>}
@@ -289,28 +349,28 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
         );
       }
       if (rule.billing_rule === 'image_resolution_io') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
-        if (activeTiers.length === 0) return <Text type="secondary" style={s}>按分辨率K(输入/生成) (无有效配置)</Text>;
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
+        if (activeTiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.resolution_k_io_empty', '按分辨率K(输入/生成) (无有效配置)')}</Text>;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {activeTiers.map((t, idx) => (
+            {activeTiers.map((tierItem: any, idx: number) => (
               <Text key={idx} type="secondary" style={s}>
-                {t.resolution}: 输入 {fp(t.input_rate)} / 张 · 生成 {fp(t.rate)} / 张
+                {tierItem.resolution}: {t('rate_display.input_label', '输入')} {fp(tierItem.input_rate)} {t('rate_display.per_image', '/ 张')} · {t('rate_display.gen_label', '生成')} {fp(tierItem.rate)} {t('rate_display.per_image', '/ 张')}
               </Text>
             ))}
           </div>
         );
       }
       if (rule.billing_rule === 'image_size_pixel') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
-        if (activeTiers.length === 0) return <Text type="secondary" style={s}>按分辨率像素 (无有效配置){multiplierStr}</Text>;
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
+        if (activeTiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.resolution_pixel_empty', '按分辨率像素 (无有效配置)')}{multiplierStr}</Text>;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {activeTiers.map((t, idx) => (
+            {activeTiers.map((tierItem: any, idx: number) => (
               <Text key={idx} type="secondary" style={s}>
-                {t.size}: {t.quality_pricing
-                  ? <>低{fp(t.rate_low)} 中{fp(t.rate_medium)} 高{fp(t.rate_high)} / 张</>
-                  : <>{fp(t.rate)} / 张</>}
+                {tierItem.size}: {tierItem.quality_pricing
+                  ? <>{t('rate_display.quality_low', '低')}{fp(tierItem.rate_low)} {t('rate_display.quality_med', '中')}{fp(tierItem.rate_high ? tierItem.rate_medium : tierItem.rate_medium)} {t('rate_display.quality_high', '高')}{fp(tierItem.rate_high)} {t('rate_display.per_image', '/ 张')}</>
+                  : <>{fp(tierItem.rate)} {t('rate_display.per_image', '/ 张')}</>}
               </Text>
             ))}
             {multiplierStr && <Text type="secondary" style={s}>{multiplierStr}</Text>}
@@ -318,107 +378,107 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
         );
       }
       if (rule.billing_rule === 'volc_seedream_pro') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
         const freeCount = resolveFreeImageCount(ext.free_image_count, 'volc_seedream_pro');
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             <Text type="secondary" style={s}>
-              {freeCount} 张以内免费，超出部分 {fp(rule.prompt_rate)}/张
+              {t('rate_display.free_within_prefix', { count: freeCount, defaultValue: `前 ${freeCount} 张免费，超出部分` })} {fp(rule.prompt_rate)}{t('rate_display.per_image', '/张')}
             </Text>
-            {activeTiers.map((t, idx) => (
+            {activeTiers.map((tierItem: any, idx: number) => (
               <Text key={idx} type="secondary" style={s}>
-                {Number(t.layer_rate) > 0 ? (
-                  <>{`输出 <= ${t.max_pixels_wan}万像素: 单图 `}{fp(t.rate)} / 张 · 图层 {fp(t.layer_rate)} / 张</>
+                {Number(tierItem.layer_rate) > 0 ? (
+                  <>{t('rate_display.output_wan_pixels', { count: tierItem.max_pixels_wan, defaultValue: `输出 <= ${tierItem.max_pixels_wan}万像素` })}: {t('rate_display.single_image', '单图')} {fp(tierItem.rate)} {t('rate_display.per_image', '/ 张')} · {t('rate_display.layer', '图层')} {fp(tierItem.layer_rate)} {t('rate_display.per_image', '/ 张')}</>
                 ) : (
-                  <>{`输出 <= ${t.max_pixels_wan}万像素: `}{fp(t.rate)} / 张</>
+                  <>{t('rate_display.output_wan_pixels', { count: tierItem.max_pixels_wan, defaultValue: `输出 <= ${tierItem.max_pixels_wan}万像素` })}: {fp(tierItem.rate)} {t('rate_display.per_image', '/ 张')}</>
                 )}
               </Text>
             ))}
           </div>
         );
       }
-      if (rule.billing_rule === 'per_image') return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} / 张{multiplierStr}</Text>;
+      if (rule.billing_rule === 'per_image') return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} {t('rate_display.per_image', '/ 张')}{multiplierStr}</Text>;
       if (rule.billing_rule === 'vidu_image') {
         return renderPriceTableSummary('张');
       }
       // 按字符计费（语音合成等），billing_rule = "characters"
       if (rule.billing_rule === 'characters') {
-        return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} / 万字符</Text>;
+        return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} {t('rate_display.per_10k_chars', '/ 万字符')}</Text>;
       }
-      return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} / 请求</Text>;
+      return <Text type="secondary" style={s}>{fp(rule.fixed_rate)} {t('rate_display.per_request', '/ 请求')}</Text>;
     }
 
     // duration
     if (rule.billing_rule === 'video_resolution') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
-        if (activeTiers.length === 0) return <Text type="secondary" style={s}>按视频时长及生成分辨率计费 (无有效配置)</Text>;
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
+        if (activeTiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.video_duration_res_empty', '按视频时长及生成分辨率计费 (无有效配置)')}</Text>;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            <Text type="secondary" style={s}>按视频时长及生成分辨率计费</Text>
-            {activeTiers.map((t, idx) => (
-              <Text key={idx} type="secondary" style={s}>{t.resolution} {fp(t.rate)}/秒</Text>
+            <Text type="secondary" style={s}>{t('rate_display.video_duration_res', '按视频时长及生成分辨率计费')}</Text>
+            {activeTiers.map((tierItem: any, idx: number) => (
+              <Text key={idx} type="secondary" style={s}>{tierItem.resolution} {fp(tierItem.rate)}{t('rate_display.per_second', '/秒')}</Text>
             ))}
           </div>
         );
     }
     if (rule.billing_rule === 'minimax_h3') {
-      const activeTiers = tiers.filter(t => t.enabled !== false);
+      const activeTiers = tiers.filter((item: any) => item.enabled !== false);
       const freeCount = resolveFreeImageCount(ext.free_image_count, 'minimax_h3');
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
           <Text type="secondary" style={s}>
-            {freeCount} 张以内免费，超出部分 {fp(rule.prompt_rate)}/张
+            {t('rate_display.free_within_prefix', { count: freeCount, defaultValue: `前 ${freeCount} 张免费，超出部分` })} {fp(rule.prompt_rate)}{t('rate_display.per_image', '/张')}
           </Text>
-          <Text type="secondary" style={s}>按视频时长及生成分辨率计费</Text>
-          {activeTiers.map((t, idx) => (
-            <Text key={idx} type="secondary" style={s}>{t.resolution} {fp(t.rate)}/秒</Text>
+          <Text type="secondary" style={s}>{t('rate_display.video_duration_res', '按视频时长及生成分辨率计费')}</Text>
+          {activeTiers.map((tierItem: any, idx: number) => (
+            <Text key={idx} type="secondary" style={s}>{tierItem.resolution} {fp(tierItem.rate)}{t('rate_display.per_second', '/秒')}</Text>
           ))}
         </div>
       );
     }
     if (rule.billing_rule === 'video_seconds_io') {
-      const activeTiers = tiers.filter(t => t.enabled !== false);
+      const activeTiers = tiers.filter((item: any) => item.enabled !== false);
       const freeCount = resolveFreeImageCount(ext.free_image_count, 'video_seconds_io');
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
           <Text type="secondary" style={s}>
-            {freeCount} 张以内免费，超出部分 {fp(rule.prompt_rate)}/张
+            {t('rate_display.free_within_prefix', { count: freeCount, defaultValue: `前 ${freeCount} 张免费，超出部分` })} {fp(rule.prompt_rate)}{t('rate_display.per_image', '/张')}
           </Text>
-          <Text type="secondary" style={s}>按输入/生成视频时长及分辨率分别计费</Text>
-          {activeTiers.map((t, idx) => (
+          <Text type="secondary" style={s}>{t('rate_display.video_seconds_io_title', '按输入/生成视频时长及分辨率分别计费')}</Text>
+          {activeTiers.map((tierItem: any, idx: number) => (
             <Text key={idx} type="secondary" style={s}>
-              {t.resolution} 输入:{fp(t.input_rate ?? 0)}/秒 生成:{fp(t.rate)}/秒
+              {tierItem.resolution} {t('rate_display.input_label', '输入')}:{fp(tierItem.input_rate ?? 0)}{t('rate_display.per_second', '/秒')} {t('rate_display.gen_label', '生成')}:{fp(tierItem.rate)}{t('rate_display.per_second', '/秒')}
             </Text>
           ))}
         </div>
       );
     }
     if (rule.billing_rule === 'video_seconds_ref') {
-      const activeTiers = tiers.filter(t => t.enabled !== false);
+      const activeTiers = tiers.filter((item: any) => item.enabled !== false);
       const freeCount = resolveFreeImageCount(ext.free_image_count, 'video_seconds_ref');
       const isRefAware = ext.enable_video_ref !== false;
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
           <Text type="secondary" style={s}>
-            {freeCount} 张以内免费，超出部分 {fp(rule.prompt_rate)}/张
+            {t('rate_display.free_within_prefix', { count: freeCount, defaultValue: `前 ${freeCount} 张免费，超出部分` })} {fp(rule.prompt_rate)}{t('rate_display.per_image', '/张')}
           </Text>
           <Text type="secondary" style={s}>
-            {isRefAware ? '按有/无参考视频及分辨率分别计费' : '按输入/生成视频时长及分辨率分别计费'}
+            {isRefAware ? t('rate_display.video_seconds_ref_title', '按有/无参考视频及分辨率分别计费') : t('rate_display.video_seconds_io_title', '按输入/生成视频时长及分辨率分别计费')}
           </Text>
-          {activeTiers.map((t, idx) => {
-            if (isRefAware && (t.rate_no_ref !== undefined || t.rate_ref !== undefined)) {
-              const noRefRate = t.rate_no_ref ?? t.rate;
-              const refInRate = t.input_rate_ref ?? t.input_rate ?? 0;
-              const refOutRate = t.rate_ref ?? t.rate;
+          {activeTiers.map((tierItem: any, idx: number) => {
+            if (isRefAware && (tierItem.rate_no_ref !== undefined || tierItem.rate_ref !== undefined)) {
+              const noRefRate = tierItem.rate_no_ref ?? tierItem.rate;
+              const refInRate = tierItem.input_rate_ref ?? tierItem.input_rate ?? 0;
+              const refOutRate = tierItem.rate_ref ?? tierItem.rate;
               return (
                 <Text key={idx} type="secondary" style={s}>
-                  {t.resolution} 无参考:{fp(noRefRate)}/秒 | 有参考(输入:{fp(refInRate)}/秒 生成:{fp(refOutRate)}/秒)
+                  {tierItem.resolution} {t('rate_display.no_ref', '无参考')}:{fp(noRefRate)}{t('rate_display.per_second', '/秒')} | {t('rate_display.has_ref', '有参考')}({t('rate_display.input_label', '输入')}:{fp(refInRate)}{t('rate_display.per_second', '/秒')} {t('rate_display.gen_label', '生成')}:{fp(refOutRate)}{t('rate_display.per_second', '/秒')})
                 </Text>
               );
             }
             return (
               <Text key={idx} type="secondary" style={s}>
-                {t.resolution} 输入:{fp(t.input_rate ?? 0)}/秒 生成:{fp(t.rate)}/秒
+                {tierItem.resolution} {t('rate_display.input_label', '输入')}:{fp(tierItem.input_rate ?? 0)}{t('rate_display.per_second', '/秒')} {t('rate_display.gen_label', '生成')}:{fp(tierItem.rate)}{t('rate_display.per_second', '/秒')}
               </Text>
             );
           })}
@@ -430,21 +490,21 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
       const refRatePer1k = ext.ref_token_rate_per_1k ?? 0.02;
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <Text type="secondary" style={s}>成片生成：{fp(rule.duration_rate)}/秒</Text>
+          <Text type="secondary" style={s}>{t('rate_display.video_output_gen', '成片生成')}：{fp(rule.duration_rate)}{t('rate_display.per_second', '/秒')}</Text>
           <Text type="secondary" style={s}>
-            参考素材：免 {freeTokens} Token，超出 {fp(refRatePer1k)}/千Token
+            {t('rate_display.ref_assets', '参考素材')}：{t('rate_display.free_tokens', { tokens: freeTokens, defaultValue: `免 ${freeTokens} Token` })}，{t('rate_display.extra', '超出')} {fp(refRatePer1k)}{t('rate_display.per_1k_tokens', '/千Token')}
           </Text>
         </div>
       );
     }
     if (rule.billing_rule === 'video_quality') {
-        const activeTiers = tiers.filter(t => t.enabled !== false);
-        if (activeTiers.length === 0) return <Text type="secondary" style={s}>按视频画质及帧率阶梯 (无有效配置)</Text>;
+        const activeTiers = tiers.filter((item: any) => item.enabled !== false);
+        if (activeTiers.length === 0) return <Text type="secondary" style={s}>{t('rate_display.video_quality_empty', '按视频画质及帧率阶梯 (无有效配置)')}</Text>;
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {activeTiers.map((t, idx) => (
+            {activeTiers.map((tierItem: any, idx: number) => (
               <Text key={idx} type="secondary" style={s}>
-                {t.resolution} | {t.fps_range === '<=30' ? '≤30fps' : t.fps_range === '>30' ? '>30fps' : t.fps_range}: {fp(t.rate)}/秒
+                {tierItem.resolution} | {tierItem.fps_range === '<=30' ? '≤30fps' : tierItem.fps_range === '>30' ? '>30fps' : tierItem.fps_range}: {fp(tierItem.rate)}{t('rate_display.per_second', '/秒')}
               </Text>
             ))}
           </div>
@@ -472,47 +532,47 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
           const min = Math.min(...activeValues);
           const max = Math.max(...activeValues);
           const dims: string[] = [];
-          if (eMode) dims.push('模式');
-          if (eSound) dims.push('音频');
-          if (eVideo) dims.push('参考视频');
+          if (eMode) dims.push(t('rate_display.dim_mode', '模式'));
+          if (eSound) dims.push(t('rate_display.dim_sound', '音频'));
+          if (eVideo) dims.push(t('rate_display.dim_video', '参考视频'));
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Text type="secondary" style={s}>精确查表: {fp(min)}~{fp(max)}/秒</Text>
-              {dims.length > 0 && <Text type="secondary" style={s}>维度: {dims.join('+')}</Text>}
+              <Text type="secondary" style={s}>{t('rate_display.exact_table', '精确查表')}: {fp(min)}~{fp(max)}{t('rate_display.per_second', '/秒')}</Text>
+              {dims.length > 0 && <Text type="secondary" style={s}>{t('rate_display.dimensions', '维度')}: {dims.join('+')}</Text>}
             </div>
           );
         }
-        return <Text type="secondary" style={s}>精确查表 (无有效条目)</Text>;
+        return <Text type="secondary" style={s}>{t('rate_display.exact_table_empty', '精确查表 (无有效条目)')}</Text>;
       }
       const mm = ext.mode_multipliers || {};
       const sm = ext.sound_multipliers || {};
       const vm = ext.video_ref_multipliers || {};
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <Text type="secondary" style={s}>基准: {fp(rule.duration_rate)}/秒</Text>
-          <Text type="secondary" style={s}>mode: 标准×{mm.std ?? 1} / 高品质×{mm.pro ?? 1.33} / 4k×{mm['4k'] ?? 2}</Text>
+          <Text type="secondary" style={s}>{t('rate_display.base_rate', '基准')}: {fp(rule.duration_rate)}{t('rate_display.per_second', '/秒')}</Text>
+          <Text type="secondary" style={s}>mode: {t('rate_display.mode_std', '标准')}×{mm.std ?? 1} / {t('rate_display.mode_pro', '高品质')}×{mm.pro ?? 1.33} / 4k×{mm['4k'] ?? 2}</Text>
           <Text type="secondary" style={s}>sound: off×{sm.off ?? 1} / on×{sm.on ?? 1.5}</Text>
-          <Text type="secondary" style={s}>参考视频: 无×{vm.no ?? 1} / 有×{vm.yes ?? 1.5}</Text>
+          <Text type="secondary" style={s}>{t('rate_display.dim_video', '参考视频')}: {t('rate_display.none', '无')}×{vm.no ?? 1} / {t('rate_display.yes', '有')}×{vm.yes ?? 1.5}</Text>
         </div>
       );
     }
     if (rule.billing_rule === 'vidu_video') {
       const discount = ext.offpeak_discount;
       const extraNode = discount !== undefined && discount !== 1
-        ? <Text type="secondary" style={s}>错峰: ×{discount}</Text>
+        ? <Text type="secondary" style={s}>{t('rate_display.offpeak', '错峰')}: ×{discount}</Text>
         : undefined;
       return renderPriceTableSummary('s', extraNode);
     }
     if (rule.billing_rule === 'volc_enhance_cascade') {
       return renderPriceTableSummary('s');
     }
-    return <Text type="secondary" style={s}>{fp(rule.duration_rate)}/秒</Text>;
+    return <Text type="secondary" style={s}>{fp(rule.duration_rate)}{t('rate_display.per_second', '/秒')}</Text>;
   };
 
   const hasTimeMultipliers = ext?.enable_time_multipliers && Array.isArray(ext.time_multipliers) && ext.time_multipliers.length > 0;
   const invertRemainder = Number(ext?.invert_remainder_multiplier);
   const invertRemainderOk = ext?.invert_remainder_multiplier != null && Number.isFinite(invertRemainder) && invertRemainder >= 0;
-  const titleLabel = hideRuleLabel ? '计费' : ruleLabel;
+  const titleLabel = hideRuleLabel ? t('rate_display.billing_title', '计费') : ruleLabel;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -523,31 +583,37 @@ const RateDisplay: React.FC<RateDisplayProps> = ({ rule, currencySymbol, formatP
           <Tooltip title={
             <div>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                已启用时段倍率 (共 {ext.time_multipliers.length} 条，相对上方默认价)
-                {invertRemainderOk ? ` · 未规划 ${invertRemainder.toFixed(2)} 倍` : ''}
+                {t('rate_display.time_multiplier_title', { count: ext.time_multipliers.length, defaultValue: `已启用时段倍率 (共 ${ext.time_multipliers.length} 条，相对上方默认价)` })}
+                {invertRemainderOk ? (
+                  isFreeTimeMultiplier(invertRemainder)
+                    ? t('rate_display.invert_remainder_free', { defaultValue: ' · 未规划 免费' })
+                    : t('rate_display.invert_remainder', { ratio: invertRemainder.toFixed(2), defaultValue: ` · 未规划 ${invertRemainder.toFixed(2)} 倍` })
+                ) : ''}
               </div>
               {ext.time_multipliers.map((tm: any, i: number) => {
-                const daysText = isAllWeekdays(tm.days) ? '每天' : formatWeekdayRange(tm.days, ZH_WEEKDAY_LABELS);
+                const daysText = isAllWeekdays(tm.days) ? t('rate_display.every_day', '每天') : formatWeekdayRange(tm.days, weekdayLabels);
                 const ratio = Number(tm.multiplier);
                 const allDay = !!tm.all_day;
+                const timesUnit = t('rate_display.times', '倍');
+                const ratioLabel = isFreeTimeMultiplier(ratio) ? t('rate_display.free', '免费') : `${ratio.toFixed(2)}${timesUnit}`;
                 return (
                   <div key={i} style={{ fontSize: 11 }}>
-                    {allDay ? '全天' : `${tm.start} - ${tm.end}`} {daysText}: <b>{ratio.toFixed(2)}倍</b>
-                    {allDay ? '（可被更细时段覆盖）' : ''}
+                    {allDay ? t('rate_display.all_day', '全天') : `${tm.start} - ${tm.end}`} {daysText}: <b>{ratioLabel}</b>
+                    {allDay ? t('rate_display.all_day_override', '（可被更细时段覆盖）') : ''}
                   </div>
                 );
               })}
             </div>
           }>
             <Tag color="volcano" style={{ margin: 0, padding: '0 4px', fontSize: 10, lineHeight: '14px' }}>
-              时段倍率
+              {t('rate_display.time_multiplier_tag', '时段倍率')}
             </Tag>
           </Tooltip>
         )}
       </div>
       {renderDetails()}
       {rule.billing_type === 'tokens' && rule.billing_rule !== 'glm_5_3' && ext.web_search_rate !== undefined && ext.web_search_rate > 0 && (
-        <Text type="secondary" style={{ ...s, marginTop: 2 }}>联网搜索: {fp(ext.web_search_rate)}/千次</Text>
+        <Text type="secondary" style={{ ...s, marginTop: 2 }}>{t('rate_display.web_search', '联网搜索')}: {fp(ext.web_search_rate)}{t('rate_display.per_1k_queries', '/千次')}</Text>
       )}
     </div>
   );

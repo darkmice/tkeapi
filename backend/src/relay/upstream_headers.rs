@@ -146,11 +146,11 @@ pub fn with_request_id(mut resp: Response, log_id: &str) -> Response {
 pub fn extract_upstream_request_id(headers: &HeaderMap) -> Option<String> {
     const CANDIDATES: &[&str] = &[
         // 1. 厂商强特异性专属头（优先提取，避免被网关通用头遮蔽）
-        "x-tt-logid",        // 字节跳动 / 火山引擎（即梦、豆包、方舟 Ark）官方排查唯一凭证
-        "x-bce-request-id",   // 百度智能云 / 文心千帆
-        "x-tc-request-id",    // 腾讯云 / 腾讯混元
-        "x-acs-request-id",   // 阿里云 / 通义千问 / 百炼
-        "x-amzn-requestid",   // AWS Bedrock / Amazon API
+        "x-tt-logid", // 字节跳动 / 火山引擎（即梦、豆包、方舟 Ark）官方排查唯一凭证
+        "x-bce-request-id", // 百度智能云 / 文心千帆
+        "x-tc-request-id", // 腾讯云 / 腾讯混元
+        "x-acs-request-id", // 阿里云 / 通义千问 / 百炼
+        "x-amzn-requestid", // AWS Bedrock / Amazon API
         // 2. 行业标准与通用兜底头（OpenAI、Claude、DeepSeek、Moonshot 及各类标准模型服务）
         "x-request-id",
         "request-id",
@@ -252,4 +252,3 @@ pub fn apply_client_request_headers(
     }
     builder
 }
-

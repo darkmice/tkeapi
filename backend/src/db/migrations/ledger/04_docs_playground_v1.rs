@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── DocsApi 站点 API 教程文档增强插件初始化 ──
@@ -25,8 +25,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 slug VARCHAR(255) DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (now()::text),
                 updated_at TEXT NOT NULL DEFAULT (now()::text)
-            )"#
-        ).execute(pool).await;
+            )"#,
+        )
+        .execute(pool)
+        .await;
 
         // 2. 提前创建 plugin_docs_intl 国际化表，保证种子数据 seed_default_docs_direct 可以顺利写入翻译数据
         let _ = sqlx::query(
@@ -39,8 +41,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 created_at TEXT NOT NULL DEFAULT (now()::text),
                 updated_at TEXT NOT NULL DEFAULT (now()::text),
                 UNIQUE(doc_id, lang)
-            )"#
-        ).execute(pool).await;
+            )"#,
+        )
+        .execute(pool)
+        .await;
 
         // 3. 注册 docs_api 插件（默认关闭）
         let _ = sqlx::query(
@@ -54,18 +58,26 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             tracing::warn!("Failed to seed default docs: {:?}", e);
         }
 
-        let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('docs_api_init_v5')").execute(pool).await;
+        let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('docs_api_init_v5')")
+            .execute(pool)
+            .await;
         done.insert("docs_api_init_v5".into());
         tracing::info!("✅ DocsApi 文档插件初始化完成");
     }
 
     // ── DocsApi 插件新增 slug 字段（受一次性迁移保护） ──
-    once_migration!(pool, done, "docs_api_add_slug_v1",
+    once_migration!(
+        pool,
+        done,
+        "docs_api_add_slug_v1",
         "ALTER TABLE plugin_docs ADD COLUMN IF NOT EXISTS slug VARCHAR(255) DEFAULT ''"
     );
 
     // ── 级联转发规则补充默认 res_mul（分辨率倍率，缺省 1.0 不影响现网计价）──
-    once_migration!(pool, done, "cascade_res_mul_v1",
+    once_migration!(
+        pool,
+        done,
+        "cascade_res_mul_v1",
         r#"UPDATE forward_rules
            SET config_json = (COALESCE(config_json::jsonb, '{}'::jsonb) || '{"res_mul":{"720p":2.15,"1080p":2.25,"2k":2.5,"4k":4.0}}'::jsonb)::text
            WHERE name = '火山方舟 级联视频生成'
@@ -148,14 +160,16 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "CREATE INDEX IF NOT EXISTS idx_logs_created_at_stats_opt ON logs (created_at DESC) INCLUDE (cost, status_code, pre_deduct_gift)"
     );
 
-    once_migration!(pool, done, "add_ha_cooldown_404_v2",
+    once_migration!(
+        pool,
+        done,
+        "add_ha_cooldown_404_v2",
         r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
            VALUES ('high_availability_channel', 'ha_cooldown_404', '3', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT (plugin_name, config_key) 
            DO UPDATE SET config_value = '3', updated_at = CURRENT_TIMESTAMP 
            WHERE plugin_configs.config_value = '10'"#
     );
-
 
     Ok(())
 }

@@ -45,10 +45,15 @@ Call the following endpoints with your platform API Key:
 | Alibaba Bailian | Text Embeddings | `/compatible-mode/v1/embeddings` | `POST` |
 | Alibaba Bailian | Document Reranking (Rerank) | `/compatible-api/v1/reranks` | `POST` |
 | Alibaba Bailian | Document Reranking (Native) | `/api/v1/services/rerank/text-rerank/text-rerank` | `POST` |
-| Kling AI | Text-to-Video (Kling) | `/v1/videos/text2video` | `POST` |
-| Kling AI | Image-to-Video (Kling) | `/v1/videos/image2video` | `POST` |
-| Kling AI | Task Status Query (Video/Image) | `/v1/videos/{endpoint}/{task_id}` | `GET` |
-| Google | Gemini Text Generation | `/v1beta/models/{model}:generateContent` | `POST` |
-| Google | Gemini Stream Text Generation | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Kling AI | Text-to-Video (Native) | `/text-to-video/{model_id}` | `POST` |
+| Kling AI | Image-to-Video (Native) | `/image-to-video/{model_id}` | `POST` |
+| Kling AI | Omni Video (Native) | `/omni-video/{model_id}` | `POST` |
+| Kling AI | Task Status Query (Native) | `/tasks` | `GET` |
+| Google | Gemini Content Generation | `/v1/models/{model}:generateContent` | `POST` |
+| Google | Gemini Stream Content Generation | `/v1/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini Content Generation (v1beta) | `/v1beta/models/{model}:generateContent` | `POST` |
+| Google | Gemini Stream Content Generation (v1beta) | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Google | Gemini Interactions | `/v1/interactions` | `POST` |
+| Google | Gemini Interactions (v1beta) | `/v1beta/interactions` | `POST` |
 | Anthropic | Claude Native Messages | `/v1/messages` | `POST` |
 | MiniMax | Anthropic-Compatible Messages | `/anthropic/v1/messages` | `POST` |

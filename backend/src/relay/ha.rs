@@ -20,7 +20,7 @@
 
 use crate::error::AppError;
 use crate::models::{ApiToken, Channel};
-use crate::relay::ha_rule::{parse_rule_id, default_rule_arc, HaRule, HaRulesBundle};
+use crate::relay::ha_rule::{default_rule_arc, parse_rule_id, HaRule, HaRulesBundle};
 use crate::AppState;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -31,7 +31,6 @@ const FAILED_CHANNELS_SOFT_CAP: usize = 4096;
 const MIN_RETRY_BUDGET: Duration = Duration::from_secs(5);
 /// send 时剩余预算不足仍给极短超时，便于快速失败
 const MIN_REQ_TIMEOUT: Duration = Duration::from_secs(1);
-
 
 /// HA 整次墙钟预算秒数。`0`=自动 `min(900, 上游超时-60)`（留足多模态慢任务与重试回写裕量）。
 fn resolve_budget_secs(configured: u64) -> u64 {
@@ -99,10 +98,7 @@ impl HaTimeoutCtx {
                         timeout.as_secs()
                     )
                 } else {
-                    format!(
-                        "上游单次请求超时 (超过 {}s 未返回响应)",
-                        timeout.as_secs()
-                    )
+                    format!("上游单次请求超时 (超过 {}s 未返回响应)", timeout.as_secs())
                 }),
             }
         } else {
@@ -117,16 +113,16 @@ pub fn yid_label(yid: Option<&str>) -> &str {
     yid.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("-")
 }
 
-/// 落库用 0/1（列类型 INTEGER / INT4）
+/// 落库用 0/1（列类型 BIGINT / INT8）
 #[inline]
-pub fn channel_is_ha_flag(channel: &Channel) -> i32 {
+pub fn channel_is_ha_flag(channel: &Channel) -> i64 {
     let is_ha = channel.provider_type == "high_availability_group"
         || channel.group_aid.as_deref().is_some_and(is_ha_aid);
-    i32::from(is_ha)
+    if is_ha { 1 } else { 0 }
 }
 
 /// 落库用子配 id：运行时 aid/preset 优先，否则用内存 `Channel.yid` 反查
-pub async fn resolve_log_config_id(state: &AppState, channel: &Channel) -> Option<i32> {
+pub async fn resolve_log_config_id(state: &AppState, channel: &Channel) -> Option<i64> {
     if let Some(id) = resolve_config_id(channel) {
         return Some(id);
     }
@@ -135,7 +131,7 @@ pub async fn resolve_log_config_id(state: &AppState, channel: &Channel) -> Optio
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
-    sqlx::query_scalar::<_, i32>(
+    sqlx::query_scalar::<_, i64>(
         &state
             .db
             .format_query("SELECT id FROM channel_configs WHERE yid = ? LIMIT 1"),
@@ -195,7 +191,7 @@ pub struct FailBill {
     pub client_msg: Option<String>,
     pub pre_deducted: f64,
     pub pre_deduct_gift: f64,
-    pub is_stream: i32,
+    pub is_stream: i64,
     pub request_content: String,
     pub upstream_request_id: Option<String>,
 }
@@ -277,7 +273,7 @@ impl FailBill {
     }
 
     #[inline]
-    pub fn stream(mut self, s: i32) -> Self {
+    pub fn stream(mut self, s: i64) -> Self {
         self.is_stream = s;
         self
     }
@@ -413,6 +409,7 @@ struct FirstFail {
     channel: Channel,
     status: u16,
     message: String,
+    headers: Option<axum::http::HeaderMap>,
     bill: Option<FailBill>,
     endpoint: String,
 }
@@ -441,8 +438,8 @@ pub struct HaAttempt {
 }
 
 impl HaAttempt {
-    /// 开环：解析 HA 策略，初始化排除列表与终态错误占位
-    pub async fn begin(state: &AppState, token_ha: i32) -> Self {
+    /// 开环：解析 HA 策略，初始化排除列表与终态错误占位（`started_at` 为请求入口全局总计时起点）
+    pub async fn begin(state: &AppState, token_ha: i64, started_at: Instant) -> Self {
         let plugin_on = super::relay_settings::get_cached_ha_enabled(&state.db).await;
         let failover_on = plugin_on && token_ha != 0;
         let (bundle, rule, max_attempts, budget) = if failover_on {
@@ -474,7 +471,7 @@ impl HaAttempt {
             pending_log_id: None,
             had_upstream: false,
             last_err: AppError::UpstreamError("No available models".into()),
-            started_at: Instant::now(),
+            started_at,
             budget,
             fail_buf: Arc::new(Mutex::new(None)),
             snaps: Vec::new(),
@@ -487,6 +484,12 @@ impl HaAttempt {
             pool: None,
             is_ha: false,
         }
+    }
+
+    /// 全链路端到端总消耗时间（自方法入口 started_at 至今的毫秒数）
+    #[inline]
+    pub fn total_latency_ms(&self) -> u32 {
+        self.started_at.elapsed().as_millis() as u32
     }
 
     /// 选渠侧写入的子渠池快照（仅 HA 组有值）
@@ -667,6 +670,10 @@ impl HaAttempt {
         let masked = url.map(|u| super::forward::mask_key_in_string(u, &channel.api_key));
 
         self.had_upstream = true;
+        let upstream_headers = match &err {
+            AppError::UpstreamHttpError(_, _, h) => h.clone(),
+            _ => None,
+        };
         self.last_err = err;
         // err_code 在 bill.take() 之前提取，否则首败 bill 被 move 后拿不到
         let err_code = bill
@@ -678,6 +685,7 @@ impl HaAttempt {
                 channel: channel.clone(),
                 status: fail_status,
                 message: msg.clone(),
+                headers: upstream_headers,
                 bill: bill.take(),
                 endpoint: ctx.ep.to_string(),
             });
@@ -693,13 +701,7 @@ impl HaAttempt {
             false,
         );
 
-        if self.try_switch(
-            ctx.state,
-            channel,
-            fail_status,
-            &msg,
-            err_code.as_deref(),
-        ) {
+        if self.try_switch(ctx.state, channel, fail_status, &msg, err_code.as_deref()) {
             self.refund_continue(ctx, bill.as_ref()).await;
             return true;
         }
@@ -790,7 +792,7 @@ impl HaAttempt {
                 )
             });
         let group_aid = self.group_aid.clone().unwrap_or_default();
-        let n = self.snaps.len() as i16;
+        let n = self.snaps.len() as i64;
         if let Err(e) = sqlx::query(
             &state.db.format_query(
                 "INSERT INTO ha_usage_logs (log_id, group_aid, attempt_count, final_ok, final_status_code, attempts) \
@@ -800,8 +802,8 @@ impl HaAttempt {
         .bind(log_id)
         .bind(&group_aid)
         .bind(n)
-        .bind(i16::from(final_ok))
-        .bind(final_status)
+        .bind(if final_ok { 1i64 } else { 0i64 })
+        .bind(final_status as i64)
         .bind(sqlx::types::Json(attempts))
         .execute(&state.db.pool)
         .await
@@ -847,11 +849,13 @@ impl HaAttempt {
         if is_access_side_err(&self.last_err) {
             return self.last_err;
         }
-        if self.rule.err_last() {
-            return self.last_err;
-        }
         match self.first {
-            Some(f) => super::proxy::upstream_fail(f.status, &f.message, None),
+            Some(f) => super::proxy::upstream_fail(
+                f.status,
+                &f.message,
+                f.headers,
+                ctx.ep,
+            ),
             None => self.last_err,
         }
     }
@@ -871,6 +875,8 @@ impl HaAttempt {
             );
             return;
         }
+        let total_latency_ms = self.total_latency_ms();
+        let pending_log_id = self.pending_log_id;
         let Some(first) = self.first.as_mut() else {
             return;
         };
@@ -888,45 +894,56 @@ impl HaAttempt {
             Some(b) => b.prefer_status.or(Some(status)),
             None => Some(status),
         };
-        let (pre, gift, is_stream, req, resp_c, up_req, detail, lat, response_body, client, up_req_id) =
-            match bill {
-                Some(b) => {
-                    let body = if b.response_body.is_empty() {
-                        fallback.clone()
-                    } else {
-                        b.response_body
-                    };
-                    let client = b
-                        .client_msg
-                        .unwrap_or_else(|| super::proxy::extract_error_message(&body));
-                    (
-                        b.pre_deducted,
-                        b.pre_deduct_gift,
-                        b.is_stream,
-                        b.request_content,
-                        b.response_content,
-                        b.upstream_req,
-                        b.billing_detail,
-                        b.latency_ms,
-                        body,
-                        client,
-                        b.upstream_request_id,
-                    )
-                }
-                None => (
-                    0.0,
-                    0.0,
-                    0,
-                    String::new(),
-                    None,
-                    None,
-                    None,
-                    0,
-                    fallback.clone(),
-                    super::proxy::extract_error_message(&fallback),
-                    None,
-                ),
-            };
+        let (
+            pre,
+            gift,
+            is_stream,
+            req,
+            resp_c,
+            up_req,
+            detail,
+            _,
+            response_body,
+            client,
+            up_req_id,
+        ) = match bill {
+            Some(b) => {
+                let body = if b.response_body.is_empty() {
+                    fallback.clone()
+                } else {
+                    b.response_body
+                };
+                let client = b
+                    .client_msg
+                    .unwrap_or_else(|| super::proxy::extract_error_message(&body));
+                (
+                    b.pre_deducted,
+                    b.pre_deduct_gift,
+                    b.is_stream,
+                    b.request_content,
+                    b.response_content,
+                    b.upstream_req,
+                    b.billing_detail,
+                    b.latency_ms,
+                    body,
+                    client,
+                    b.upstream_request_id,
+                )
+            }
+            None => (
+                0.0,
+                0.0,
+                0,
+                String::new(),
+                None,
+                None,
+                None,
+                0,
+                fallback.clone(),
+                super::proxy::extract_error_message(&fallback),
+                None,
+            ),
+        };
         let response_content =
             resp_c.or_else(|| (!response_body.is_empty()).then(|| response_body.clone()));
 
@@ -937,7 +954,7 @@ impl HaAttempt {
             model: ctx.model,
             prefer_http_status,
             endpoint,
-            latency_ms: lat,
+            latency_ms: total_latency_ms,
             is_stream,
             request_content: req,
             response_body,
@@ -945,7 +962,7 @@ impl HaAttempt {
             upstream_req_content: up_req,
             billing_detail: detail,
             hint_category: ctx.hint_category,
-            pending_log_id: self.pending_log_id,
+            pending_log_id,
             db_model: ctx.db_model,
             client_msg: Some(&client),
             pre_deducted: pre,
@@ -1035,7 +1052,11 @@ impl HaAttempt {
             let budget_s = self.budget_secs();
             crate::relay_debug!(
                 "[HA] 切换取消(预算不足) 状态码={} 上游YID={} 子渠标识={} 已耗时={}s 预算={}s",
-                fail_status, yid, aid, elapsed_s, budget_s
+                fail_status,
+                yid,
+                aid,
+                elapsed_s,
+                budget_s
             );
             self.mark_end(format!("墙钟预算不足（已用{elapsed_s}s/{budget_s}s）"));
             return false;
@@ -1076,7 +1097,7 @@ fn is_ha_aid(aid: &str) -> bool {
 
 /// pending 行仍为处理中（status_code=0）才允许补记终态，避免覆盖已落库行
 async fn pending_open(state: &AppState, log_id: i64) -> bool {
-    let code: Option<i32> = sqlx::query_scalar(
+    let code: Option<i64> = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT status_code FROM logs WHERE id = ?"),
@@ -1102,7 +1123,7 @@ fn group_key(channel: &Channel) -> String {
 }
 
 #[inline]
-pub(crate) fn ha_config_id_from_aid(channel: &Channel) -> Option<i32> {
+pub(crate) fn ha_config_id_from_aid(channel: &Channel) -> Option<i64> {
     let aid = channel.group_aid.as_deref()?;
     if !is_ha_aid(aid) {
         return None;
@@ -1112,8 +1133,8 @@ pub(crate) fn ha_config_id_from_aid(channel: &Channel) -> Option<i32> {
 }
 
 #[inline]
-fn resolve_config_id(channel: &Channel) -> Option<i32> {
-    ha_config_id_from_aid(channel).or_else(|| channel.preset_id.map(|p| p as i32))
+fn resolve_config_id(channel: &Channel) -> Option<i64> {
+    ha_config_id_from_aid(channel).or(channel.preset_id)
 }
 
 #[inline]
@@ -1137,11 +1158,11 @@ fn fail_status_msg(b: &FailBill) -> (u16, String) {
     (status, msg)
 }
 
-/// 由暂存账单构造上游错误（不写库）
+/// 由暂存账单构造上游错误（不写库，保留原始错误体，由 finish 按入口路径统一决策是否转 OpenAI）
 fn err_of(bill: &FailBill, headers: Option<axum::http::HeaderMap>) -> AppError {
     let (status, msg) = fail_status_msg(bill);
     let raw = bill.client_msg.as_deref().unwrap_or(&msg);
-    super::proxy::upstream_fail(status, raw, headers)
+    AppError::UpstreamHttpError(status, raw.to_string(), headers)
 }
 
 /// 业务侧错误：禁止 HA failover
@@ -1277,4 +1298,37 @@ fn extract_err_code(body: &str) -> Option<String> {
     let raw = body.find('{').map(|i| &body[i..]).unwrap_or(body);
     let v = serde_json::from_str::<serde_json::Value>(raw).ok()?;
     super::response_formatter::extract_error_code_from_value(&v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ha_attempt_started_at_latency() {
+        let past = Instant::now() - Duration::from_millis(50);
+        let ha = HaAttempt {
+            exclude_aids: vec![],
+            attempt: 0,
+            max_attempts: 1,
+            failover_on: false,
+            pending_log_id: None,
+            had_upstream: false,
+            last_err: AppError::UpstreamError("test".into()),
+            started_at: past,
+            budget: None,
+            fail_buf: Arc::new(Mutex::new(None)),
+            snaps: Vec::new(),
+            first: None,
+            group_aid: None,
+            billed: false,
+            saved: false,
+            bundle: None,
+            rule: default_rule_arc(),
+            pool: None,
+            is_ha: false,
+        };
+        let ms = ha.total_latency_ms();
+        assert!(ms >= 50);
+    }
 }

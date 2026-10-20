@@ -188,7 +188,11 @@ pub fn sanitize_bundle(raw: HaRulesBundle) -> Result<HaRulesBundle, String> {
     } else {
         rules[0].id.clone()
     };
-    Ok(HaRulesBundle { def, rules, rule_arcs: OnceLock::new() })
+    Ok(HaRulesBundle {
+        def,
+        rules,
+        rule_arcs: OnceLock::new(),
+    })
 }
 
 fn sanitize_id(id: &str, idx: usize) -> Result<String, String> {
@@ -239,7 +243,11 @@ fn sanitize_rule(r: HaRule, id: String) -> Result<HaRule, String> {
             n.chars().take(MAX_NAME).collect()
         }
     };
-    let budget = if r.budget == 0 { default_budget() } else { r.budget };
+    let budget = if r.budget == 0 {
+        default_budget()
+    } else {
+        r.budget
+    };
     let ttfb = r.ttfb.min(300);
     Ok(HaRule {
         id,
@@ -264,15 +272,14 @@ fn valid_melt_key(k: &str) -> bool {
 }
 
 pub async fn load_from_db(db: &Database) -> HaRulesBundle {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        &db.format_query(
+    let rows: Vec<(String, String)> =
+        sqlx::query_as(&db.format_query(
             "SELECT config_key, config_value FROM plugin_configs WHERE plugin_name = ?",
-        ),
-    )
-    .bind("high_availability_channel")
-    .fetch_all(&db.pool)
-    .await
-    .unwrap_or_default();
+        ))
+        .bind("high_availability_channel")
+        .fetch_all(&db.pool)
+        .await
+        .unwrap_or_default();
     let map: HashMap<String, String> = rows.into_iter().collect();
     if let Some(raw) = map.get("ha_rules") {
         match serde_json::from_str::<HaRulesBundle>(raw) {
@@ -316,7 +323,11 @@ fn migrate_flat(map: &HashMap<String, String>) -> HaRulesBundle {
         .max(1)
         .min(MAX_RETRIES as i64) as u32;
     let raw_budget = parse_i64(map, "ha_total_timeout_secs", 900) as u64;
-    let budget = if raw_budget == 0 { default_budget() } else { raw_budget };
+    let budget = if raw_budget == 0 {
+        default_budget()
+    } else {
+        raw_budget
+    };
     let r = HaRule {
         id: "r1".into(),
         name: "通用对话".into(),

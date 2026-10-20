@@ -784,9 +784,7 @@ const ModelChannelsDisplay: React.FC = () => {
     
     let IconComp: React.ComponentType<{ style?: React.CSSProperties }> = LayoutGrid;
 
-    if (lower.includes('画质增强') || lower.includes('quality enhancement') || lower.includes('视频增强') || lower.includes('videoenhance') || lower.includes('video-enhance')) {
-      IconComp = Sparkles;
-    } else if (lower.includes('图像增强') || lower.includes('image enhancement') || lower.includes('image-enhance') || lower.includes('imageenhance')) {
+    if (lower.includes('封装') || lower.includes('encapsulation')) {
       IconComp = Sparkles;
     } else if (lower.includes('视频') || lower.includes('video')) {
       IconComp = Video;

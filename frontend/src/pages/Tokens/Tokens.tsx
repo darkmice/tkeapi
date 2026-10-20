@@ -10,7 +10,7 @@ import { Table, Button, Space, Tag, Modal, Form, Input, InputNumber, message, Po
 import AppSwitch from '../../components/AppSwitch';
 import MobileCardList, { MobileCard, CardRow, CardActions } from '../../components/MobileCardList';
 import { listPagination } from '../../components/ListPagination';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, SyncOutlined, EyeOutlined, EyeInvisibleOutlined, KeyOutlined, CheckOutlined, ArrowLeftOutlined, DollarOutlined, BarChartOutlined, EllipsisOutlined, PieChartOutlined, InfoCircleOutlined, FileTextOutlined, ClearOutlined, LockOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, SyncOutlined, EyeOutlined, EyeInvisibleOutlined, KeyOutlined, CheckOutlined, ArrowLeftOutlined, DollarOutlined, BarChartOutlined, EllipsisOutlined, PieChartOutlined, InfoCircleOutlined, ClearOutlined, LockOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
@@ -33,6 +33,22 @@ const PLAYGROUND_2026_DEDICATED_TOKEN_NAME = '创作中心2026';
 
 function isPlayground2026DedicatedToken(record: Pick<ApiToken, 'name' | 'only_playground_2026'>): boolean {
   return record.only_playground_2026 === 1 && record.name === PLAYGROUND_2026_DEDICATED_TOKEN_NAME;
+}
+
+const MOBILE_APP_TOKEN_NAME = '移动端APP';
+
+// 移动端 App 专用令牌：系统创建，不可编辑删除
+function isMobileAppToken(record: Pick<ApiToken, 'name' | 'only_playground_2026'>): boolean {
+  return record.only_playground_2026 === 1 && record.name === MOBILE_APP_TOKEN_NAME;
+}
+
+// 系统专用令牌（如创作中心2026、移动端APP）：不可删除、无开关、灰度展示、不提供复制查看密钥按钮
+function isSystemDedicatedToken(record: Pick<ApiToken, 'name' | 'only_playground_2026'>): boolean {
+  return isPlayground2026DedicatedToken(record) || isMobileAppToken(record) || record.only_playground_2026 === 1;
+}
+
+function isTokenActive(record: Pick<ApiToken, 'is_active'>): boolean {
+  return record.is_active === 1 || record.is_active === true;
 }
 
 const Tokens: React.FC = () => {
@@ -126,8 +142,8 @@ const Tokens: React.FC = () => {
 
   const handleClearUsage = async () => {
     if (!selectedToken) return;
-    if (isPlayground2026DedicatedToken(selectedToken)) {
-      message.warning(t('tokens.playground_2026_dedicated_locked', '创作中心2026 专用密钥不可修改或删除'));
+    if (isSystemDedicatedToken(selectedToken)) {
+      message.warning(t('tokens.system_dedicated_locked', `${selectedToken.name || '系统'} 专用密钥不可修改或删除`));
       return;
     }
     setClearingUsage(true);
@@ -234,8 +250,8 @@ const Tokens: React.FC = () => {
   };
 
   const handleEdit = (record: ApiToken) => {
-    if (isPlayground2026DedicatedToken(record)) {
-      message.warning(t('tokens.playground_2026_dedicated_locked', '创作中心2026 专用密钥不可修改或删除'));
+    if (isSystemDedicatedToken(record)) {
+      message.warning(t('tokens.system_dedicated_locked', `${record.name || '系统'} 专用密钥不可修改或删除`));
       return;
     }
     setEditingToken(record);
@@ -263,8 +279,8 @@ const Tokens: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     const target = tokens.find((item) => item.id === id);
-    if (target && isPlayground2026DedicatedToken(target)) {
-      message.warning(t('tokens.playground_2026_dedicated_locked', '创作中心2026 专用密钥不可修改或删除'));
+    if (target && isSystemDedicatedToken(target)) {
+      message.warning(t('tokens.system_dedicated_locked', `${target.name || '系统'} 专用密钥不可修改或删除`));
       return;
     }
     try {
@@ -366,7 +382,8 @@ const Tokens: React.FC = () => {
 
   // 渲染密钥列内容（桌面端）
   const renderTokenKey = (key: string, record: ApiToken) => {
-    const isRevealed = !!revealedKeys[record.id];
+    const isSystem = isSystemDedicatedToken(record);
+    const isRevealed = !isSystem && !!revealedKeys[record.id];
     return (
       <div style={{
         display: 'flex',
@@ -381,33 +398,44 @@ const Tokens: React.FC = () => {
             {revealedKeys[record.id]}
           </Text>
         ) : (
-          <Text style={{ fontFamily: 'monospace', fontSize: 13, color: themeToken.colorText, letterSpacing: '0.5px' }}>
-            {key.substring(0, 10)}<span style={{color: '#666', margin: '0 4px'}}>••••••••</span>{key.substring(key.length - 6)}
+          <Text style={{ fontFamily: 'monospace', fontSize: 13, color: isSystem ? (isLight ? '#71717a' : '#a1a1aa') : themeToken.colorText, letterSpacing: '0.5px' }}>
+            {key.length > 16 ? (
+              <>
+                {key.substring(0, 10)}<span style={{ color: isSystem ? (isLight ? '#a1a1aa' : '#52525b') : '#666', margin: '0 4px' }}>••••••••</span>{key.substring(key.length - 6)}
+              </>
+            ) : (
+              key
+            )}
           </Text>
         )}
-        <Tooltip title={copiedId === record.id ? t('tokens.copied', '已复制!') : t('tokens.copy_hint')}>
-          <Button 
-            type="text" 
-            icon={copiedId === record.id ? <CheckOutlined style={{ color: themeToken.colorText }} /> : <CopyOutlined />} 
-            size="small" 
-            onClick={() => handleCopy(isRevealed ? revealedKeys[record.id] : key, record.id)} 
-            style={{ color: copiedId === record.id ? themeToken.colorText : '#888', marginLeft: 8 }} 
-          />
-        </Tooltip>
-        <Tooltip title={isRevealed ? t('tokens.hide_key', '隐藏密钥') : t('tokens.view_key', '查看完整密钥')}>
-          <Button 
-            type="text" 
-            icon={isRevealed ? <EyeInvisibleOutlined /> : <EyeOutlined />} 
-            size="small" 
-            onClick={() => handleRevealClick(record.id)} 
-            style={{ color: isRevealed ? themeToken.colorText : '#888' }} 
-          />
-        </Tooltip>
+        {!isSystem && (
+          <>
+            <Tooltip title={copiedId === record.id ? t('tokens.copied', '已复制!') : t('tokens.copy_hint')}>
+              <Button 
+                type="text" 
+                icon={copiedId === record.id ? <CheckOutlined style={{ color: themeToken.colorText }} /> : <CopyOutlined />} 
+                size="small" 
+                onClick={() => handleCopy(isRevealed ? revealedKeys[record.id] : key, record.id)} 
+                style={{ color: copiedId === record.id ? themeToken.colorText : '#888', marginLeft: 8 }} 
+              />
+            </Tooltip>
+            <Tooltip title={isRevealed ? t('tokens.hide_key', '隐藏密钥') : t('tokens.view_key', '查看完整密钥')}>
+              <Button 
+                type="text" 
+                icon={isRevealed ? <EyeInvisibleOutlined /> : <EyeOutlined />} 
+                size="small" 
+                onClick={() => handleRevealClick(record.id)} 
+                style={{ color: isRevealed ? themeToken.colorText : '#888' }} 
+              />
+            </Tooltip>
+          </>
+        )}
       </div>
     );
   };
 
   const renderTokenQuotaRings = (record: ApiToken) => {
+    const isSystem = isSystemDedicatedToken(record);
     const { dailyUsed, weeklyUsed, monthlyUsed } = getPeriodicUsed(record, quotaTz);
     const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(6));
     const items: {
@@ -474,9 +502,11 @@ const Tokens: React.FC = () => {
           const tip = showUnlimited
             ? `${t('tokens.limit')}: ${fmt(item.used)} / ∞ (${t('tokens.unlimited')})`
             : `${item.tipLabel}: ${fmt(item.used)} / ${fmt(item.limit)} (${pct}%)`;
-          const stroke = showUnlimited
-            ? (isLight ? '#a1a1aa' : 'rgba(255,255,255,0.28)')
-            : (pct >= 100 ? '#ef4444' : QUOTA_RING_BLUE[item.key]);
+          const stroke = isSystem
+            ? (isLight ? '#a1a1aa' : 'rgba(255,255,255,0.3)')
+            : (showUnlimited
+              ? (isLight ? '#a1a1aa' : 'rgba(255,255,255,0.28)')
+              : (pct >= 100 ? '#ef4444' : QUOTA_RING_BLUE[item.key]));
 
           return (
             <Tooltip key={item.key} title={tip}>
@@ -524,6 +554,7 @@ const Tokens: React.FC = () => {
       key: 'name',
       sorter: (a: ApiToken, b: ApiToken) => a.name.localeCompare(b.name),
       render: (text: string, record: ApiToken) => {
+        const isSystem = isSystemDedicatedToken(record);
         const isPlayground = record.only_playground === 1;
         const isPlayground2026 = record.only_playground_2026 === 1;
         const isActive = record.is_active === 1 || record.is_active === true;
@@ -535,25 +566,30 @@ const Tokens: React.FC = () => {
             : isPlayground
               ? t('tokens.playground_only')
               : t('tokens.general');
-        const scopeColor = (isPlayground || isPlayground2026) ? 'orange' : 'blue';
+        const scopeColor = isSystem ? 'default' : ((isPlayground || isPlayground2026) ? 'orange' : 'blue');
         return (
-          <Space direction="vertical" size={4} style={{ display: 'flex' }}>
-            <Text strong>{text}</Text>
+          <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+            <Text strong style={{ color: isSystem ? (isLight ? '#71717a' : '#a1a1aa') : undefined, lineHeight: 1.25 }}>{text}</Text>
             <Space size={4} wrap>
               <Tag color={scopeColor} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
                 {scopeLabel}
               </Tag>
               {isPlayground2026DedicatedToken(record) && (
-                <Tag color="purple" style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+                <Tag color={isSystem ? 'default' : 'purple'} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
                   {t('tokens.playground_2026_dedicated', '系统专用')}
                 </Tag>
               )}
+              {isMobileAppToken(record) && (
+                <Tag color={isSystem ? 'default' : 'purple'} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+                  {t('tokens.mobile_app_dedicated', '移动端专用')}
+                </Tag>
+              )}
               {isHA && (
-                <Tag color="blue" style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+                <Tag color={isSystem ? 'default' : 'blue'} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
                   HA
                 </Tag>
               )}
-              <Tag color={isActive ? 'success' : 'default'} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+              <Tag color={isSystem ? 'default' : (isActive ? 'success' : 'default')} style={{ margin: 0, fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
                 {isActive ? t('common.active', '启用') : t('common.disabled', '禁用')}
               </Tag>
             </Space>
@@ -578,9 +614,9 @@ const Tokens: React.FC = () => {
       title: t('tokens.limits'),
       key: 'limits',
       render: (record: ApiToken) => (
-        <Space direction="vertical" size={2}>
-          <Text type="secondary" style={{ fontSize: 12 }}>RPS: {record.rps_limit || '∞'}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>RPM: {record.rpm_limit || '∞'}</Text>
+        <Space direction="vertical" size={1}>
+          <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>RPS: {record.rps_limit || '∞'}</Text>
+          <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>RPM: {record.rpm_limit || '∞'}</Text>
         </Space>
       ),
     },
@@ -589,11 +625,11 @@ const Tokens: React.FC = () => {
       key: 'times',
       sorter: (a: ApiToken, b: ApiToken) => dayjs(a.created_at).unix() - dayjs(b.created_at).unix(),
       render: (record: ApiToken) => (
-        <Space direction="vertical" size={2}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+        <Space direction="vertical" size={1}>
+          <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>
             {t('tokens.created_at', '创建: ')}{dayjs(record.created_at).format('YYYY-MM-DD HH:mm')}
           </Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.25 }}>
             {t('tokens.last_used_at', '最后使用: ')}{record.last_used_at ? record.last_used_at : t('tokens.never_used', '从未')}
           </Text>
         </Space>
@@ -603,25 +639,25 @@ const Tokens: React.FC = () => {
       title: t('common.actions'),
       key: 'actions',
       render: (_: unknown, record: ApiToken) => {
-        const locked = isPlayground2026DedicatedToken(record);
+        const isSystem = isSystemDedicatedToken(record);
         return (
-        <Space>
-          <Tooltip title={t('tokens.quota_details')}>
-            <Button icon={<PieChartOutlined />} onClick={() => handleShowDetails(record)} />
-          </Tooltip>
-          {locked ? (
-            <Tooltip title={t('tokens.playground_2026_dedicated_locked', '创作中心2026 专用密钥不可修改或删除')}>
-              <Button icon={<LockOutlined />} disabled />
+          <Space size={4}>
+            <Tooltip title={t('tokens.quota_details')}>
+              <Button size="small" icon={<PieChartOutlined />} onClick={() => handleShowDetails(record)} />
             </Tooltip>
-          ) : (
-            <>
-              <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} />
-              <Popconfirm title={t('common.confirm_delete')} onConfirm={() => handleDelete(record.id)}>
-                <Button icon={<DeleteOutlined />} danger />
-              </Popconfirm>
-            </>
-          )}
-        </Space>
+            {isSystem ? (
+              <Tooltip title={t('tokens.system_dedicated_locked', `${record.name || '系统'} 专用密钥不可修改或删除`)}>
+                <Button size="small" icon={<LockOutlined />} disabled />
+              </Tooltip>
+            ) : (
+              <>
+                <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+                <Popconfirm title={t('common.confirm_delete')} onConfirm={() => handleDelete(record.id)}>
+                  <Button size="small" icon={<DeleteOutlined />} danger />
+                </Popconfirm>
+              </>
+            )}
+          </Space>
         );
       },
     },
@@ -639,6 +675,131 @@ const Tokens: React.FC = () => {
       }} 
       styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: screens.xs ? 0 : '16px 24px 24px' } }}
     >
+      <style>{`
+        .system-dedicated-token-row {
+          opacity: 0.72;
+        }
+        .system-dedicated-token-row td {
+          background-color: ${isLight ? 'rgba(0, 0, 0, 0.025)' : 'rgba(255, 255, 255, 0.025)'} !important;
+          filter: grayscale(100%);
+        }
+        .system-dedicated-token-row:hover td {
+          background-color: ${isLight ? 'rgba(0, 0, 0, 0.045)' : 'rgba(255, 255, 255, 0.045)'} !important;
+        }
+
+        /* 紧凑表格内边距与行间距优化（严格排除测量行以防止产生黑色空行间隙） */
+        .tokens-compact-table.ant-table-wrapper .ant-table-thead > tr > th {
+          padding: 8px 10px !important;
+        }
+        .tokens-compact-table.ant-table-wrapper .ant-table-tbody > tr:not(.ant-table-measure-row) > td {
+          padding: 6px 10px !important;
+        }
+        .tokens-compact-table.ant-table-wrapper .ant-table-measure-row,
+        .tokens-compact-table.ant-table-wrapper .ant-table-measure-row td,
+        .tokens-compact-table.ant-table-wrapper tr.ant-table-measure-row,
+        .tokens-compact-table.ant-table-wrapper tr.ant-table-measure-row td,
+        .tokens-compact-table.ant-table-wrapper tr.ant-table-measure-row .ant-table-cell {
+          padding: 0 !important;
+          height: 0 !important;
+          min-height: 0 !important;
+          font-size: 0 !important;
+          line-height: 0 !important;
+          border: none !important;
+          visibility: hidden !important;
+        }
+
+        /* 令牌列表底部最后一行左右圆角与表头圆角对齐 */
+        .tokens-compact-table.ant-table-wrapper .ant-table,
+        .tokens-compact-table.ant-table-wrapper .ant-table-container {
+          border-radius: ${themeToken.borderRadius}px !important;
+          overflow: hidden !important;
+        }
+        .tokens-compact-table.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:last-child > td:first-child,
+        .tokens-compact-table.ant-table-wrapper .ant-table-tbody > tr:not(.ant-table-measure-row):last-child > td:first-child {
+          border-bottom-left-radius: ${themeToken.borderRadius}px !important;
+          border-end-start-radius: ${themeToken.borderRadius}px !important;
+        }
+        .tokens-compact-table.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:last-child > td:last-child,
+        .tokens-compact-table.ant-table-wrapper .ant-table-tbody > tr:not(.ant-table-measure-row):last-child > td:last-child {
+          border-bottom-right-radius: ${themeToken.borderRadius}px !important;
+          border-end-end-radius: ${themeToken.borderRadius}px !important;
+        }
+
+        /* 醒目创建令牌按钮动效 */
+        .create-token-action-btn {
+          position: relative !important;
+          overflow: hidden !important;
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+          animation: tokenBtnPulse 2.8s ease-in-out infinite;
+        }
+        .create-token-action-btn::after {
+          content: '';
+          position: absolute;
+          top: -50%;
+          left: -75%;
+          width: 50%;
+          height: 200%;
+          background: linear-gradient(
+            90deg,
+            transparent,
+            rgba(255, 255, 255, ${isLight ? '0.35' : '0.5'}),
+            transparent
+          );
+          transform: rotate(25deg);
+          animation: tokenBtnShimmer 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+          pointer-events: none;
+        }
+        .create-token-action-btn:hover {
+          transform: translateY(-1.5px) !important;
+          box-shadow: 0 6px 18px ${isLight ? 'rgba(0, 0, 0, 0.28)' : 'rgba(255, 255, 255, 0.22)'} !important;
+        }
+        .create-token-action-btn:active {
+          transform: translateY(0) !important;
+        }
+        .create-token-action-btn .anticon-key {
+          display: inline-block;
+          animation: tokenKeyWiggle 3.2s ease-in-out infinite;
+        }
+        @keyframes tokenBtnPulse {
+          0%, 100% {
+            box-shadow: 0 0 0 0 ${isLight ? 'rgba(9, 9, 11, 0.2)' : 'rgba(255, 255, 255, 0.25)'}, 0 2px 6px rgba(0, 0, 0, 0.08);
+          }
+          50% {
+            box-shadow: 0 0 0 5px ${isLight ? 'rgba(9, 9, 11, 0.08)' : 'rgba(255, 255, 255, 0.12)'}, 0 4px 16px ${isLight ? 'rgba(0, 0, 0, 0.22)' : 'rgba(255, 255, 255, 0.24)'};
+          }
+        }
+        @keyframes tokenBtnShimmer {
+          0% {
+            left: -75%;
+            opacity: 0;
+          }
+          15% {
+            opacity: 1;
+          }
+          45% {
+            left: 140%;
+            opacity: 0.85;
+          }
+          46%, 100% {
+            left: 140%;
+            opacity: 0;
+          }
+        }
+        @keyframes tokenKeyWiggle {
+          0%, 80%, 100% {
+            transform: rotate(0deg);
+          }
+          85% {
+            transform: rotate(-12deg);
+          }
+          90% {
+            transform: rotate(10deg);
+          }
+          95% {
+            transform: rotate(-6deg);
+          }
+        }
+      `}</style>
       {!isModalVisible ? (
         <>
           {loading && tokens.length === 0 ? (
@@ -685,20 +846,20 @@ const Tokens: React.FC = () => {
              </div>
              <Title level={4} style={{ margin: 0, marginBottom: 12 }}>{t('tokens.empty_title')}</Title>
              <Text type="secondary" style={{ marginBottom: 24 }}>{t('tokens.empty_desc')}</Text>
-             <Button type="primary" size="large" onClick={handleAdd} style={{ padding: '0 32px' }}>
+             <Button type="primary" size="large" className="create-token-action-btn" onClick={handleAdd} style={{ padding: '0 32px' }}>
                 {t('tokens.create')}
              </Button>
           </div>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-          <div style={{ display: 'flex', flexDirection: screens.xs ? 'column' : 'row', justifyContent: 'space-between', marginBottom: 24, gap: 12 }}>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <Title level={screens.xs ? 4 : 2} style={{ margin: 0, display: 'flex', alignItems: 'baseline' }}>
-                {t('tokens.title')}
-                <Text type="secondary" style={{ fontSize: 13, marginLeft: 12, fontWeight: 'normal' }}>{t('tokens.subtitle')}</Text>
-              </Title>
-              <div style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, background: isLight ? '#f5f5f5' : 'rgba(255,255,255,0.04)', padding: '8px 16px', borderRadius: 8, border: `1px solid ${isLight ? '#e5e5e5' : '#333'}` }}>
+          <div style={{ marginBottom: 24 }}>
+            <Title level={screens.xs ? 4 : 2} style={{ margin: 0, display: 'flex', alignItems: 'baseline' }}>
+              {t('tokens.title')}
+              <Text type="secondary" style={{ fontSize: 13, marginLeft: 12, fontWeight: 'normal' }}>{t('tokens.subtitle')}</Text>
+            </Title>
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, background: isLight ? '#f5f5f5' : 'rgba(255,255,255,0.04)', padding: '8px 16px', borderRadius: 8, border: `1px solid ${isLight ? '#e5e5e5' : '#333'}` }}>
                 <Text type="secondary" style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>{t('tokens.api_base_url', 'API Base URL:')}</Text>
                 <Text 
                   style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 'bold', color: themeToken.colorText, wordBreak: 'break-all' }}
@@ -713,26 +874,9 @@ const Tokens: React.FC = () => {
                   {baseUrl}
                 </Text>
               </div>
-            </div>
-            <Space style={{ alignItems: 'flex-start', gap: '12px' }}>
-              <Button 
-                type="text" 
-                icon={<FileTextOutlined style={{ fontSize: '15px' }} />} 
-                onClick={() => window.open('/docs', '_blank')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  color: isLight ? '#71717a' : '#a1a1aa',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  padding: '4px 8px',
-                  height: '36px'
-                }}
-              >
-                {t('tokens.api_quickstart')}
-              </Button>
               <Button 
                 type="primary" 
+                className="create-token-action-btn"
                 icon={<KeyOutlined style={{ fontSize: '15px' }} />} 
                 onClick={handleAdd}
                 style={{
@@ -742,15 +886,15 @@ const Tokens: React.FC = () => {
                   border: 'none',
                   fontSize: '14px',
                   fontWeight: 500,
-                  height: '36px',
+                  height: '38px',
                   padding: '0 16px',
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center'
                 }}
               >
                 {t('tokens.create_api_token')}
               </Button>
-            </Space>
+            </div>
           </div>
 
           {screens.xs ? (
@@ -759,10 +903,11 @@ const Tokens: React.FC = () => {
               loading={loading}
               rowKey="id"
               compact={true}
-              gap={10}
-              pagination={listPagination()}
+              gap={8}
+              pagination={tokens.length < 20 ? false : listPagination()}
               renderCard={(record: any) => {
-                const isRevealed = !!revealedKeys[record.id];
+                const isSystem = isSystemDedicatedToken(record);
+                const isRevealed = !isSystem && !!revealedKeys[record.id];
                 const displayedKey = isRevealed 
                   ? revealedKeys[record.id] 
                   : (record.token_key.length > 8 ? `...${record.token_key.slice(-6)}` : record.token_key);
@@ -774,18 +919,18 @@ const Tokens: React.FC = () => {
                       style={{
                         fontSize: isRevealed ? 13 : 16,
                         fontWeight: '600',
-                        color: themeToken.colorText,
+                        color: isSystem ? (isLight ? '#71717a' : '#a1a1aa') : themeToken.colorText,
                         fontFamily: 'monospace',
-                        cursor: 'pointer',
+                        cursor: isSystem ? 'default' : 'pointer',
                         wordBreak: 'break-all',
                         whiteSpace: isRevealed ? 'normal' : 'nowrap',
                         display: 'block'
                       }}
-                      onClick={() => handleCopy(isRevealed ? revealedKeys[record.id] : record.token_key, record.id)}
+                      onClick={isSystem ? undefined : () => handleCopy(isRevealed ? revealedKeys[record.id] : record.token_key, record.id)}
                     >
                       {displayedKey}
                     </Text>
-                    <Text type="secondary" style={{ fontSize: 12, marginTop: 4, fontWeight: 'normal' }}>
+                    <Text type="secondary" style={{ fontSize: 12, marginTop: 4, fontWeight: 'normal', color: isSystem ? (isLight ? '#71717a' : '#a1a1aa') : undefined }}>
                       {record.name}
                     </Text>
                   </div>
@@ -793,24 +938,28 @@ const Tokens: React.FC = () => {
 
                 const cardExtra = (
                   <Space size={2} align="center">
-                    <Tooltip title={copiedId === record.id ? t('tokens.copied', '已复制!') : t('tokens.copy_hint')}>
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={copiedId === record.id ? <CheckOutlined style={{ color: themeToken.colorText }} /> : <CopyOutlined style={{ fontSize: 15 }} />} 
-                        onClick={() => handleCopy(isRevealed ? revealedKeys[record.id] : record.token_key, record.id)}
-                        style={{ color: copiedId === record.id ? themeToken.colorText : undefined }}
-                      />
-                    </Tooltip>
-                    <Tooltip title={isRevealed ? t('tokens.hide_key', '隐藏密钥') : t('tokens.view_key', '查看完整密钥')}>
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={isRevealed ? <EyeInvisibleOutlined style={{ fontSize: 15 }} /> : <EyeOutlined style={{ fontSize: 15 }} />} 
-                        onClick={() => handleRevealClick(record.id)}
-                        style={{ color: isRevealed ? themeToken.colorText : undefined }}
-                      />
-                    </Tooltip>
+                    {!isSystem && (
+                      <>
+                        <Tooltip title={copiedId === record.id ? t('tokens.copied', '已复制!') : t('tokens.copy_hint')}>
+                          <Button 
+                            type="text" 
+                            size="small" 
+                            icon={copiedId === record.id ? <CheckOutlined style={{ color: themeToken.colorText }} /> : <CopyOutlined style={{ fontSize: 15 }} />} 
+                            onClick={() => handleCopy(isRevealed ? revealedKeys[record.id] : record.token_key, record.id)}
+                            style={{ color: copiedId === record.id ? themeToken.colorText : undefined }}
+                          />
+                        </Tooltip>
+                        <Tooltip title={isRevealed ? t('tokens.hide_key', '隐藏密钥') : t('tokens.view_key', '查看完整密钥')}>
+                          <Button 
+                            type="text" 
+                            size="small" 
+                            icon={isRevealed ? <EyeInvisibleOutlined style={{ fontSize: 15 }} /> : <EyeOutlined style={{ fontSize: 15 }} />} 
+                            onClick={() => handleRevealClick(record.id)}
+                            style={{ color: isRevealed ? themeToken.colorText : undefined }}
+                          />
+                        </Tooltip>
+                      </>
+                    )}
                     <Link to="/logs">
                       <Tooltip title={t('tokens.view_usage_logs')}>
                         <Button 
@@ -829,7 +978,7 @@ const Tokens: React.FC = () => {
                             icon: <PieChartOutlined />,
                             onClick: () => handleShowDetails(record)
                           },
-                          ...(isPlayground2026DedicatedToken(record)
+                          ...(isSystem
                             ? []
                             : [
                                 {
@@ -865,11 +1014,18 @@ const Tokens: React.FC = () => {
                 return (
                   <MobileCard
                     compact={true}
-                    style={{ background: isLight ? '#fff' : '#141414', border: 'none', borderRadius: 12, padding: '12px' }}
+                    style={{
+                      background: isLight ? (isSystem ? '#f9fafb' : '#fff') : (isSystem ? '#18181b' : '#141414'),
+                      border: isSystem ? (isLight ? '1px dashed #e4e4e7' : '1px dashed #27272a') : 'none',
+                      borderRadius: 12,
+                      padding: '10px 12px',
+                      filter: isSystem ? 'grayscale(100%)' : undefined,
+                      opacity: isSystem ? 0.72 : undefined,
+                    }}
                     title={cardTitle}
                     extra={cardExtra}
                   >
-                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <CardRow label={t('tokens.kid')} compact={true}>
                         {record.kid ? <Tag color="default" style={{ fontFamily: 'monospace', fontSize: 11, margin: 0 }}>{record.kid}</Tag> : <Text type="secondary">-</Text>}
                       </CardRow>
@@ -883,7 +1039,7 @@ const Tokens: React.FC = () => {
                       </CardRow>
                       <CardRow label={t('tokens.usage_scope')} compact={true}>
                         <Space size={4} wrap>
-                          <Tag color={(record.only_playground === 1 || record.only_playground_2026 === 1) ? 'orange' : 'blue'} style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                          <Tag color={isSystem ? 'default' : ((record.only_playground === 1 || record.only_playground_2026 === 1) ? 'orange' : 'blue')} style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
                             {record.only_playground === 1 && record.only_playground_2026 === 1
                               ? t('tokens.playground_both')
                               : record.only_playground_2026 === 1
@@ -893,12 +1049,17 @@ const Tokens: React.FC = () => {
                                   : t('tokens.general')}
                           </Tag>
                           {isPlayground2026DedicatedToken(record) && (
-                            <Tag color="purple" style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                            <Tag color={isSystem ? 'default' : 'purple'} style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
                               {t('tokens.playground_2026_dedicated', '系统专用')}
                             </Tag>
                           )}
+                          {isMobileAppToken(record) && (
+                            <Tag color={isSystem ? 'default' : 'purple'} style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                              {t('tokens.mobile_app_dedicated', '移动端专用')}
+                            </Tag>
+                          )}
                           {(record.high_availability === 1 || (record.high_availability as any) === true) && (
-                            <Tag color="blue" style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                            <Tag color={isSystem ? 'default' : 'blue'} style={{ fontSize: 11, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
                               HA
                             </Tag>
                           )}
@@ -917,12 +1078,15 @@ const Tokens: React.FC = () => {
             />
           ) : (
             <Table
+              className="tokens-compact-table compact-table"
+              size="small"
               dataSource={tokens}
               columns={columns}
               rowKey="id"
               loading={loading}
-              pagination={listPagination()}
+              pagination={tokens.length < 20 ? false : listPagination()}
               scroll={{ x: 'max-content' }}
+              rowClassName={(record) => isSystemDedicatedToken(record) ? 'system-dedicated-token-row' : ''}
             />
           )}
         </div>
@@ -1637,7 +1801,7 @@ const Tokens: React.FC = () => {
           })()}
         </div>
 
-        {selectedToken && !isPlayground2026DedicatedToken(selectedToken) ? (
+        {selectedToken && !isSystemDedicatedToken(selectedToken) ? (
         <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
           <Popconfirm
             title={t('tokens.clear_usage_confirm', '确认清空该令牌的已用额度数据？')}

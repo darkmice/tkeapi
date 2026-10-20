@@ -14,6 +14,8 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+#[cfg(not(feature = "commercial_plugins"))]
+use axum::http::StatusCode;
 use std::sync::Arc;
 
 pub mod admin_groups;
@@ -29,6 +31,7 @@ pub mod dashboard;
 pub mod date_helper;
 pub mod forward_rules;
 pub mod invoices;
+pub mod legal;
 pub mod logs;
 pub mod metrics;
 pub mod model_classifications;
@@ -45,10 +48,7 @@ pub mod user_kyc;
 pub mod user_levels;
 pub mod users;
 
-fn with_admin_write(
-    router: Router<Arc<AppState>>,
-    state: Arc<AppState>,
-) -> Router<Arc<AppState>> {
+fn with_admin_write(router: Router<Arc<AppState>>, state: Arc<AppState>) -> Router<Arc<AppState>> {
     router.layer(axum_middleware::from_fn_with_state(
         state,
         admin_write_middleware,
@@ -77,6 +77,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(users::delete_user),
         )
         .route("/users/{id}/recharge", post(users::recharge_user))
+        .route("/users/{id}/avatar", post(users::upload_user_avatar))
         .route(
             "/users/{id}/commission-preview",
             get(users::preview_commission_adjust),
@@ -87,7 +88,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/users/{id}/impersonate", post(users::impersonate_user))
         .route("/users/{id}/level-logs", get(users::get_user_level_logs))
-        .route("/users/{id}/invoices", get(invoices::admin_get_user_invoices))
+        .route(
+            "/users/{id}/invoices",
+            get(invoices::admin_get_user_invoices),
+        )
         .route(
             "/users/{id}/kyc",
             get(user_kyc::admin_get_user_kyc)
@@ -96,8 +100,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/users/{id}/kyc/{kyc_id}",
-            put(user_kyc::admin_update_user_kyc_item)
-                .delete(user_kyc::admin_delete_user_kyc_item),
+            put(user_kyc::admin_update_user_kyc_item).delete(user_kyc::admin_delete_user_kyc_item),
         )
         .route(
             "/users/{id}/kyc/{kyc_id}/default",
@@ -139,6 +142,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(channel_configs::create_channel_config),
         )
         .route(
+            "/channel-configs/providers",
+            get(channel_configs::list_providers).post(channel_configs::create_provider),
+        )
+        .route(
+            "/channel-configs/providers/{id}",
+            put(channel_configs::update_provider).delete(channel_configs::delete_provider),
+        )
+        .route(
             "/channel-configs/upstream-groups",
             post(channel_configs::fetch_upstream_groups),
         )
@@ -148,8 +159,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(channel_configs::delete_channel_config),
         )
         .route(
+            "/channel-configs/{id}/copy",
+            post(channel_configs::copy_channel_config),
+        )
+        .route(
             "/channel-configs/{id}/quota/reset",
             post(channel_configs::reset_quota),
+        )
+        .route(
+            "/channel-configs/{id}/sync-logs",
+            get(channel_configs::list_sync_logs),
+        )
+        .route(
+            "/channel-configs/{id}/sync-rate",
+            post(channel_configs::trigger_sync_rate),
         )
         .route(
             "/upstreams",
@@ -169,11 +192,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(models::publish_library_model),
         )
         .route(
+            "/models/library/{id}/copy",
+            post(models::copy_library_model),
+        )
+        .route(
             "/models/library/{id}",
             put(models::update_library_model).delete(models::delete_library_model),
         )
         .route("/models/{id}/unlist", post(models::unlist_model))
         .route("/models/{id}/relist", post(models::relist_model))
+        .route("/models/{id}/copy", post(models::copy_model))
         .route(
             "/models/{id}",
             put(models::update_model).delete(models::delete_model),
@@ -224,12 +252,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     .delete(plugins::redemptions::delete_redemption_group),
             )
             .route(
+                "/redemptions/groups/remark",
+                put(plugins::redemptions::update_redemption_group_remark),
+            )
+            .route(
                 "/redemptions/{id}",
                 delete(plugins::redemptions::delete_redemption),
             )
             .route(
                 "/redemptions/{id}/status",
                 put(plugins::redemptions::update_redemption_status),
+            )
+            .route(
+                "/redemptions/{id}/refund-balance",
+                post(plugins::redemptions::refund_redemption_balance),
+            )
+            .route(
+                "/redemptions/{id}/revoke-space",
+                post(plugins::redemptions::revoke_playground_space),
+            )
+            .route(
+                "/redemptions/{id}/revoke-voucher",
+                post(plugins::redemptions::revoke_model_voucher),
             );
     }
 
@@ -237,6 +281,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/tokens/all", get(tokens::list_all_tokens))
         .route("/settings", post(settings::update_settings))
         .route("/settings/full", get(settings::get_settings))
+        .route("/settings/currency/fx", get(settings::get_currency_fx))
+        .route(
+            "/settings/currency/fx/refresh",
+            post(settings::refresh_currency_fx),
+        )
         .route(
             "/settings/usage-stats/sync",
             post(admin_stats_sync::trigger_stats_sync),
@@ -252,6 +301,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/settings/storage/test",
             post(settings::test_storage_connection),
         )
+        .route(
+            "/settings/storage/buckets",
+            post(settings::list_storage_buckets),
+        )
+        .route("/settings/upload", post(settings::upload_settings_image))
         .route(
             "/settings/cron/trigger-maintenance",
             post(settings::trigger_maintenance),
@@ -284,7 +338,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         admin_routes = admin_routes
             .route("/finance/orders", get(plugins::finance::list_orders))
             .route("/finance/recharges", get(plugins::finance::list_recharges))
-            .route("/finance/commissions", get(plugins::finance::list_commissions))
+            .route(
+                "/finance/commissions",
+                get(plugins::finance::list_commissions),
+            )
             .route(
                 "/finance/recharges/stats_batch",
                 post(plugins::finance::get_wallet_stats_batch),
@@ -297,6 +354,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 "/finance/daily-stats",
                 get(plugins::finance::get_daily_stats),
             );
+        #[cfg(feature = "commercial_plugins")]
+        {
+            admin_routes = admin_routes.route(
+                "/finance/purchase-orders",
+                get(plugins::marketing_membership::list_purchase_orders),
+            );
+        }
+        #[cfg(all(not(feature = "commercial_plugins"), plugin_redemptions))]
+        {
+            admin_routes = admin_routes.route(
+                "/finance/purchase-orders",
+                get(plugins::redemptions::list_purchase_orders_os),
+            );
+        }
     }
 
     let admin_routes = admin_routes
@@ -370,16 +441,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     #[cfg(plugin_redemptions)]
     {
-        management_routes = management_routes.route(
-            "/redemptions/redeem",
-            post(plugins::redemptions::redeem_code),
-        );
+        management_routes = management_routes
+            .route(
+                "/redemptions/redeem",
+                post(plugins::redemptions::redeem_code),
+            )
+            .route(
+                "/user/model-vouchers",
+                get(plugins::redemptions::list_my_vouchers),
+            );
     }
 
     management_routes = management_routes
         .route(
             "/user/profile",
             get(user::get_profile).put(user::update_profile),
+        )
+        .route(
+            "/user/avatar",
+            post(user::upload_avatar).delete(user::remove_avatar),
         )
         .route("/user/wallet", get(user::get_wallet_stats))
         .route("/user/recharge_records", get(user::list_recharge_records))
@@ -393,7 +473,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(invoices::cancel_user_invoice_request),
         )
         .route("/user/affiliate/transfer", post(user::transfer_commission))
-        .route("/user/affiliate/overview", get(user::get_affiliate_overview))
+        .route(
+            "/user/affiliate/overview",
+            get(user::get_affiliate_overview),
+        )
         .route("/user/bind/mobile", post(user::bind_mobile))
         .route("/user/bind/email", post(user::bind_email))
         .route("/user/bind/oauth-state", get(user::bind_oauth_state))
@@ -462,6 +545,29 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     #[cfg(feature = "commercial_plugins")]
     let management_routes =
         management_routes.nest("/plugins/mobile_app", plugins::mobile_app::router());
+    #[cfg(feature = "commercial_plugins")]
+    let management_routes = management_routes.nest(
+        "/plugins/marketing_membership",
+        plugins::marketing_membership::router(),
+    );
+    #[cfg(all(not(feature = "commercial_plugins"), plugin_redemptions))]
+    let management_routes = management_routes.nest(
+        "/plugins/marketing_membership",
+        with_admin_write(
+            plugins::redemptions::opensource_membership_compat_router(),
+            state.clone(),
+        ),
+    );
+    #[cfg(all(feature = "commercial_plugins", plugin_marketing_games))]
+    let management_routes = management_routes.nest(
+        "/plugins/marketing_games",
+        with_admin_write(plugins::marketing_games::router(), state.clone()),
+    );
+    #[cfg(feature = "commercial_plugins")]
+    let management_routes = management_routes.nest(
+        "/plugins/support_tickets",
+        plugins::support_tickets::router(),
+    );
 
     #[cfg(feature = "plugin_site_icons")]
     let management_routes = management_routes.nest(
@@ -517,6 +623,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let management_routes = management_routes.nest(
         "/plugins/data_sync",
         with_admin_write(plugins::data_sync::router(), state.clone()),
+    );
+    #[cfg(feature = "commercial_plugins")]
+    let management_routes = management_routes.nest(
+        "/plugins/logs_archive",
+        with_admin_write(plugins::logs_archive::router(), state.clone()),
     );
     let management_routes = management_routes.route_layer(axum_middleware::from_fn_with_state(
         state.clone(),
@@ -619,6 +730,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             .route(
                 "/plugins/site-portal-pro/public/docs/{id}",
                 get(plugins::site_portal_pro_docs::get_doc_detail_public),
+            )
+            .route(
+                "/plugins/site-portal-pro/public/articles",
+                get(plugins::site_portal_pro_articles::list_articles_public),
+            )
+            .route(
+                "/plugins/site-portal-pro/public/articles/categories",
+                get(plugins::site_portal_pro_articles::list_categories_public),
+            )
+            .route(
+                "/plugins/site-portal-pro/public/articles/{id}",
+                get(plugins::site_portal_pro_articles::get_article_detail_public),
             );
     }
     #[cfg(feature = "commercial_plugins")]
@@ -639,11 +762,23 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         public_v1_routes =
             public_v1_routes.nest("/plugins/data_sync", plugins::data_sync::public_router());
     }
+    #[cfg(feature = "commercial_plugins")]
+    {
+        public_v1_routes =
+            public_v1_routes.nest("/plugins/mobile_app", plugins::mobile_app::public_router());
+    }
     #[cfg(feature = "plugin_content_security")]
     {
         public_v1_routes = public_v1_routes.nest(
             "/plugins/content_security",
             plugins::content_security::public_router(),
+        );
+    }
+    #[cfg(all(feature = "commercial_plugins", plugin_marketing_games))]
+    {
+        public_v1_routes = public_v1_routes.nest(
+            "/plugins/marketing_games",
+            plugins::marketing_games::public_router(),
         );
     }
     let public_v1_routes = public_v1_routes.with_state(state.clone());
@@ -691,31 +826,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/tasks/{task_id}",
             get(crate::relay::task::task_status).delete(crate::relay::task::task_cancel),
         )
-        // 可灵 AI 原生视频路径
-        .route(
-            "/videos/text2video",
-            post(crate::relay::video::video_generations),
-        )
-        .route(
-            "/videos/image2video",
-            post(crate::relay::video::video_generations),
-        )
-        .route(
-            "/videos/omni-video",
-            post(crate::relay::video::video_generations),
-        )
-        .route(
-            "/videos/text2video/{task_id}",
-            get(crate::relay::task::task_status),
-        )
-        .route(
-            "/videos/image2video/{task_id}",
-            get(crate::relay::task::task_status),
-        )
-        .route(
-            "/videos/omni-video/{task_id}",
-            get(crate::relay::task::task_status),
-        )
         // 可灵 AI 原生图片路径
         .route(
             "/images/omni-image",
@@ -736,6 +846,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/images/generations/{task_id}",
             get(crate::relay::task::task_status),
+        )
+        // 腾讯云 TokenHub 混元生图官方原生路径
+        .route(
+            "/wand/hunyuan-image/v3-generation",
+            post(crate::relay::image::image_generations),
+        )
+        .route(
+            "/wand/hunyuan-image/v35-generation",
+            post(crate::relay::image::image_generations),
         )
         // 余额查询
         .route("/balance", get(crate::relay::balance::token_balance))
@@ -790,8 +909,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // 5. Google Gemini Native Relay (supports ?key=, x-goog-api-key, and Bearer auth)
     let google_native_routes: Router<Arc<AppState>> = Router::new()
         .route(
+            "/v1/models/{model_action}",
+            post(crate::relay::native::gemini_native_relay),
+        )
+        .route(
             "/v1beta/models/{model_action}",
-            post(crate::relay::native::gemini_proxy),
+            post(crate::relay::native::gemini_native_relay),
+        )
+        .route(
+            "/v1/interactions",
+            post(crate::relay::native::gemini_interactions_relay),
+        )
+        .route(
+            "/v1beta/interactions",
+            post(crate::relay::native::gemini_interactions_relay),
         )
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
@@ -884,9 +1015,34 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/omni-video/{model_id}",
             post(crate::relay::video::video_generations),
         )
+        .route("/tasks", get(crate::relay::task::kling_tasks_query))
+        .route_layer(axum_middleware::from_fn_with_state(
+            state.clone(),
+            api_key_middleware,
+        ))
+        .with_state(state.clone());
+
+    // 6.7 Vidu Native Relay（Vidu 官方原生端点）
+    let vidu_native_routes: Router<Arc<AppState>> = Router::new()
         .route(
-            "/tasks",
-            get(crate::relay::task::kling_tasks_query),
+            "/ent/v2/text2video",
+            post(crate::relay::video::video_generations),
+        )
+        .route(
+            "/ent/v2/img2video",
+            post(crate::relay::video::video_generations),
+        )
+        .route(
+            "/ent/v2/start-end2video",
+            post(crate::relay::video::video_generations),
+        )
+        .route(
+            "/ent/v2/reference2video",
+            post(crate::relay::video::video_generations),
+        )
+        .route(
+            "/ent/v2/tasks/{task_id}/creations",
+            get(crate::relay::task::task_status),
         )
         .route_layer(axum_middleware::from_fn_with_state(
             state.clone(),
@@ -939,7 +1095,53 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     #[cfg(feature = "plugin_site_portal")]
     let app = app.nest("/home", plugins::site_portal::portal_pages_router());
     #[cfg(feature = "commercial_plugins")]
-    let app = app.nest("/home-pro", plugins::site_portal_pro::portal_pages_router());
+    let app = app
+        .nest("/home-pro", plugins::site_portal_pro::portal_pages_router())
+        .route("/portal-root", get(plugins::site_portal_pro::portal_root))
+        .route("/portal-about", get(plugins::site_portal_pro::portal_about))
+        .route(
+            "/portal-contact",
+            get(plugins::site_portal_pro::portal_contact),
+        )
+        .route(
+            "/portal-sitemap.xml",
+            get(plugins::site_portal_pro::portal_sitemap),
+        )
+        .route(
+            "/portal-robots.txt",
+            get(plugins::site_portal_pro::portal_robots),
+        )
+        .route(
+            "/portal-published",
+            get(plugins::site_portal_pro::portal_published),
+        )
+        .route(
+            "/portal-lang/{*rest}",
+            get(plugins::site_portal_pro::portal_lang_page),
+        )
+        .route(
+            "/portal-devdocs",
+            get(plugins::site_portal_pro::static_docs::portal_devdocs),
+        )
+        .route(
+            "/portal-devdocs/{*rest}",
+            get(plugins::site_portal_pro::static_docs::portal_devdocs_rest),
+        );
+    #[cfg(not(feature = "commercial_plugins"))]
+    let app = app
+        .route("/portal-root", get(|| async { StatusCode::IM_A_TEAPOT }))
+        .route("/portal-about", get(|| async { StatusCode::IM_A_TEAPOT }))
+        .route("/portal-contact", get(|| async { StatusCode::IM_A_TEAPOT }))
+        .route(
+            "/portal-lang/{*rest}",
+            get(|| async { StatusCode::IM_A_TEAPOT }),
+        )
+        .route("/portal-devdocs", get(|| async { StatusCode::IM_A_TEAPOT }))
+        .route(
+            "/portal-devdocs/{*rest}",
+            get(|| async { StatusCode::IM_A_TEAPOT }),
+        );
+    let app = app.nest("/legal", legal::legal_pages_router());
     let app = app
         .nest("/api/v1/auth", auth_routes)
         .nest("/api/v1", public_v1_routes)
@@ -953,6 +1155,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(minimax_native_routes)
         .merge(volcengine_native_routes)
         .merge(kling_native_routes)
+        .merge(vidu_native_routes)
         .with_state(state)
         // CORS：生产环境必须设置 CORS_ORIGINS；开发环境（APP_ENV=development|dev）未设置时允许所有来源
         .layer({

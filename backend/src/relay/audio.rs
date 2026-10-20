@@ -79,6 +79,7 @@ pub async fn audio_speech(
     headers: axum::http::HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> AppResult<Response> {
+    let req_start = std::time::Instant::now();
     let raw_path = uri.path();
     let entry_path = raw_path.to_string();
     let log_id = headers
@@ -110,12 +111,12 @@ pub async fn audio_speech(
     let ctx = proxy::get_user_context(&state, &token.user_id).await?;
 
     // ── 3. 渠道选择 + HA failover ──
-    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability).await;
+    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability, req_start).await;
     let mut billing_rule_cache = None;
     let mut access_cache = None;
 
     while ha.cont() {
-        let start_time = std::time::Instant::now();
+        let attempt_start = std::time::Instant::now();
         let mut ha_pool = None;
         let channel = match proxy::select_channel_for_model(
             &state,
@@ -178,7 +179,12 @@ pub async fn audio_speech(
             None => {
                 if forward::model_has_forward_rules(&state, model).await {
                     let err = forward::record_unsupported_forward_error(
-                        &state, &token, &channel, model, raw_path, &resolved_cat,
+                        &state,
+                        &token,
+                        &channel,
+                        model,
+                        raw_path,
+                        &resolved_cat,
                     )
                     .await;
                     ha.on_access_err(err);
@@ -339,7 +345,7 @@ pub async fn audio_speech(
                 let resp = match timeout_ctx.send(builder, false).await {
                     Ok(resp) => resp,
                     Err(err_msg) => {
-                        let latency_ms = start_time.elapsed().as_millis() as u32;
+                        let latency_ms = attempt_start.elapsed().as_millis() as u32;
                         let bill = crate::relay::ha::FailBill::transport(
                             latency_ms,
                             err_msg,
@@ -354,7 +360,7 @@ pub async fn audio_speech(
                 if !resp.status().is_success() {
                     let upstream_hdrs = resp.headers().clone();
                     let err = resp.text().await.unwrap_or_default();
-                    let latency_ms = start_time.elapsed().as_millis() as u32;
+                    let latency_ms = attempt_start.elapsed().as_millis() as u32;
                     let bill = crate::relay::ha::FailBill::http(
                         latency_ms,
                         status,
@@ -388,8 +394,8 @@ pub async fn audio_speech(
 
                     // 检查并记录火山 TTS 的业务错误（原生路由退费并透传 200，兼容路由退费并返回推断状态码）
                     if let Some(err_json) = detect_volcengine_tts_error(&raw_response) {
-                        let latency_ms = start_time.elapsed().as_millis() as u32;
                         if is_native_route {
+                            let latency_ms = req_start.elapsed().as_millis() as u32;
                             let _ = record_volcengine_tts_error(
                                 &state,
                                 &token,
@@ -414,6 +420,7 @@ pub async fn audio_speech(
                                 body: raw_response.into(),
                             });
                         } else {
+                            let latency_ms = attempt_start.elapsed().as_millis() as u32;
                             let display_err = if let Ok(event) =
                                 serde_json::from_str::<VolcTtsEvent>(&err_json)
                             {
@@ -474,7 +481,7 @@ pub async fn audio_speech(
                             }
                             Err(err_msg) => {
                                 // SSE 事件级错误（HTTP 200 但业务失败，如 Invalid X-Api-Key）
-                                let latency_ms = start_time.elapsed().as_millis() as u32;
+                                let latency_ms = attempt_start.elapsed().as_millis() as u32;
                                 let status_code = proxy::infer_error_status_code_from_str(&err_msg);
                                 let bill = crate::relay::ha::FailBill::http(
                                     latency_ms,
@@ -516,7 +523,7 @@ pub async fn audio_speech(
                     &model,
                     pre_deduction,
                     &ep,
-                    start_time,
+                    req_start,
                     0,
                     &request_content_str,
                     &upstream_body.to_string(),
@@ -528,11 +535,13 @@ pub async fn audio_speech(
                 .await?;
 
                 // ── 计费结算 ──
-                let latency_ms = start_time.elapsed().as_millis() as u32;
+                let latency_ms = req_start.elapsed().as_millis() as u32;
 
                 // 构建 features，将文本字符数填入 text_characters
-                let mut features = crate::relay::usage_extractor::ExtractedFeatures::default();
-                features.text_characters = Some(text_characters);
+                let mut features = crate::relay::usage_extractor::ExtractedFeatures {
+                    text_characters: Some(text_characters),
+                    ..Default::default()
+                };
 
                 // 将 text_characters 记入 completion_tokens 字段（复用现有的 token 计量字段）
                 let usage_tokens = crate::relay::usage_extractor::UsageTokens {
@@ -578,7 +587,9 @@ pub async fn audio_speech(
                     features: Some(features),
                     time_multiplier: db_rule.as_ref().map(|r| r.applied_multiplier),
                     plugin_tag: None,
-                    upstream_request_id: upstream_headers::extract_upstream_request_id(&raw.headers),
+                    upstream_request_id: upstream_headers::extract_upstream_request_id(
+                        &raw.headers,
+                    ),
                 })
                 .await;
 
@@ -591,14 +602,10 @@ pub async fn audio_speech(
             .db(db_model.as_ref());
         match super::join_protected(&mut ha, result_rx, &bill_ctx, &channel, Some(&url)).await {
             super::ProtectJoin::Ok(raw) => {
-                let ms = start_time.elapsed().as_millis() as u32;
+                let ms = attempt_start.elapsed().as_millis() as u32;
                 ha.ok(&state, &channel, &url, ms).await;
                 return Ok(upstream_headers::with_request_id(
-                    upstream_headers::with_content_type(
-                        &raw.headers,
-                        raw.content_type,
-                        raw.body,
-                    ),
+                    upstream_headers::with_content_type(&raw.headers, raw.content_type, raw.body),
                     &log_id,
                 ));
             }

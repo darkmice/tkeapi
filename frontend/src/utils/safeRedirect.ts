@@ -34,7 +34,7 @@ export function sanitizeRedirectPath(
 }
 
 /** 从当前 URL 去掉敏感查询参数，避免 JWT/兑换码留在历史记录 */
-export function stripAuthParamsFromUrl(keys: string[] = ['token', 'code', 'handoff', 'impersonate', 'type']): void {
+export function stripAuthParamsFromUrl(keys: string[] = ['token', 'code', 'handoff', 'impersonate', 'type', 'wechat_ticket']): void {
   const url = new URL(window.location.href);
   let changed = false;
   for (const key of keys) {

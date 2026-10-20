@@ -103,7 +103,8 @@ pub fn resolve_user_end_timedisplay(header_tz: Option<&str>, user_tz: Option<&st
     chrono_tz::UTC
 }
 
-/// timedisplay 优先级：请求头覆盖 > 用户个人时区 > 站点默认 > 内置默认。
+/// timedisplay 优先级：请求头覆盖 > 用户个人时区 > 第三参回退 > 内置默认。
+/// 管理端第三参是展示时区；业务统计自然日必须另走站点运营时区，不能用本函数。
 pub fn resolve_timedisplay(
     header_tz: Option<&str>,
     user_tz: Option<&str>,
@@ -119,4 +120,37 @@ pub fn resolve_timedisplay(
         return parse_timedisplay(s);
     }
     parse_timedisplay(DEFAULT_TIMEDISPLAY)
+}
+
+/// 管理后台展示时区：合法 IANA 优先，否则回退站点运营时区。
+pub fn resolve_admin_display_name(admin_display: &str, site_operation: &str) -> String {
+    if let Some(name) = try_iana_timezone_name(admin_display) {
+        return name;
+    }
+    if let Some(name) = try_iana_timezone_name(site_operation) {
+        return name;
+    }
+    DEFAULT_TIMEDISPLAY.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_display_falls_back_to_site_operation() {
+        assert_eq!(
+            resolve_admin_display_name("", "America/New_York"),
+            "America/New_York"
+        );
+        assert_eq!(
+            resolve_admin_display_name("Europe/London", "Asia/Shanghai"),
+            "Europe/London"
+        );
+        assert_eq!(
+            resolve_admin_display_name("not-a-zone", "Asia/Tokyo"),
+            "Asia/Tokyo"
+        );
+        assert_eq!(resolve_admin_display_name("", ""), DEFAULT_TIMEDISPLAY);
+    }
 }

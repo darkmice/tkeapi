@@ -39,6 +39,10 @@ import {
   UndoOutlined,
   CodeOutlined,
   EyeOutlined,
+  WalletOutlined,
+  DesktopOutlined,
+  ExperimentOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -357,17 +361,19 @@ const NotificationSettingsForm: React.FC = () => {
         label="站点提示（总开关）"
         valuePropName="checked"
         tooltip="开启后用户可以在个人中心订阅以下通知功能"
+        style={{ marginBottom: 12 }}
       >
         <Switch />
       </Form.Item>
 
       {siteNotificationEnabled && (
-        <Card size="small" style={{ marginBottom: 24, backgroundColor: 'var(--ant-color-bg-layout)' }}>
+        <Card size="small" style={{ marginBottom: 16, backgroundColor: 'var(--ant-color-bg-layout)' }}>
           <Form.Item
             name="do_not_disturb_enabled"
             label="勿扰模式"
             valuePropName="checked"
             tooltip="开启后用户可在通知订阅中使用勿扰开关"
+            style={{ marginBottom: 10 }}
           >
             <Switch />
           </Form.Item>
@@ -376,6 +382,7 @@ const NotificationSettingsForm: React.FC = () => {
             label="Web 站内通知"
             valuePropName="checked"
             tooltip="开启后用户可订阅控制台站内通知（铃铛/公告）"
+            style={{ marginBottom: 10 }}
           >
             <Switch />
           </Form.Item>
@@ -384,6 +391,7 @@ const NotificationSettingsForm: React.FC = () => {
             label="Push 浏览器推送"
             valuePropName="checked"
             tooltip="开启后用户可订阅浏览器系统推送"
+            style={{ marginBottom: 10 }}
           >
             <Switch />
           </Form.Item>
@@ -392,6 +400,7 @@ const NotificationSettingsForm: React.FC = () => {
             label="短信余额提示"
             valuePropName="checked"
             extra="模板 ID 在「站点设置 → 消息通知 → 短信」配置"
+            style={{ marginBottom: 10 }}
           >
             <Switch />
           </Form.Item>
@@ -399,7 +408,7 @@ const NotificationSettingsForm: React.FC = () => {
             <Alert
               type="warning"
               showIcon
-              style={{ marginBottom: 16 }}
+              style={{ marginBottom: 10 }}
               message="尚未配置余额提醒模板 ID，请先到「消息通知 → 短信」填写后再开启并保存"
             />
           )}
@@ -407,6 +416,7 @@ const NotificationSettingsForm: React.FC = () => {
             name="email_balance_notification"
             label="邮件余额提示"
             valuePropName="checked"
+            style={{ marginBottom: 10 }}
           >
             <Switch />
           </Form.Item>
@@ -415,13 +425,14 @@ const NotificationSettingsForm: React.FC = () => {
             label="余额不足提醒阈值（全局默认）"
             rules={[{ required: true, message: '请设置阈值' }]}
             extra="用户未自定义时使用该阈值，默认为 100"
+            style={{ marginBottom: 4 }}
           >
             <InputNumber min={0} step={1} precision={6} style={{ width: '100%' }} placeholder="100" />
           </Form.Item>
         </Card>
       )}
 
-      <Divider />
+      <Divider style={{ margin: '14px 0' }} />
 
       <Title level={5} style={{ marginTop: 0 }}>
         余额不足提醒 · 邮件模版
@@ -669,7 +680,12 @@ const NOTICE_MODULES = [
   { label: '控制台通知', value: 'console' },
   { label: '创作中心通知', value: 'playground_2026', plugin: 'playground_2026' },
   { label: '门户通知', value: 'portal_pro', plugin: 'site_portal_pro' },
+  { label: '支付弹窗内横幅', value: 'pay_modal' },
 ] as const;
+
+function isCoreNoticeModule(module: string): boolean {
+  return module === 'console' || module === 'pay_modal';
+}
 
 function noticeModuleLabel(module?: string): string {
   return NOTICE_MODULES.find((item) => item.value === module)?.label || module || '控制台通知';
@@ -706,6 +722,29 @@ const Announcements: React.FC = () => {
   const playgroundOn = pluginsLoaded && pluginOn('playground_2026');
   const portalOn = pluginsLoaded && pluginOn('site_portal_pro');
 
+  const availableNoticeModules = useMemo(() => [
+    {
+      value: 'console',
+      label: '控制台通知',
+      icon: <DesktopOutlined style={{ color: selectedModules.includes('console') ? 'var(--ant-color-text)' : 'var(--ant-color-text-secondary)', fontSize: 16 }} />,
+    },
+    ...(playgroundOn ? [{
+      value: 'playground_2026',
+      label: '创作中心通知',
+      icon: <ExperimentOutlined style={{ color: selectedModules.includes('playground_2026') ? 'var(--ant-color-text)' : 'var(--ant-color-text-secondary)', fontSize: 16 }} />,
+    }] : []),
+    ...(portalOn ? [{
+      value: 'portal_pro',
+      label: '门户通知',
+      icon: <GlobalOutlined style={{ color: selectedModules.includes('portal_pro') ? 'var(--ant-color-text)' : 'var(--ant-color-text-secondary)', fontSize: 16 }} />,
+    }] : []),
+    {
+      value: 'pay_modal',
+      label: '支付弹窗内横幅',
+      icon: <WalletOutlined style={{ color: selectedModules.includes('pay_modal') ? 'var(--ant-color-text)' : 'var(--ant-color-text-secondary)', fontSize: 16 }} />,
+    },
+  ], [playgroundOn, portalOn, selectedModules]);
+
   useEffect(() => {
     if (!pluginsLoaded) return;
     const current = form.getFieldValue('target_modules');
@@ -713,7 +752,7 @@ const Announcements: React.FC = () => {
     const next = current.filter((module: string) => {
       if (module === 'playground_2026') return pluginOn('playground_2026');
       if (module === 'portal_pro') return pluginOn('site_portal_pro');
-      return module === 'console';
+      return isCoreNoticeModule(module);
     });
     const normalized = next.length ? next : ['console'];
     if (normalized.join(',') !== current.join(',')) {
@@ -758,6 +797,33 @@ const Announcements: React.FC = () => {
       console.error('Failed to update sort order:', error);
       message.error(apiErrMsg(error, '更新排序失败'));
       fetchAnnouncements();
+    }
+  };
+
+  const [togglingIds, setTogglingIds] = useState<number[]>([]);
+
+  const handleToggleActive = async (record: Announcement, checked: boolean) => {
+    setTogglingIds((prev) => [...prev, record.id]);
+    try {
+      const payload: any = { is_active: checked ? 1 : 0 };
+      if (checked && record.active_expires_at && dayjs(record.active_expires_at).isBefore(dayjs())) {
+        payload.active_expires_at = PERMANENT_EXPIRE;
+      }
+      const res: any = await request.put(`/announcements/${record.id}`, payload, SKIP_ERR as any);
+      message.success(checked ? '已开启通知' : '已禁用通知');
+      const updatedItem = res?.data;
+      setAnnouncements((prev) =>
+        prev.map((item) => {
+          if (item.id !== record.id) return item;
+          return updatedItem ? updatedItem : { ...item, is_active: checked ? 1 : 0 };
+        })
+      );
+    } catch (error: any) {
+      console.error('Failed to toggle announcement status:', error);
+      message.error(apiErrMsg(error, '操作失败'));
+      fetchAnnouncements();
+    } finally {
+      setTogglingIds((prev) => prev.filter((id) => id !== record.id));
     }
   };
 
@@ -822,7 +888,7 @@ const Announcements: React.FC = () => {
       const chosenModules = (Array.isArray(values.target_modules) ? values.target_modules : ['console']).filter((module: string) => {
         if (module === 'playground_2026') return playgroundOn;
         if (module === 'portal_pro') return portalOn;
-        return module === 'console';
+        return isCoreNoticeModule(module);
       });
       const payload = {
         title: values.title,
@@ -866,22 +932,44 @@ const Announcements: React.FC = () => {
       title: '标题',
       dataIndex: 'title',
       key: 'title',
-      ellipsis: true,
+      render: (title: string, record: Announcement) => {
+        const activeUntil = formatExpireLabel(record.active_expires_at);
+        const pinUntil = formatExpireLabel(record.pin_expires_at);
+        const popupUntil = formatExpireLabel(record.popup_expires_at);
+        return (
+          <Space vertical size={4} align="start">
+            <span style={{ fontWeight: 500, wordBreak: 'break-word' }}>{title}</span>
+            <Space size={6} wrap align="center">
+              {record.is_active === 1 ? (
+                <Tag color="success" style={{ margin: 0 }}>{`上架 · ${activeUntil}`}</Tag>
+              ) : (
+                <Tag color="default" style={{ margin: 0 }}>下架</Tag>
+              )}
+              {record.is_pinned === 1 && (
+                <Tag color="blue" style={{ margin: 0 }}>{`置顶 · ${pinUntil}`}</Tag>
+              )}
+              {record.is_popup === 1 && (
+                <Tag color="default" style={{ margin: 0 }}>{`弹窗通知 · ${popupUntil}`}</Tag>
+              )}
+            </Space>
+          </Space>
+        );
+      },
     },
     {
-      title: '模块',
+      title: '展示模块',
       dataIndex: 'target_module',
       key: 'target_module',
-      width: 220,
+      width: 180,
       render: (val: string) => (
-        <Space size={[4, 4]} wrap>
+        <Space vertical size={4} align="start">
           {parseNoticeModules(val).filter((module) => {
             if (!pluginsLoaded) return true;
             if (module === 'playground_2026') return pluginOn('playground_2026');
             if (module === 'portal_pro') return pluginOn('site_portal_pro');
-            return true;
+            return isCoreNoticeModule(module);
           }).map((module) => (
-            <Tag key={module} style={{ margin: 0 }}>{noticeModuleLabel(module)}</Tag>
+            <Tag key={module} color={module === 'pay_modal' ? 'gold' : undefined} style={{ margin: 0 }}>{noticeModuleLabel(module)}</Tag>
           ))}
         </Space>
       ),
@@ -903,49 +991,36 @@ const Announcements: React.FC = () => {
     {
       title: '状态',
       key: 'status',
-      width: 200,
-      render: (_: any, record: Announcement) => {
-        const activeUntil = formatExpireLabel(record.active_expires_at);
-        const pinUntil = formatExpireLabel(record.pin_expires_at);
-        const popupUntil = formatExpireLabel(record.popup_expires_at);
-        return (
-          <Space size={[4, 4]} wrap>
-            {record.is_active === 1 ? (
-              <Tag color="success" style={{ margin: 0 }}>{`上架 · ${activeUntil}`}</Tag>
-            ) : (
-              <Tag color="default" style={{ margin: 0 }}>下架</Tag>
-            )}
-            {record.is_pinned === 1 && (
-              <Tag color="blue" style={{ margin: 0 }}>{`置顶 · ${pinUntil}`}</Tag>
-            )}
-            {record.is_popup === 1 && (
-              <Tag color="default" style={{ margin: 0 }}>{`弹窗通知 · ${popupUntil}`}</Tag>
-            )}
-          </Space>
-        );
-      },
-    },
-    {
-      title: '新建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 215,
-      render: (text: string, record: Announcement) => (
-        <Space size={6} wrap={false} style={{ whiteSpace: 'nowrap' }}>
-          <span>{formatApiDateTime(text, 'YYYY-MM-DD HH:mm')}</span>
-          {record.display_time_mode !== 'updated' && <Tag color="blue" style={{ margin: 0 }}>发布</Tag>}
-        </Space>
+      width: 100,
+      align: 'center' as const,
+      render: (_: any, record: Announcement) => (
+        <Tooltip title={record.is_active === 1 ? '点击禁用下架' : '点击开启上架'}>
+          <Switch
+            checked={record.is_active === 1}
+            checkedChildren="开启"
+            unCheckedChildren="禁用"
+            loading={togglingIds.includes(record.id)}
+            onChange={(checked) => handleToggleActive(record, checked)}
+          />
+        </Tooltip>
       ),
     },
     {
-      title: '最后修改时间',
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 215,
-      render: (text: string, record: Announcement) => (
-        <Space size={6} wrap={false} style={{ whiteSpace: 'nowrap' }}>
-          <span>{formatApiDateTime(text, 'YYYY-MM-DD HH:mm')}</span>
-          {record.display_time_mode === 'updated' && <Tag color="blue" style={{ margin: 0 }}>发布</Tag>}
+      title: '时间',
+      key: 'time',
+      width: 290,
+      render: (_: unknown, record: Announcement) => (
+        <Space vertical size={2} style={{ display: 'flex' }}>
+          <Space size={6} wrap={false} style={{ whiteSpace: 'nowrap' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>新建:</Text>
+            <span>{formatApiDateTime(record.created_at, 'YYYY-MM-DD HH:mm')}</span>
+            {record.display_time_mode !== 'updated' && <Tag color="blue" style={{ margin: 0 }}>发布时间展示</Tag>}
+          </Space>
+          <Space size={6} wrap={false} style={{ whiteSpace: 'nowrap' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>修改:</Text>
+            <span>{formatApiDateTime(record.updated_at, 'YYYY-MM-DD HH:mm')}</span>
+            {record.display_time_mode === 'updated' && <Tag color="blue" style={{ margin: 0 }}>发布时间展示</Tag>}
+          </Space>
         </Space>
       ),
     },
@@ -990,10 +1065,11 @@ const Announcements: React.FC = () => {
       label: '通知列表',
       children: (
         <>
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 12 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>新增通知</Button>
           </div>
           <Table
+            size="middle"
             columns={columns}
             dataSource={announcements}
             rowKey="id"
@@ -1034,16 +1110,49 @@ const Announcements: React.FC = () => {
 
           <Form.Item
             name="target_modules"
-            label="通知模块"
+            label={
+              <Space size={8} align="center">
+                <span>通知模块</span>
+                <span style={{ fontSize: 12, color: 'var(--ant-color-text-secondary)', fontWeight: 400 }}>
+                  （请至少选择一个通知模块）
+                </span>
+              </Space>
+            }
             rules={[{ required: true, type: 'array', min: 1, message: '请至少选择一个通知模块' }]}
             style={{ marginBottom: 16 }}
           >
-            <Checkbox.Group
-              options={NOTICE_MODULES.filter((item) => !('plugin' in item) || (item.plugin === 'playground_2026' ? playgroundOn : portalOn)).map((item) => ({
-                label: item.label,
-                value: item.value,
-              }))}
-            />
+            <Checkbox.Group style={{ width: '100%' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                {availableNoticeModules.map((item) => {
+                  const isChecked = selectedModules.includes(item.value);
+                  return (
+                    <Checkbox
+                      key={item.value}
+                      value={item.value}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '12px 16px',
+                        borderRadius: 8,
+                        border: `1px solid ${isChecked ? 'var(--ant-color-primary, #1677ff)' : 'var(--ant-color-border-secondary, #e5e7eb)'}`,
+                        backgroundColor: isChecked ? 'var(--ant-color-primary-bg, rgba(22, 119, 255, 0.05))' : 'var(--ant-color-fill-quaternary, rgba(0, 0, 0, 0.02))',
+                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        margin: 0,
+                        width: '100%',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      <Space size={8} align="center" style={{ marginLeft: 6 }}>
+                        {item.icon}
+                        <span style={{ fontWeight: isChecked ? 600 : 400, fontSize: 13, color: 'var(--ant-color-text)' }}>
+                          {item.label}
+                        </span>
+                      </Space>
+                    </Checkbox>
+                  );
+                })}
+              </div>
+            </Checkbox.Group>
           </Form.Item>
 
           {playgroundOn && selectedModules.includes('playground_2026') && (

@@ -90,7 +90,9 @@ fn content_disposition(filename: &str) -> String {
         let ext = filename
             .rsplit('.')
             .next()
-            .filter(|e| !e.is_empty() && e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric()))
+            .filter(|e| {
+                !e.is_empty() && e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric())
+            })
             .unwrap_or("bin");
         format!("file.{}", ext.to_lowercase())
     } else {

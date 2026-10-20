@@ -6,12 +6,8 @@ Kling-compatible paths on this platform. Use your platform API Key. [Image API](
 * **Official 3.0 Text-to-Video**: `/text-to-video/${model_id}` (`POST`)
 * **Official 3.0 Image-to-Video**: `/image-to-video/${model_id}` (`POST`)
 * **Official Omni Video**: `/omni-video/${model_id}` (`POST`)
-* **Legacy Text-to-Video**: `/v1/videos/text2video` (`POST`)
-* **Legacy Image-to-Video**: `/v1/videos/image2video` (`POST`)
-* **Official 3.0 Query Task Status**: `/tasks?task_ids=${task_id}` (`GET`)
+* **Official Query Task Status**: `/tasks?task_ids=${task_id}` (`GET`)
 * **Compatible Query Task Status**: `/v1/video/generations/{task_id}` or `/v1/tasks/{task_id}` (`GET`)
-
-*Note: In the query interface, `{endpoint}` corresponds to the service type used when submitting the task (such as `text2video`, `image2video`, etc.).*
 
 ### 2. Image Model API
 * **Standard Text/Image-to-Image**: `/v1/images/generations` (`POST`)

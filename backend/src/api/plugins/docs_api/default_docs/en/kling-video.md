@@ -1,6 +1,6 @@
 # Kling Video Generation Guide
 
-OpenAI-compatible: `POST /v1/video/generations`. Native: `/v1/videos/text2video`, `/v1/videos/omni-video`.
+OpenAI-compatible: `POST /v1/video/generations`. Native: `POST /text-to-video/${model_id}`, `POST /image-to-video/${model_id}`, `POST /omni-video/${model_id}`.
 
 * **Submit**: `POST /v1/video/generations`
 * **Poll**: `GET /v1/video/generations/{task_id}`

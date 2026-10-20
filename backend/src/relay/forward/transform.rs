@@ -48,13 +48,16 @@ pub async fn transform_request_body(
         // Bytefor 视频生成：将 OpenAI 兼容格式转换为 Bytefor 视频生成 API 格式
         "bytefor_video" => vendors::build_bytefor_video_body(model, body),
 
+        // Vidu 官方视频生成：支持文生/首帧图生/首尾帧/多参考生视频
+        "vidu" => vendors::build_vidu_video_body(model, body),
+
         // ATP Token 视频生成：将 OpenAI / 阿里百炼 格式请求转换为 ATP Token omni media tasks 格式
         // 参考文档：https://atptoken.ai/zh-cn/docs/media-video
         "atp_video" => vendors::build_atp_video_body(model, body),
 
-        // 可灵 AI 视频/图片：旧 /v1/videos/* 扁平协议
+        // 可灵 AI 图片生成
         "kling" => vendors::build_kling_body(model, body, category, &resolved.upstream_path),
-        // 可灵 3.0 推荐：URL 含模型，body 为 contents/settings/options
+        // 可灵 3.0 推荐视频：URL 含模型，body 为 contents/settings/options
         "kling_video" => vendors::build_kling_v3_body(body, &resolved.upstream_path),
 
         // 阿里百炼 DashScope 视频：OpenAI → input/parameters 格式
@@ -145,152 +148,14 @@ pub async fn transform_request_body(
             fwd
         }
 
-        // Gemini 图片：prompt → contents 格式，支持图生图/多图生图
-        // 参考 Google Gemini API: generationConfig.candidateCount / imageConfig
-        // 图片 inline_data 格式: https://ai.google.dev/api/caching?hl=zh-cn#Blob
-        "gemini_image" => {
-            let mut gen_config = serde_json::json!({
-                "responseModalities": ["IMAGE"]
-            });
-
-            // n → candidateCount（生成数量）
-            if let Some(n) = body.get("n").and_then(|v| v.as_i64()) {
-                if n > 1 {
-                    gen_config["candidateCount"] = serde_json::json!(n);
-                }
-            }
-
-            // imageConfig 构建
-            let mut img_cfg = serde_json::Map::new();
-            let size_str = body.get("size").and_then(|v| v.as_str()).unwrap_or("");
-            let size_is_ratio = size_str.contains(':');
-
-            // 比例优先级：ratio > size(含':')
-            let aspect_ratio = body.get("ratio").and_then(|v| v.as_str()).or_else(|| {
-                if size_is_ratio {
-                    Some(size_str)
-                } else {
-                    None
-                }
-            });
-            if let Some(r) = aspect_ratio {
-                img_cfg.insert("aspectRatio".to_string(), serde_json::json!(r));
-            }
-
-            // 分辨率优先级：resolution > size(不含':') > 兜底 "1k"
-            let image_size = body
-                .get("resolution")
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    if !size_is_ratio && !size_str.is_empty() {
-                        Some(size_str)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or("1k");
-            img_cfg.insert("imageSize".to_string(), serde_json::json!(image_size));
-
-            gen_config["imageConfig"] = serde_json::Value::Object(img_cfg);
-
-            // ── 图生图/多图生图：收集参考图转为 Gemini inline_data 格式 ──
-            // vendors::resolve_image_urls 统一处理 data URI / 纯 base64 / HTTP URL，失败项跳过
-            let all_urls = media::collect_image_urls(body, &["image", "image_urls"]);
-            let resolved = media::resolve_image_urls(http_client, &all_urls).await;
-            let mut image_parts: Vec<serde_json::Value> = resolved
-                .into_iter()
-                .flatten()
-                .map(|v| serde_json::json!({"inline_data": v}))
-                .collect();
-
-            // 构建 contents：有 prompt 才写 text，不伪造默认文案
-            let mut parts: Vec<serde_json::Value> = Vec::new();
-            if let Some(prompt) = body
-                .get("prompt")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                parts.push(serde_json::json!({"text": prompt}));
-            }
-            parts.append(&mut image_parts);
-
-            let mut result = serde_json::json!({
-                "contents": [{"parts": parts, "role": "user"}],
-                "generationConfig": gen_config
-            });
-
-            // Google Search 搜索增强工具
-            let gs = body
-                .get("google_search")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let gis = body
-                .get("google_image_search")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if gs || gis {
-                result["tools"] = serde_json::json!([{"google_search": {}}]);
-            }
-
-            result
+        // Gemini 图片与聊天：若上游路由为 /v1(beta)/interactions 则构建 Interactions 请求体，否则构建标准 Models contents 请求体
+        "gemini" | "gemini_image"
+            if super::is_google_interactions_path(&resolved.upstream_path) =>
+        {
+            vendors::build_gemini_interactions_body(model, body, category, http_client).await
         }
-
-        // Gemini 聊天：messages → contents 格式
-        "gemini" => {
-            let mut contents = Vec::new();
-            let mut system_instruction: Option<serde_json::Value> = None;
-
-            if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
-                for msg in messages {
-                    let role = msg["role"].as_str().unwrap_or("user");
-                    let text = match &msg["content"] {
-                        serde_json::Value::String(s) => s.clone(),
-                        v if !v.is_null() => v.to_string(),
-                        _ => continue,
-                    };
-                    if role == "system" {
-                        system_instruction = Some(serde_json::json!({
-                            "parts": [{"text": text}]
-                        }));
-                    } else {
-                        let gemini_role = if role == "assistant" { "model" } else { "user" };
-                        contents.push(serde_json::json!({
-                            "role": gemini_role,
-                            "parts": [{"text": text}]
-                        }));
-                    }
-                }
-            }
-
-            let mut result = serde_json::json!({"contents": contents});
-            if let Some(si) = system_instruction {
-                result["systemInstruction"] = si;
-            }
-            // 透传 generationConfig 和 stream_options（允许对象或null值）
-            if let Some(gc) = body.get("generationConfig") {
-                result["generationConfig"] = gc.clone();
-            } else {
-                let mut gen_config = serde_json::Map::new();
-                if let Some(t) = body.get("temperature") {
-                    gen_config.insert("temperature".to_string(), t.clone());
-                }
-                if let Some(t) = body.get("top_p") {
-                    gen_config.insert("topP".to_string(), t.clone());
-                }
-                if let Some(t) = body.get("max_tokens") {
-                    gen_config.insert("maxOutputTokens".to_string(), t.clone());
-                }
-                if !gen_config.is_empty() {
-                    result["generationConfig"] = serde_json::Value::Object(gen_config);
-                }
-            }
-
-            if let Some(opts) = body.get("stream_options") {
-                result["stream_options"] = opts.clone();
-            }
-
-            result
-        }
+        "gemini_image" => vendors::build_gemini_image_body(body, http_client).await,
+        "gemini" => vendors::build_gemini_chat_body(body),
 
         // Anthropic 聊天：OpenAI messages → Anthropic 格式
         // system 优先级：请求体顶层 system 参数 > messages 中 role=system 的内容
@@ -358,6 +223,9 @@ pub async fn transform_request_body(
         "tencent_vod_video" => vendors::build_tencent_vod_video_body(model, body),
         "tencent_mps_image" => vendors::build_tencent_mps_tryon_body(model, body),
         "tencent_mps_create_image" => vendors::build_tencent_mps_create_image_body(model, body),
+        // 腾讯云 TokenHub 混元生图 3.0 / 3.5 预览版
+        "tencent_tokenhub_image" => vendors::build_tokenhub_image_v3_body(model, body),
+        "tencent_tokenhub_v35_image" => vendors::build_tokenhub_image_v35_body(model, body),
 
         // 即梦AI（火山引擎 CV 视觉服务）：OpenAI → 即梦格式
         "jimeng_image" => vendors::build_jimeng_image_body(model, body),
@@ -370,7 +238,8 @@ pub async fn transform_request_body(
             let mut fwd = body.clone();
             fwd["model"] = serde_json::json!(model);
             // 提取各种图片参数中的图片地址（自动去重），不下载转 base64，直接统一构建为 images 数组直传
-            let all_urls = media::collect_image_urls(body, &["image", "image_urls", "images", "image[]"]);
+            let all_urls =
+                media::collect_image_urls(body, &["image", "image_urls", "images", "image[]"]);
             let entries: Vec<serde_json::Value> = all_urls
                 .iter()
                 .filter(|url| !url.is_empty())
@@ -545,7 +414,9 @@ fn convert_web_search(
             }
         }
         "gemini" | "gemini_image" => {
-            result["tools"] = serde_json::json!([{"google_search": {}}]);
+            if result.get("tools").is_none() {
+                result["tools"] = serde_json::json!([{"google_search": {}}]);
+            }
             if let Some(obj) = result.as_object_mut() {
                 obj.remove("web_search");
             }

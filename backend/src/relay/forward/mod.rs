@@ -52,7 +52,7 @@ pub struct ResolvedForward {
     pub target_type: String,
     /// 上游路径 e.g. "/api/v3/chat/completions"
     pub upstream_path: String,
-    /// 鉴权方式: "bearer", "query_key", "x-api-key", "key"（Authorization: Key）
+    /// 鉴权方式: "bearer", "query_key", "x-goog-api-key", "x-api-key", "key"（Authorization: Key）
     pub auth_type: String,
     /// 是否启用素材 URL→素材ID 自动转换（火山方舟视频素材专用）
     pub asset_convert: bool,
@@ -86,15 +86,23 @@ pub struct ResolvedForward {
     pub content_to_prompt: bool,
     /// 级联分辨率倍率表（config_json.res_mul）；阶段二：有 usage 则乘入 token，否则乘费用；空表=1.0
     pub res_mul: HashMap<String, f64>,
+    /// 级联：各分辨率是否启用增强（缺省/未配置默认为 true；关闭后不走 S2 增强但 usage/cost 仍按 res_mul 放大）
+    pub res_enhance_enabled: HashMap<String, bool>,
     /// 级联：目标分辨率 → 增强版本（fast|standard|pro|ai）；ai 支持 720p/1080p/2k/4k；缺 key/非法 → 标准版
     pub res_enhance: HashMap<String, String>,
     /// 级联：目标分辨率 → 阶段一座底分辨率；缺 key / 非法则用默认一级底座
     pub res_base: HashMap<String, String>,
     /// 级联：目标分辨率 → 标准版增强场景（common|ugc|short_series|aigc|old_film）；仅 standard 生效
     pub res_scene: HashMap<String, String>,
+    /// 级联：目标分辨率 → 短边像素限制（resolution_limit，仅标准版/专业版生效）；0 或未配置则不限制
+    pub res_limit: HashMap<String, i64>,
+    /// 级联：大模型增强遇短边像素限制时的回退档位（pro|standard|fast）；缺省 pro
+    pub res_limit_fallback: String,
     /// path_passthrough 命中：入口路径原样上游，请求体仅替换 model
     #[allow(dead_code)]
     pub body_passthrough: bool,
+    /// 是否启用异步任务优先快返（先 200 返回受理，后台异步转素材并调用上游；缺省 false 保持同步上游等待）
+    pub fast_response: bool,
 }
 
 impl Default for ResolvedForward {
@@ -119,22 +127,49 @@ impl Default for ResolvedForward {
             crop_coords_720p: HashMap::new(),
             content_to_prompt: false,
             res_mul: HashMap::new(),
+            res_enhance_enabled: HashMap::new(),
             res_enhance: HashMap::new(),
             res_base: HashMap::new(),
             res_scene: HashMap::new(),
+            res_limit: HashMap::new(),
+            res_limit_fallback: "pro".to_string(),
             body_passthrough: false,
+            fast_response: false,
         }
     }
 }
 
-/// 路径比较（忽略首部 `/`，允许 req 以 candidate 结尾）— 仅用于 path_rewrite 评分
+impl ResolvedForward {
+    /// 目标分辨率是否启用阶段二画质增强（缺省或未配置时默认为 true）
+    #[inline]
+    pub fn is_res_enhance_enabled(&self, res: &str) -> bool {
+        self.res_enhance_enabled
+            .get(&normalize_res_mul_key(res))
+            .copied()
+            .unwrap_or(true)
+    }
+}
+
+/// 路径比较（忽略首部 `/`，允许 req 以 candidate 结尾，支持 ${model} 占位宏匹配）— 用于 path_rewrite 评分
 fn path_matches(req: &str, candidate: &str) -> bool {
     let req = req.trim_start_matches('/');
     let cand = candidate.trim_start_matches('/');
     if cand.is_empty() {
         return false;
     }
-    req == cand || req.ends_with(cand)
+    if req == cand || req.ends_with(cand) {
+        return true;
+    }
+    // 支持包含 ${model} 占位宏的模式匹配（如 /v1/models/${model}:generateContent）
+    if let Some((prefix, suffix)) = cand.split_once("${model}") {
+        if req.starts_with(prefix)
+            && req.ends_with(suffix)
+            && req.len() >= prefix.len() + suffix.len()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// 路径精确相等（忽略首部 `/`）— 用于 path_passthrough 入口列表
@@ -148,6 +183,22 @@ pub(crate) fn is_anthropic_messages_path(path: &str) -> bool {
     path_eq(path, "/v1/messages")
         || path_eq(path, "/anthropic/v1/messages")
         || path_eq(path, "/api/compatible/v1/messages")
+}
+
+/// Google Gemini Interactions API 官方路由：`/v1/interactions` 或 `/v1beta/interactions`
+#[inline]
+pub(crate) fn is_google_interactions_path(path: &str) -> bool {
+    let clean = path.split(['|', '?']).next().unwrap_or(path).trim_matches('/');
+    clean == "v1/interactions" || clean == "v1beta/interactions"
+}
+
+/// Google Gemini 官方原生入口：`/v1(beta)/models/*` 或 `/v1(beta)/interactions`
+#[inline]
+pub(crate) fn is_google_native_path(path: &str) -> bool {
+    let clean = path.split(['|', '?']).next().unwrap_or(path).trim_start_matches('/');
+    clean.starts_with("v1/models/")
+        || clean.starts_with("v1beta/models/")
+        || is_google_interactions_path(clean)
 }
 
 #[inline]
@@ -219,6 +270,7 @@ fn scale_usage_token_object(obj: &mut serde_json::Map<String, serde_json::Value>
         "input_tokens",
         "output_tokens",
         "image_tokens",
+        "output_image_tokens",
     ] {
         scale_json_num_field(obj, key, mult);
     }
@@ -240,7 +292,9 @@ fn normalize_res_mul_key(resolution: &str) -> String {
     let s = resolution.trim().to_lowercase();
     match s.as_str() {
         "480" | "480p" => "480p".to_string(),
+        "540" | "540p" => "540p".to_string(),
         "720" | "720p" => "720p".to_string(),
+        "768" | "768p" => "768p".to_string(),
         "1080" | "1080p" => "1080p".to_string(),
         "2k" | "2kp" => "2k".to_string(),
         "4k" | "4kp" => "4k".to_string(),
@@ -272,6 +326,44 @@ fn parse_res_str_map(config: &serde_json::Value, field: &str) -> HashMap<String,
                 return None;
             }
             Some((normalize_res_mul_key(k), val.to_ascii_lowercase()))
+        })
+        .collect()
+}
+
+/// 解析级联布尔映射（res_enhance_enabled，各分辨率是否启用增强）
+fn parse_res_bool_map(config: &serde_json::Value, field: &str) -> HashMap<String, bool> {
+    let Some(obj) = config.get(field).and_then(|v| v.as_object()) else {
+        return HashMap::new();
+    };
+    obj.iter()
+        .filter_map(|(k, v)| {
+            let b = v.as_bool()?;
+            Some((normalize_res_mul_key(k), b))
+        })
+        .collect()
+}
+
+fn normalize_res_limit_key(key: &str) -> String {
+    let s = key.trim().to_lowercase();
+    if let Some((res, ratio)) = s.split_once('@') {
+        format!("{}@{}", normalize_res_mul_key(res), ratio.trim())
+    } else {
+        normalize_res_mul_key(&s)
+    }
+}
+
+/// 解析级联整型映射（res_limit，短边像素限制，必须为正整数）
+fn parse_res_i64_map(config: &serde_json::Value, field: &str) -> HashMap<String, i64> {
+    let Some(obj) = config.get(field).and_then(|v| v.as_object()) else {
+        return HashMap::new();
+    };
+    obj.iter()
+        .filter_map(|(k, v)| {
+            let n = v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))?;
+            if n <= 0 {
+                return None;
+            }
+            Some((normalize_res_limit_key(k), n))
         })
         .collect()
 }
@@ -395,9 +487,11 @@ pub async fn resolve_forward_rule(
         crate::relay_debug!("[Forward] 未绑定规则 模型='{}' (按协议回退)", model_id);
     }
 
-    // 3. 按 category 筛选
-    let category_matched: Vec<&crate::models::ForwardRule> =
-        rules.iter().filter(|r| r.category == category).collect();
+    // 3. 按 category 筛选（兼容绑定了「封装」分类规则的图片/视频工具模型）
+    let category_matched: Vec<&crate::models::ForwardRule> = rules
+        .iter()
+        .filter(|r| r.category == category || r.category == "封装")
+        .collect();
 
     let candidates = if category_matched.is_empty() {
         rules.iter().collect::<Vec<_>>()
@@ -477,7 +571,10 @@ pub async fn resolve_forward_rule(
         Some(model.mid.clone()),
     );
     let asset_convert_label = if resolved.upstream_asset_convert {
-        format!("上游(绑定#{})", resolved.upstream_asset_binding_id.unwrap_or(0))
+        format!(
+            "上游(绑定#{})",
+            resolved.upstream_asset_binding_id.unwrap_or(0)
+        )
     } else if resolved.asset_convert {
         format!("true({})", resolved.asset_convert_ns)
     } else {
@@ -486,7 +583,7 @@ pub async fn resolve_forward_rule(
     crate::relay_debug!(
         "[Forward] 命中规则 名称='{}' EID={}: 目标类型={} 上游路径={} 鉴权类型={} \
          素材转换={} 轮询路径={:?} 素材审核={} \
-         级联={} 裁剪480={} 裁剪时机={} 提示词转换={} 关联MID='{}'",
+         级联={} 快返={} 裁剪480={} 裁剪时机={} 提示词转换={} 关联MID='{}'",
         rule.name,
         rule.eid,
         resolved.target_type,
@@ -496,6 +593,7 @@ pub async fn resolve_forward_rule(
         resolved.poll_path,
         resolved.asset_moderation,
         resolved.is_cascade,
+        resolved.fast_response,
         resolved.crop_480p,
         resolved.crop_timing,
         resolved.content_to_prompt,
@@ -643,8 +741,8 @@ pub fn build_upstream_url(
 }
 
 /// 可灵动态路径解析：根据已转换的上游请求体内容动态调整端点路径。
-/// - `kling`：旧 /v1/videos/* 文图多图分发；Omni 固定
-/// - `kling_video`：有 `contents` → `/image-to-video/${model}`，否则 `/text-to-video/${model}`；Omni 固定
+/// - `kling`（图片）：有 `subject_image_list` 时自动改写为多图生图端点 `/v1/images/multi-image2image`
+/// - `kling_video`（视频 3.0）：有 `contents` → `/image-to-video/${model}`，否则 `/text-to-video/${model}`；Omni 固定
 pub fn resolve_kling_dynamic_path(
     resolved: &mut ResolvedForward,
     upstream_body: &serde_json::Value,
@@ -681,16 +779,6 @@ pub fn resolve_kling_dynamic_path(
         return;
     }
 
-    // 旧协议视频动态路由
-    if path.contains("text2video") || path.contains("image2video") {
-        if upstream_body.get("image").is_some() || upstream_body.get("image_tail").is_some() {
-            resolved.upstream_path = "/v1/videos/image2video".to_string();
-        } else {
-            resolved.upstream_path = "/v1/videos/text2video".to_string();
-        }
-        return;
-    }
-
     // 旧协议图片动态路由
     if path.contains("images") {
         if upstream_body
@@ -716,12 +804,19 @@ pub fn build_auth_headers(
             ("anthropic-version".to_string(), "2023-06-01".to_string()),
         ],
         "query_key" => vec![], // key 已在 URL 中
+        // Google 原生 API Key Header 鉴权: x-goog-api-key
+        "x-goog-api-key" => vec![("x-goog-api-key".to_string(), api_key.trim().to_string())],
         // 火山方舟语音合成 TTS V3：X-Api-Key 鉴权 + X-Api-Resource-Id 指定模型版本
         "volcengine_tts" => vec![("X-Api-Key".to_string(), api_key.to_string())],
         // Authorization: Key <api_key>（fal 等队列厂商通用）
         "key" => vec![(
             "Authorization".to_string(),
             format!("Key {}", api_key.trim()),
+        )],
+        // Authorization: Token <api_key>（Vidu 等厂商规范）
+        "token" => vec![(
+            "Authorization".to_string(),
+            format!("Token {}", api_key.trim()),
         )],
         _ => {
             // 可灵旧协议(kling)：AccessKey:SecretKey → JWT；新协议(kling_video)：官方 API Key 直传 Bearer
@@ -964,10 +1059,22 @@ pub fn parse_forward_config(
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         res_mul: parse_res_mul(config),
+        res_enhance_enabled: parse_res_bool_map(config, "res_enhance_enabled"),
         res_enhance: parse_res_str_map(config, "res_enhance"),
         res_base: parse_res_str_map(config, "res_base"),
         res_scene: parse_res_str_map(config, "res_scene"),
+        res_limit: parse_res_i64_map(config, "res_limit"),
+        res_limit_fallback: config
+            .get("res_limit_fallback")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| matches!(s.as_str(), "pro" | "standard" | "fast"))
+            .unwrap_or_else(|| "pro".to_string()),
         body_passthrough: is_passthrough,
+        fast_response: config
+            .get("fast_response")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     }
 }
 
@@ -981,6 +1088,8 @@ pub fn infer_forward_from_base_url(
     category: &str,
     db_model: Option<&crate::models::Model>,
 ) -> ResolvedForward {
+    #[cfg(not(feature = "plugin_volcengine_enhance"))]
+    let _ = db_model;
     let url_lower = base_url.to_lowercase();
 
     // 阿里百炼 DashScope
@@ -1053,8 +1162,17 @@ pub fn infer_forward_from_base_url(
         make_forward("anthropic", "/v1/messages", "x-api-key")
     } else if url_lower.contains("klingai.com") {
         match category {
-            "视频" => make_forward("kling", "/v1/videos/text2video", "bearer"),
+            "视频" => make_forward("kling_video", "/text-to-video/${model}", "bearer"),
             "图片" => make_forward("kling", "/v1/images/generations", "bearer"),
+            _ => default_openai_forward("/v1/chat/completions"),
+        }
+    } else if url_lower.contains("vidu.") {
+        match category {
+            "视频" => {
+                let mut r = make_forward("vidu", "/ent/v2/img2video", "token");
+                r.poll_path = Some("/ent/v2/tasks/${task_id}/creations".to_string());
+                r
+            }
             _ => default_openai_forward("/v1/chat/completions"),
         }
     } else if url_lower.contains("minimaxi.com") {
@@ -1121,4 +1239,278 @@ pub fn mask_key_in_string(text: &str, api_key: &str) -> String {
         }
     };
     text.replace(api_key, &masked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_forward_rule_fast_response_default_and_explicit() {
+        let empty_cfg = serde_json::json!({});
+        let resolved_default = parse_forward_config(
+            &empty_cfg,
+            "/v1/video/generations",
+            "/v1/video/generations",
+            "eid-1",
+            None,
+        );
+        assert!(!resolved_default.fast_response);
+
+        let explicit_false = serde_json::json!({
+            "target_type": "volcengine",
+            "fast_response": false
+        });
+        let resolved_false = parse_forward_config(
+            &explicit_false,
+            "/v1/video/generations",
+            "/v1/video/generations",
+            "eid-2",
+            None,
+        );
+        assert!(!resolved_false.fast_response);
+
+        let explicit_true = serde_json::json!({
+            "target_type": "volcengine",
+            "asset_convert": true,
+            "fast_response": true
+        });
+        let resolved_true = parse_forward_config(
+            &explicit_true,
+            "/v1/video/generations",
+            "/v1/video/generations",
+            "eid-3",
+            None,
+        );
+        assert!(resolved_true.fast_response);
+        assert!(resolved_true.asset_convert);
+
+        // 级联规则未显式声明 fast_response 时，默认不自动开启快返（快返遵循字段 fast_response 为 true 才执行）
+        let cascade_implicit = serde_json::json!({
+            "target_type": "volcengine",
+            "is_cascade": true
+        });
+        let resolved_cascade_implicit = parse_forward_config(
+            &cascade_implicit,
+            "/v1/video/generations",
+            "/v1/video/generations",
+            "eid-4",
+            None,
+        );
+        assert!(!resolved_cascade_implicit.fast_response);
+        assert!(resolved_cascade_implicit.is_cascade);
+
+        // 级联规则显式指定 fast_response: true 时，执行快返
+        let cascade_explicit_true = serde_json::json!({
+            "target_type": "volcengine",
+            "is_cascade": true,
+            "fast_response": true
+        });
+        let resolved_cascade_true = parse_forward_config(
+            &cascade_explicit_true,
+            "/v1/video/generations",
+            "/v1/video/generations",
+            "eid-5",
+            None,
+        );
+        assert!(resolved_cascade_true.fast_response);
+        assert!(resolved_cascade_true.is_cascade);
+    }
+
+    #[test]
+    fn test_forward_auth_type_google_header() {
+        let cfg = serde_json::json!({
+            "target_type": "gemini_image",
+            "path_rewrite": {
+                "old": "/v1/images/generations",
+                "new": "/v1beta/models/${model}:generateContent"
+            },
+            "auth_type": "x-goog-api-key"
+        });
+        let resolved = parse_forward_config(
+            &cfg,
+            "/v1/images/generations",
+            "/v1/images/generations",
+            "eid-goog",
+            None,
+        );
+        assert_eq!(resolved.target_type, "gemini_image");
+        assert_eq!(resolved.auth_type, "x-goog-api-key");
+
+        // 验证 URL 构建不携带 ?key=
+        let upstream_url = build_upstream_url(
+            "https://generativelanguage.googleapis.com",
+            &resolved,
+            "imagen-3.0-generate-002",
+            "AIzaSyD-dummy-key",
+        );
+        assert_eq!(
+            upstream_url,
+            "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateContent"
+        );
+        assert!(!upstream_url.contains("key="));
+
+        // 验证 Header 正确生成 x-goog-api-key
+        let headers = build_auth_headers(&resolved, "  AIzaSyD-dummy-key  ", true);
+        assert_eq!(
+            headers,
+            vec![("x-goog-api-key".to_string(), "AIzaSyD-dummy-key".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_forward_path_matches_with_model_macro() {
+        assert!(path_matches(
+            "/v1/models/gemini-nano-banana-2.1:generateContent",
+            "/v1/models/${model}:generateContent"
+        ));
+        assert!(path_matches(
+            "/v1/models/gemini-2.0-flash:streamGenerateContent",
+            "/v1/models/${model}:streamGenerateContent"
+        ));
+        assert!(path_matches(
+            "/v1beta/models/gemini-2.5-flash:generateContent",
+            "/v1beta/models/${model}:generateContent"
+        ));
+
+        // 验证多路由 path_rewrites 解析能够根据真实请求路径精准匹配
+        let cfg = serde_json::json!({
+            "target_type": "gemini_image",
+            "path_rewrites": [
+                { "old": "/v1/images/generations", "new": "/v1beta/models/${model}:generateContent" },
+                { "old": "/v1/models/${model}:generateContent", "new": "/v1/models/${model}:generateContent" },
+                { "old": "/v1beta/models/${model}:generateContent", "new": "/v1beta/models/${model}:generateContent" }
+            ],
+            "auth_type": "x-goog-api-key"
+        });
+
+        // 场景 A: 客户端调用新官方路由
+        let req_a = "/v1/models/gemini-nano-banana-2.1:generateContent";
+        let resolved_a = parse_forward_config(&cfg, "/v1/images/generations", req_a, "eid-goog-a", None);
+        assert_eq!(resolved_a.upstream_path, "/v1/models/${model}:generateContent");
+        let upstream_a = build_upstream_url(
+            "https://generativelanguage.googleapis.com",
+            &resolved_a,
+            "gemini-nano-banana-2.1",
+            "key123",
+        );
+        assert_eq!(
+            upstream_a,
+            "https://generativelanguage.googleapis.com/v1/models/gemini-nano-banana-2.1:generateContent"
+        );
+
+        // 场景 B: 客户端调用 OpenAI 兼容生图 (默认映射至最具兼容性的 /v1beta)
+        let req_b = "/v1/images/generations";
+        let resolved_b = parse_forward_config(&cfg, "/v1/images/generations", req_b, "eid-goog-b", None);
+        assert_eq!(resolved_b.upstream_path, "/v1beta/models/${model}:generateContent");
+
+        // 场景 C: 客户端调用老官方路由
+        let req_c = "/v1beta/models/imagen-3.0-generate-002:generateContent";
+        let resolved_c = parse_forward_config(&cfg, "/v1/images/generations", req_c, "eid-goog-c", None);
+        assert_eq!(resolved_c.upstream_path, "/v1beta/models/${model}:generateContent");
+    }
+
+    #[test]
+    fn test_is_google_native_path() {
+        assert!(is_google_native_path("/v1/models/gemini-3-pro-image:generateContent"));
+        assert!(is_google_native_path("/v1beta/models/gemini-2.5-flash:generateContent"));
+        assert!(is_google_native_path("/v1/models/gemini-2.0-flash:streamGenerateContent"));
+        assert!(is_google_native_path("v1/models/imagen-3.0:generateContent?key=abc"));
+        assert!(is_google_native_path("/v1beta/models/imagen-3.0:generateContent|/upstream"));
+
+        // OpenAI 与其它路由应为 false
+        assert!(!is_google_native_path("/v1/chat/completions"));
+        assert!(!is_google_native_path("/v1/images/generations"));
+        assert!(!is_google_native_path("/v1/messages"));
+    }
+
+    #[test]
+    fn test_volc_mediakit_merged_forward_rules_and_paths() {
+        use crate::db::migrations::helpers::volc_mediakit_image::{
+            SUBTITLE_ERASE_FORWARD_JSON, VIDEO_ENHANCE_FORWARD_JSON,
+        };
+        let sub_cfg: serde_json::Value =
+            serde_json::from_str(SUBTITLE_ERASE_FORWARD_JSON).expect("valid subtitle json");
+        let enh_cfg: serde_json::Value =
+            serde_json::from_str(VIDEO_ENHANCE_FORWARD_JSON).expect("valid enhance json");
+
+        // 1. 字幕擦除规则同时匹配 /v1/video/generations、/api/v1/tools/erase-video-subtitle 与 -pro
+        let sub_rewrites = collect_rewrites(&sub_cfg);
+        for path in [
+            "/v1/video/generations",
+            "/api/v1/tools/erase-video-subtitle",
+            "/api/v1/tools/erase-video-subtitle-pro",
+        ] {
+            assert!(
+                sub_rewrites
+                    .iter()
+                    .any(|(old, new)| path_matches(path, old) || path_matches(path, new)),
+                "subtitle rule should match {path}"
+            );
+        }
+
+        // 2. 合并后的视频画质增强规则同时匹配 OpenAI 与 3 个官方端点
+        let enh_rewrites = collect_rewrites(&enh_cfg);
+        for path in [
+            "/v1/video/generations",
+            "/api/v1/tools/enhance-video",
+            "/api/v1/tools/enhance-video-fast",
+            "/api/v1/tools/enhance-video-generative",
+        ] {
+            assert!(
+                enh_rewrites
+                    .iter()
+                    .any(|(old, new)| path_matches(path, old) || path_matches(path, new)),
+                "video enhance rule should match {path}"
+            );
+        }
+
+        // 3. 验证 apply_volc_enhance_path 按 mid 与 model_id 精准覆写真实上游路径
+        #[cfg(feature = "plugin_volcengine_enhance")]
+        {
+            let mut fwd_pro = parse_forward_config(
+                &sub_cfg,
+                "/v1/video/generations",
+                "/v1/video/generations",
+                "eid-sub",
+                Some("vvs-ep".to_string()),
+            );
+            crate::api::plugins::apply_volc_enhance_path(
+                &mut fwd_pro,
+                "volc_video_subtitle_erase_pro",
+            );
+            assert_eq!(fwd_pro.upstream_path, "/api/v1/tools/erase-video-subtitle-pro");
+
+            let mut fwd_fast = parse_forward_config(
+                &enh_cfg,
+                "/v1/video/generations",
+                "/v1/video/generations",
+                "eid-enh",
+                None,
+            );
+            crate::api::plugins::apply_volc_enhance_path(&mut fwd_fast, "volc_video_enhance_fast");
+            assert_eq!(fwd_fast.upstream_path, "/api/v1/tools/enhance-video-fast");
+        }
+    }
+
+    #[test]
+    fn test_res_limit_parsing() {
+        let json_str = r#"{
+            "is_cascade": true,
+            "res_limit": {
+                "720p": 960,
+                "720p@1:1": 960,
+                "720@3:4": 834,
+                "1080p": 1440,
+                "invalid": 0
+            }
+        }"#;
+        let val: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let map = parse_res_i64_map(&val, "res_limit");
+        assert_eq!(map.get("720p"), Some(&960));
+        assert_eq!(map.get("720p@1:1"), Some(&960));
+        assert_eq!(map.get("720p@3:4"), Some(&834));
+        assert_eq!(map.get("1080p"), Some(&1440));
+        assert_eq!(map.get("invalid"), None);
+    }
 }

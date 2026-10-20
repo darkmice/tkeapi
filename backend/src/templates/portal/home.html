@@ -1027,11 +1027,21 @@ resp = client.chat.completions.create(
 {% endif %}
 
 {% if style.current_style != "fai_art" %}
-{% set_global marketplace_href = nav.marketplace_path | default(value="/home/models") %}
+{% set_global marketplace_href = "/home/models" %}
+{% set_global marketplace_label = "模型广场|Model Marketplace" %}
+{% set_global show_marketplace = true %}
 {% if nav.items %}
   {% for item in nav.items %}
-    {% if item.key == "marketplace" and item.path %}
-      {% set_global marketplace_href = item.path %}
+    {% if item.key == "marketplace" %}
+      {% if item.path %}
+        {% set_global marketplace_href = item.path %}
+      {% endif %}
+      {% if item.label %}
+        {% set_global marketplace_label = item.label %}
+      {% endif %}
+      {% if item.enabled is defined and item.enabled == false %}
+        {% set_global show_marketplace = false %}
+      {% endif %}
     {% endif %}
   {% endfor %}
 {% endif %}
@@ -1100,10 +1110,10 @@ resp = client.chat.completions.create(
 <section class="qnav">
   <div class="wrap">
     <div class="qnav-grid">
-      {% if columns.models.enabled | default(value=true) %}
+      {% if show_marketplace %}
       <a href="{{ marketplace_href | default(value="/home/models") | safe }}" class="qnav-card">
         <div class="qic"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
-        <h3 data-i18n-dynamic="{{ columns.models.title | default(value="") }}" data-i18n-key="qnav1_title">{{ columns.models.title | default(value="模型数据") }}</h3>
+        <h3 data-i18n-dynamic="{{ marketplace_label }}" data-i18n-key="qnav1_title">{{ marketplace_label }}</h3>
         <p data-i18n="qnav1_desc">查看平台全部 AI 模型，覆盖文本、图像、视频、语音等能力</p>
         <span class="arr">&rarr;</span>
       </a>
@@ -1120,7 +1130,7 @@ resp = client.chat.completions.create(
       <a href="/home/about" class="qnav-card">
         <div class="qic"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a2 2 0 0 0 1.78 2.95h11a2 2 0 0 0 1.78-2.95l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg></div>
         <h3 data-i18n-dynamic="{{ columns.about.title | default(value="") }}" data-i18n-key="qnav3_title">{{ columns.about.title | default(value="关于我们") }}</h3>
-        <p data-i18n="qnav3_desc">了解团队愿景与技术实力</p>
+        <p data-i18n-dynamic="{{ columns.about.press_title | default(value="") }}" data-i18n-key="about_press_title">{{ columns.about.press_title | default(value="统一大模型接口体验，让接入 AI 零负担") }}</p>
         <span class="arr">&rarr;</span>
       </a>
       {% endif %}

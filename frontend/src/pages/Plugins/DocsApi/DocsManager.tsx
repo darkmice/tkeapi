@@ -31,6 +31,8 @@ interface DocNode {
   is_active: boolean;
   slug?: string;
   category_id?: number | null;
+  is_preset?: boolean;
+  default_expanded?: boolean;
   children: DocNode[];
 }
 
@@ -47,6 +49,7 @@ interface DocDetail {
   slug?: string;
   translations?: Record<string, { title: string; content?: string }>;
   category_id?: number | null;
+  is_preset?: number;
 }
 
 interface DocCategory {
@@ -530,6 +533,30 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
     }
   };
 
+  const patchDefaultExpanded = (nodes: DocNode[], id: number, value: boolean): DocNode[] =>
+    nodes.map(node => ({
+      ...node,
+      default_expanded: node.id === id ? value : node.default_expanded,
+      children: node.children ? patchDefaultExpanded(node.children, id, value) : [],
+    }));
+
+  const handleToggleDefaultExpanded = async (id: number, checked: boolean) => {
+    let previous: DocNode[] = [];
+    setTreeData(current => {
+      previous = current;
+      return patchDefaultExpanded(current, id, checked);
+    });
+    try {
+      await request.put(`${apiPrefix}/docs/${id}/default-expanded`, {
+        default_expanded: checked ? 1 : 0,
+      });
+    } catch (error) {
+      console.error(error);
+      setTreeData(previous);
+      message.error(t('msg_default_expanded_failed', '设置默认展开失败'));
+    }
+  };
+
   const handleResetInitializeDocs = async () => {
     try {
       setLoading(true);
@@ -579,22 +606,61 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
       is_dir: isDir,
       sort_order: 10,
       is_active: true,
+      parent_id: parentId,
       category_id: inheritedCat ?? activeCategoryId ?? undefined,
     });
     setCreateModalVisible(true);
   };
 
+  const handleUploadImg = async (
+    files: File[],
+    callback: (urls: Array<{ url: string; alt: string; title: string }>) => void,
+  ) => {
+    const uploaded: Array<{ url: string; alt: string; title: string }> = [];
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) {
+        message.error('只支持上传图片格式的文件');
+        continue;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        message.error('图片大小不能超过 5MB');
+        continue;
+      }
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        const res = await (request.post(`${apiPrefix}/docs/images`, form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          skipErrorHandler: true,
+        } as any) as Promise<{ file_url?: string }>);
+        if (!res?.file_url) {
+          message.error('图片上传失败');
+          continue;
+        }
+        const alt = file.name.replace(/\.[^.]+$/, '');
+        uploaded.push({ url: res.file_url, alt, title: alt });
+      } catch (error: any) {
+        const serverMsg = error?.response?.data?.error?.message;
+        message.error(serverMsg || '请配置站点存储才可以上传图片');
+      }
+    }
+    if (uploaded.length > 0) callback(uploaded);
+  };
+
   const handleCreateSubmit = async () => {
     try {
       const values = await createForm.validateFields();
-      // 未选分类时保持 null，不再静默回落到当前 Tab
-      const categoryId = createParentId
+      const parentId = createIsDir === 0
+        ? (values.parent_id != null && values.parent_id !== '' ? Number(values.parent_id) : null)
+        : createParentId;
+      // 未选分类时保持 null，不再静默回落到当前 Tab。有上级目录时跟随该目录。
+      const categoryId = parentId
         ? null
         : (values.category_id != null && values.category_id !== ''
           ? Number(values.category_id)
           : null);
       await request.post(`${apiPrefix}/docs`, {
-        parent_id: createParentId,
+        parent_id: parentId,
         title: values.title,
         content: values.content || '',
         is_dir: createIsDir,
@@ -758,6 +824,9 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
             <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
               {icon}
             </span>
+            <Tag style={{ fontSize: '10px', padding: '0 4px', lineHeight: '16px', margin: 0, borderRadius: '3px', border: 'none', background: item.is_preset ? (isLight ? '#e0f2fe' : 'rgba(14, 165, 233, 0.15)') : (isLight ? '#f3e8ff' : 'rgba(168, 85, 247, 0.15)'), color: item.is_preset ? (isLight ? '#0284c7' : '#38bdf8') : (isLight ? '#7e22ce' : '#c084fc'), flexShrink: 0 }}>
+              {item.is_preset ? t('badge_preset') : t('badge_custom')}
+            </Tag>
             <span style={{ 
               fontSize: '13.5px',
               textDecoration: item.is_active ? 'none' : 'line-through', 
@@ -776,6 +845,17 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
                 </span>
               )}
             </span>
+            {item.is_dir && (
+              <Tooltip title={t('default_expanded_tip', '用户端默认展开')}>
+                <span onClick={e => e.stopPropagation()} style={{ display: 'inline-flex', flexShrink: 0 }}>
+                  <Switch
+                    size="small"
+                    checked={!!item.default_expanded}
+                    onChange={(checked) => { void handleToggleDefaultExpanded(item.id, checked); }}
+                  />
+                </span>
+              </Tooltip>
+            )}
             <Space size={2} className="tree-actions-btn" onClick={e => e.stopPropagation()}>
               {item.is_dir && (
                 <Tooltip title={t('new_subdoc')}>
@@ -848,6 +928,30 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
       return cat === selectedCat || (cat == null && selectedCat === defaultCategoryId);
     });
   }, [editingDoc, flatDocs, isSitePortalPro, defaultCategoryId, categories]);
+
+  const createDirOptions = useMemo(() => {
+    const byId = new Map<number, { title: string; parent_id: number | null }>();
+    flatDocs.forEach(doc => {
+      byId.set(doc.id, { title: doc.title, parent_id: doc.parent_id ?? null });
+    });
+    const labelOf = (id: number) => {
+      const parts: string[] = [];
+      const seen = new Set<number>();
+      let current: number | null = id;
+      while (current != null && !seen.has(current)) {
+        seen.add(current);
+        const node = byId.get(current);
+        if (!node) break;
+        parts.unshift(node.title);
+        current = node.parent_id;
+      }
+      return parts.join(' / ');
+    };
+    return flatDocs
+      .filter(doc => doc.is_dir)
+      .map(doc => ({ id: doc.id, label: labelOf(doc.id) }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh'));
+  }, [flatDocs]);
 
   const formattedTreeData = renderTreeNodes(displayTreeData);
 
@@ -982,6 +1086,22 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
           )}
         </div>
 
+        {/* 新增按钮组 */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+          <button 
+            style={{ ...styleSheet.buttonOutline, flex: 1 }} 
+            onClick={() => openCreateModal(null, 1)}
+          >
+            <FolderAddOutlined /> {t('new_dir')}
+          </button>
+          <button 
+            style={{ ...styleSheet.buttonOutline, flex: 1 }} 
+            onClick={() => openCreateModal(null, 0)}
+          >
+            <FileAddOutlined /> {t('new_doc')}
+          </button>
+        </div>
+
         {/* 搜索框 */}
         <div style={{ position: 'relative', marginBottom: '10px' }}>
           <SearchOutlined style={{ position: 'absolute', left: '10px', top: '11px', color: colors.muted, zIndex: 2 }} />
@@ -995,7 +1115,7 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
         </div>
 
         {/* 树控件 */}
-        <div className="docs-sidebar-scroll" style={{ flex: 1, overflowY: 'auto', marginBottom: '14px' }}>
+        <div className="docs-sidebar-scroll" style={{ flex: 1, overflowY: 'auto' }}>
           {formattedTreeData.length === 0 ? (
             <Empty description={t('no_docs')} image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: '20px' }} />
           ) : (
@@ -1019,22 +1139,6 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
             />
           )}
         </div>
-
-        {/* 底部新增按钮组 */}
-        <div style={{ display: 'flex', gap: '8px', borderTop: `1px solid ${colors.border}`, paddingTop: '12px' }}>
-          <button 
-            style={{ ...styleSheet.buttonOutline, flex: 1 }} 
-            onClick={() => openCreateModal(null, 1)}
-          >
-            <FolderAddOutlined /> {t('new_dir')}
-          </button>
-          <button 
-            style={{ ...styleSheet.buttonOutline, flex: 1 }} 
-            onClick={() => openCreateModal(null, 0)}
-          >
-            <FileAddOutlined /> {t('new_doc')}
-          </button>
-        </div>
       </div>
 
       {/* 右侧主编辑工作区 */}
@@ -1053,6 +1157,9 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
                 ) : (
                   <FileTextOutlined style={{ color: colors.muted, fontSize: '18px' }} />
                 )}
+                <Tag style={{ fontSize: '11px', lineHeight: '18px', margin: 0, borderRadius: '4px', border: 'none', background: editingDoc.is_preset ? (isLight ? '#e0f2fe' : 'rgba(14, 165, 233, 0.15)') : (isLight ? '#f3e8ff' : 'rgba(168, 85, 247, 0.15)'), color: editingDoc.is_preset ? (isLight ? '#0284c7' : '#38bdf8') : (isLight ? '#7e22ce' : '#c084fc'), flexShrink: 0 }}>
+                  {editingDoc.is_preset ? t('badge_preset') : t('badge_custom')}
+                </Tag>
                 <input
                   key={`doc-title-${editingDoc.id}-${activeLang}`}
                   value={activeLang === 'zh' ? editingDoc.title : (editingDoc.translations?.[activeLang]?.title || '')}
@@ -1314,6 +1421,7 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
                   ]}
                   style={{ height: '100%', border: 'none', background: 'transparent' }}
                   placeholder={t('editor_placeholder')}
+                  onUploadImg={handleUploadImg}
                 />
               </div>
             ) : (
@@ -1445,7 +1553,8 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
           <Form.Item
             name="slug"
             label={t('form_slug_label')}
-            help={createIsDir === 1 ? t('form_slug_help_dir') : t('form_slug_help_doc')}
+            extra={createIsDir === 1 ? t('form_slug_help_dir') : t('form_slug_help_doc')}
+            rules={[{ required: true, whitespace: true, message: t('form_slug_required', '请填写路由英文名') }]}
           >
             <Input 
               placeholder={t('form_slug_placeholder')} 
@@ -1453,6 +1562,25 @@ const DocsManager: React.FC<DocsManagerProps> = ({ apiPrefix = '/plugins/docs-ap
               style={{ height: '36px', borderRadius: '6px' }}
             />
           </Form.Item>
+          {createIsDir === 0 && (
+            <Form.Item
+              name="parent_id"
+              label={t('parent_dir')}
+              extra={t('form_parent_help', '选择后，文章会放在该目录下')}
+              getValueProps={(value) => ({ value: value == null || value === '' ? '' : String(value) })}
+              getValueFromEvent={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                const v = e.target.value;
+                return v ? Number(v) : null;
+              }}
+            >
+              <select style={{ ...styleSheet.select, width: '100%', height: '36px' }}>
+                <option value="">{t('parent_root')}</option>
+                {createDirOptions.map(dir => (
+                  <option key={dir.id} value={dir.id}>{dir.label}</option>
+                ))}
+              </select>
+            </Form.Item>
+          )}
           {isSitePortalPro && (
             <Form.Item
               name="category_id"

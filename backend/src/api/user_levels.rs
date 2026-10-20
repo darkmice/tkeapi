@@ -46,12 +46,24 @@ pub async fn create_user_level(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateUserLevelRequest>,
 ) -> AppResult<Json<UserLevel>> {
+    let group_key = req.group_key.trim();
+    if group_key.is_empty() {
+        return Err(crate::error::AppError::BadRequest(
+            "等级标志 ID 不能为空".to_string(),
+        ));
+    }
+    if !req.discount.is_finite() || req.discount <= 0.0 || req.discount > 1000.0 {
+        return Err(crate::error::AppError::BadRequest(
+            "计费倍率必须大于 0 且不超过 1000".to_string(),
+        ));
+    }
+
     let exists: bool = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT EXISTS(SELECT 1 FROM user_levels WHERE group_key = ?)"),
     )
-    .bind(&req.group_key)
+    .bind(group_key)
     .fetch_one(&state.db.pool)
     .await?;
 
@@ -73,12 +85,12 @@ pub async fn create_user_level(
     }
 
     let id = sqlx::query(
-        &state.db.format_query(r#"INSERT INTO user_levels (name, group_key, discount, discount_type, commission_ratio, commission_basis, invite_reward_inviter, invite_reward_invitee, daily_invite_limit, marketing_enabled, is_default, max_token_count, allow_view_log_details, description, sort_order, invoice_enabled, invoice_mode, invoice_config, commission_transfer_min, commission_transfer_max)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        &state.db.format_query(r#"INSERT INTO user_levels (name, group_key, discount, discount_type, commission_ratio, commission_basis, invite_reward_inviter, invite_reward_invitee, daily_invite_limit, marketing_enabled, is_default, max_token_count, allow_view_log_details, description, sort_order, invoice_enabled, invoice_mode, invoice_config, commission_transfer_min, commission_transfer_max, purchasable)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id"#)
     )
-    .bind(&req.name)
-    .bind(&req.group_key)
+    .bind(req.name.trim())
+    .bind(group_key)
     .bind(req.discount)
     .bind(req.discount_type.unwrap_or(0))
     .bind(req.commission_ratio.unwrap_or(0.0))
@@ -99,6 +111,7 @@ pub async fn create_user_level(
     .bind(req.invoice_config.as_deref().unwrap_or("{}"))
     .bind(req.commission_transfer_min.unwrap_or(0.0))
     .bind(req.commission_transfer_max.unwrap_or(0.0))
+    .bind(req.purchasable.unwrap_or(0))
     .fetch_one(&state.db.pool)
     .await?
     .get::<i64, _>("id");
@@ -120,41 +133,83 @@ pub async fn update_user_level(
     Path(id): Path<i64>,
     Json(req): Json<UpdateUserLevelRequest>,
 ) -> AppResult<Json<UserLevel>> {
+    let (old_group_key, old_is_default): (String, i64) = sqlx::query_as(
+        &state
+            .db
+            .format_query("SELECT group_key, is_default FROM user_levels WHERE id = ?"),
+    )
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("未找到该用户等级".to_string()))?;
+
+    if let Some(discount) = req.discount {
+        if !discount.is_finite() || discount <= 0.0 || discount > 1000.0 {
+            return Err(crate::error::AppError::BadRequest(
+                "计费倍率必须大于 0 且不超过 1000".to_string(),
+            ));
+        }
+    }
+
     if let Some(name) = &req.name {
         sqlx::query(
             &state
                 .db
                 .format_query("UPDATE user_levels SET name = ? WHERE id = ?"),
         )
-        .bind(name)
+        .bind(name.trim())
         .bind(id)
         .execute(&state.db.pool)
         .await?;
     }
-    if let Some(group_key) = &req.group_key {
-        let exists: bool = sqlx::query_scalar(&state.db.format_query(
-            "SELECT EXISTS(SELECT 1 FROM user_levels WHERE group_key = ? AND id != ?)",
-        ))
-        .bind(group_key)
-        .bind(id)
-        .fetch_one(&state.db.pool)
-        .await?;
-
-        if exists {
-            return Err(crate::error::AppError::Conflict(
-                "该等级标志 ID 已存在，请使用其他的标志".to_string(),
+    if let Some(raw_group_key) = &req.group_key {
+        let group_key = raw_group_key.trim();
+        if group_key.is_empty() {
+            return Err(crate::error::AppError::BadRequest(
+                "等级标志 ID 不能为空".to_string(),
             ));
         }
+        if group_key != old_group_key {
+            if old_group_key == "default" {
+                return Err(crate::error::AppError::BadRequest(
+                    "系统内置默认等级标识 default 不可修改".to_string(),
+                ));
+            }
+            let exists: bool = sqlx::query_scalar(&state.db.format_query(
+                "SELECT EXISTS(SELECT 1 FROM user_levels WHERE group_key = ? AND id != ?)",
+            ))
+            .bind(group_key)
+            .bind(id)
+            .fetch_one(&state.db.pool)
+            .await?;
 
-        sqlx::query(
-            &state
-                .db
-                .format_query("UPDATE user_levels SET group_key = ? WHERE id = ?"),
-        )
-        .bind(group_key)
-        .bind(id)
-        .execute(&state.db.pool)
-        .await?;
+            if exists {
+                return Err(crate::error::AppError::Conflict(
+                    "该等级标志 ID 已存在，请使用其他的标志".to_string(),
+                ));
+            }
+
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE user_levels SET group_key = ? WHERE id = ?"),
+            )
+            .bind(group_key)
+            .bind(id)
+            .execute(&state.db.pool)
+            .await?;
+
+            // 级联同步更新存量用户的 user_group，防止修改 group_key 后用户与等级解绑
+            sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE users SET user_group = ? WHERE user_group = ?"),
+            )
+            .bind(group_key)
+            .bind(&old_group_key)
+            .execute(&state.db.pool)
+            .await?;
+        }
     }
     if let Some(discount) = req.discount {
         sqlx::query(
@@ -206,7 +261,9 @@ pub async fn update_user_level(
                 .db
                 .format_query("UPDATE user_levels SET commission_basis = ? WHERE id = ?"),
         )
-        .bind(crate::services::affiliate::normalize_commission_basis(commission_basis))
+        .bind(crate::services::affiliate::normalize_commission_basis(
+            commission_basis,
+        ))
         .bind(id)
         .execute(&state.db.pool)
         .await?;
@@ -277,6 +334,17 @@ pub async fn update_user_level(
         .execute(&state.db.pool)
         .await?;
     }
+    if let Some(purchasable) = req.purchasable {
+        sqlx::query(
+            &state
+                .db
+                .format_query("UPDATE user_levels SET purchasable = ? WHERE id = ?"),
+        )
+        .bind(if purchasable == 0 { 0 } else { 1 })
+        .bind(id)
+        .execute(&state.db.pool)
+        .await?;
+    }
     if let Some(is_default) = req.is_default {
         if is_default == 1 {
             // 先清除所有默认
@@ -293,10 +361,31 @@ pub async fn update_user_level(
                 .db
                 .format_query("UPDATE user_levels SET is_default = ? WHERE id = ?"),
         )
-        .bind(is_default)
+        .bind(if is_default == 1 { 1 } else { 0 })
         .bind(id)
         .execute(&state.db.pool)
         .await?;
+
+        // 若关闭了原本唯一的默认等级，自动兜底将 default 等级（或首个等级）恢复为默认，防止全系统无默认注册等级
+        if is_default != 1 && old_is_default == 1 {
+            let has_default: bool = sqlx::query_scalar(
+                &state
+                    .db
+                    .format_query("SELECT EXISTS(SELECT 1 FROM user_levels WHERE is_default = 1)"),
+            )
+            .fetch_one(&state.db.pool)
+            .await?;
+            if !has_default {
+                sqlx::query(&state.db.format_query(
+                    "UPDATE user_levels SET is_default = 1 WHERE id = COALESCE( \
+                        (SELECT id FROM user_levels WHERE group_key = 'default' LIMIT 1), \
+                        (SELECT id FROM user_levels ORDER BY id ASC LIMIT 1) \
+                    )",
+                ))
+                .execute(&state.db.pool)
+                .await?;
+            }
+        }
     }
     if let Some(max_token_count) = req.max_token_count {
         sqlx::query(
@@ -390,21 +479,43 @@ pub async fn delete_user_level(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Prevent deleting the default level
-    let group_key: String = sqlx::query_scalar(
+    // 禁止删除内置 default 等级或当前默认注册等级 (is_default = 1)
+    let (group_key, is_default): (String, i64) = sqlx::query_as(
         &state
             .db
-            .format_query("SELECT group_key FROM user_levels WHERE id = ?"),
+            .format_query("SELECT group_key, is_default FROM user_levels WHERE id = ?"),
     )
     .bind(id)
-    .fetch_one(&state.db.pool)
-    .await?;
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| crate::error::AppError::NotFound("未找到该用户等级".to_string()))?;
 
-    if group_key == "default" {
+    if group_key == "default" || is_default == 1 {
         return Err(crate::error::AppError::BadRequest(
-            "Cannot delete default user level".to_string(),
+            "默认注册等级不可删除，请先将其他等级设为默认注册等级".to_string(),
         ));
     }
+
+    let fallback_group: String = sqlx::query_scalar(&state.db.format_query(
+        "SELECT group_key FROM user_levels WHERE id != ? AND (is_default = 1 OR group_key = 'default') ORDER BY is_default DESC, id ASC LIMIT 1",
+    ))
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .unwrap_or_else(|| "default".to_string());
+
+    let mut tx = state.db.pool.begin().await?;
+
+    // 将被删等级下的存量用户自动迁移回默认等级，避免产生孤儿 user_group 导致折扣掩码失配
+    sqlx::query(
+        &state
+            .db
+            .format_query("UPDATE users SET user_group = ? WHERE user_group = ?"),
+    )
+    .bind(&fallback_group)
+    .bind(&group_key)
+    .execute(&mut *tx)
+    .await?;
 
     sqlx::query(
         &state
@@ -412,8 +523,10 @@ pub async fn delete_user_level(
             .format_query("DELETE FROM user_levels WHERE id = ?"),
     )
     .bind(id)
-    .execute(&state.db.pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

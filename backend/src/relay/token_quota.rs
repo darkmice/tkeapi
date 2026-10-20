@@ -264,7 +264,9 @@ pub fn touch_token_last_used(state: &AppState, token_id: i64) {
     let now = std::time::Instant::now();
     let should_update = match state.token_last_used_throttle.get_mut(&token_id) {
         Some(mut last_time) => {
-            if now.duration_since(*last_time) >= std::time::Duration::from_secs(LAST_USED_THROTTLE_SECS) {
+            if now.duration_since(*last_time)
+                >= std::time::Duration::from_secs(LAST_USED_THROTTLE_SECS)
+            {
                 *last_time = now;
                 true
             } else {
@@ -287,9 +289,12 @@ pub fn touch_token_last_used(state: &AppState, token_id: i64) {
             .execute(&db.pool)
             .await;
             if let Err(e) = res {
-                tracing::warn!("[TokenQuota] 异步更新令牌活跃时间失败 (token_id={}): {:?}", token_id, e);
+                tracing::warn!(
+                    "[TokenQuota] 异步更新令牌活跃时间失败 (token_id={}): {:?}",
+                    token_id,
+                    e
+                );
             }
         });
     }
 }
-

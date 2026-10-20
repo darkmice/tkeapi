@@ -123,6 +123,9 @@ const AdminLogin: React.FC = () => {
     } catch (error) {
       console.error(error);
       const axiosError = error as AxiosError<{ error: { message: string } }>;
+      if (axiosError.response?.status === 403) {
+        setIsInitialized(true);
+      }
       message.error(axiosError.response?.data?.error?.message || '初始化失败，请稍后重试');
     } finally {
       setLoading(false);
@@ -255,95 +258,46 @@ const AdminLogin: React.FC = () => {
             </Space>
           </div>
 
-          {isInitialized ? (
-            /* 正常管理员登录表单 */
-            <Form
-              name="admin_auth"
-              size="large"
-              onFinish={onLoginFinish}
-              autoComplete="off"
-              layout="vertical"
+          <Form
+            key={String(isInitialized)}
+            name={isInitialized ? 'admin_auth' : 'admin_init'}
+            size="large"
+            onFinish={isInitialized ? onLoginFinish : onInitFinish}
+            autoComplete="off"
+            layout="vertical"
+          >
+            <Form.Item
+              name="username"
+              rules={[{ required: true, message: isInitialized ? 'IDENT_REQUIRED' : '请输入管理员用户名' }]}
             >
-              <Form.Item
-                name="username"
-                rules={[{ required: true, message: 'IDENT_REQUIRED' }]}
-              >
-                <Input 
-                  prefix={<SecurityScanOutlined style={{ color: '#00ff41' }} />} 
-                  placeholder="OPERATOR_ID" 
-                  style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
-                />
-              </Form.Item>
+              <Input
+                prefix={<SecurityScanOutlined style={{ color: '#00ff41' }} />}
+                placeholder={isInitialized ? 'OPERATOR_ID' : '设置管理员用户名 (OPERATOR_ID)'}
+                autoComplete={isInitialized ? undefined : 'off'}
+                style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
+              />
+            </Form.Item>
 
-              <Form.Item
-                name="password"
-                rules={[{ required: true, message: 'CRED_REQUIRED' }]}
-              >
-                <Input.Password 
-                  prefix={<UnlockOutlined style={{ color: '#00ff41' }} />} 
-                  placeholder="SECURITY_CODE" 
-                  style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
-                />
-              </Form.Item>
-
-              <Form.Item style={{ marginTop: 20 }}>
-                <Button 
-                  type="primary" 
-                  htmlType="submit" 
-                  block 
-                  loading={loading}
-                  style={{ 
-                    borderRadius: 0, 
-                    backgroundColor: '#00ff41', 
-                    color: '#000', 
-                    fontWeight: 'bold',
-                    boxShadow: '0 0 10px #00ff41',
-                    border: 'none',
-                    height: '50px'
-                  }}
-                >
-                  INITIATE_SESSION
-                </Button>
-              </Form.Item>
-
-              <div style={{ textAlign: 'center', fontSize: '10px', opacity: 0.5, marginTop: 20 }}>
-                [ UNIFIED CONTROL PROTOCOL ACTIVATED ]
-              </div>
-            </Form>
-          ) : (
-            /* 首次初始化超级管理员表单 */
-            <Form
-              name="admin_init"
-              size="large"
-              onFinish={onInitFinish}
-              autoComplete="off"
-              layout="vertical"
+            <Form.Item
+              name="password"
+              rules={
+                isInitialized
+                  ? [{ required: true, message: 'CRED_REQUIRED' }]
+                  : [
+                      { required: true, message: '请输入管理员密码' },
+                      { min: 6, message: '密码长度至少为 6 位' },
+                    ]
+              }
             >
-              <Form.Item
-                name="username"
-                rules={[{ required: true, message: '请输入管理员用户名' }]}
-              >
-                <Input 
-                  prefix={<SecurityScanOutlined style={{ color: '#00ff41' }} />} 
-                  placeholder="设置管理员用户名 (OPERATOR_ID)" 
-                  style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
-                />
-              </Form.Item>
+              <Input.Password
+                prefix={<UnlockOutlined style={{ color: '#00ff41' }} />}
+                placeholder={isInitialized ? 'SECURITY_CODE' : '设置管理员密码 (SECURITY_CODE)'}
+                autoComplete={isInitialized ? undefined : 'new-password'}
+                style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
+              />
+            </Form.Item>
 
-              <Form.Item
-                name="password"
-                rules={[
-                  { required: true, message: '请输入管理员密码' },
-                  { min: 6, message: '密码长度至少为 6 位' }
-                ]}
-              >
-                <Input.Password 
-                  prefix={<UnlockOutlined style={{ color: '#00ff41' }} />} 
-                  placeholder="设置管理员密码 (SECURITY_CODE)" 
-                  style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
-                />
-              </Form.Item>
-
+            {!isInitialized && (
               <Form.Item
                 name="confirmPassword"
                 dependencies={['password']}
@@ -359,38 +313,41 @@ const AdminLogin: React.FC = () => {
                   }),
                 ]}
               >
-                <Input.Password 
-                  prefix={<UnlockOutlined style={{ color: '#00ff41' }} />} 
-                  placeholder="确认管理员密码 (CONFIRM_CODE)" 
+                <Input.Password
+                  prefix={<UnlockOutlined style={{ color: '#00ff41' }} />}
+                  placeholder="确认管理员密码 (CONFIRM_CODE)"
+                  autoComplete="new-password"
                   style={{ borderRadius: 0, border: '1px solid #00ff41', color: '#00ff41' }}
                 />
               </Form.Item>
+            )}
 
-              <Form.Item style={{ marginTop: 20 }}>
-                <Button 
-                  type="primary" 
-                  htmlType="submit" 
-                  block 
-                  loading={loading}
-                  style={{ 
-                    borderRadius: 0, 
-                    backgroundColor: '#00ff41', 
-                    color: '#000', 
-                    fontWeight: 'bold',
-                    boxShadow: '0 0 10px #00ff41',
-                    border: 'none',
-                    height: '50px'
-                  }}
-                >
-                  INITIALIZE_AND_LOGIN
-                </Button>
-              </Form.Item>
+            <Form.Item style={{ marginTop: 20 }}>
+              <Button
+                type="primary"
+                htmlType="submit"
+                block
+                loading={loading}
+                style={{
+                  borderRadius: 0,
+                  backgroundColor: '#00ff41',
+                  color: '#000',
+                  fontWeight: 'bold',
+                  boxShadow: '0 0 10px #00ff41',
+                  border: 'none',
+                  height: '50px',
+                }}
+              >
+                {isInitialized ? 'INITIATE_SESSION' : 'INITIALIZE_AND_LOGIN'}
+              </Button>
+            </Form.Item>
 
-              <div style={{ textAlign: 'center', fontSize: '10px', opacity: 0.5, marginTop: 20 }}>
-                [ SYSTEM INITIALIZATION PROTOCOL ACTIVATED ]
-              </div>
-            </Form>
-          )}
+            <div style={{ textAlign: 'center', fontSize: '10px', opacity: 0.5, marginTop: 20 }}>
+              {isInitialized
+                ? '[ UNIFIED CONTROL PROTOCOL ACTIVATED ]'
+                : '[ SYSTEM INITIALIZATION PROTOCOL ACTIVATED ]'}
+            </div>
+          </Form>
         </Card>
         </div>
 
@@ -425,6 +382,16 @@ const AdminLogin: React.FC = () => {
             .tke-api-title:hover {
               text-shadow: 0 0 35px #00ff41, 0 0 70px #00ff41, 0 0 100px #00ff41;
               transform: translateY(-6px) scale(1.06);
+            }
+
+            input:-webkit-autofill,
+            input:-webkit-autofill:hover,
+            input:-webkit-autofill:focus,
+            input:-webkit-autofill:active {
+              -webkit-box-shadow: 0 0 0 1000px #0a0a0a inset !important;
+              -webkit-text-fill-color: #00ff41 !important;
+              caret-color: #00ff41 !important;
+              transition: background-color 9999s ease-in-out 0s;
             }
           `}
         </style>

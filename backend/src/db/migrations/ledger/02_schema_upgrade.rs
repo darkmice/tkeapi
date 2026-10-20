@@ -5,14 +5,16 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ─── 统一将所有 INTEGER 列升级为 BIGINT，与 Rust 模型层 i64 对齐 ───
-    once_migration!(pool, done, "upgrade_columns_to_bigint_v1",
-
+    once_migration!(
+        pool,
+        done,
+        "upgrade_columns_to_bigint_v1",
         // ── user_levels ──
         "ALTER TABLE user_levels ALTER COLUMN id TYPE BIGINT",
         "ALTER TABLE user_levels ALTER COLUMN daily_invite_limit TYPE BIGINT",
@@ -134,7 +136,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         // ── router_flow_groups ──
         "ALTER TABLE router_flow_groups ALTER COLUMN id TYPE BIGINT",
         "ALTER TABLE router_flow_groups ALTER COLUMN is_active TYPE BIGINT",
-
     );
 
     // recharge_records 新增 operator 字段（记录后台操作人员）和 wallet_type 字段（区分所属钱包），受一次性迁移保护
@@ -144,8 +145,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "ALTER TABLE recharge_records ADD COLUMN IF NOT EXISTS wallet_type TEXT NOT NULL DEFAULT 'system'",
         "COMMENT ON COLUMN recharge_records.wallet_type IS '所属钱包类型: system=系统钱包, gift=赠送钱包'"
     );
-
-
 
     // 迁移历史数据（受一次性迁移保护，仅执行一次，避免大表全扫描引起卡顿）
     // 1. 原 recharge_type='gift' 的记录归入赠送钱包
@@ -249,14 +248,19 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             .await
             .unwrap_or(0);
         if col_exists > 0 {
-            let _ = sqlx::query("ALTER TABLE happyhorse_logs RENAME COLUMN user_id TO user_uid").execute(pool).await;
+            let _ = sqlx::query("ALTER TABLE happyhorse_logs RENAME COLUMN user_id TO user_uid")
+                .execute(pool)
+                .await;
             let _ = sqlx::query("UPDATE happyhorse_logs SET user_uid = COALESCE((SELECT u.uid FROM users u WHERE u.id = happyhorse_logs.user_uid), user_uid)").execute(pool).await;
-            let _ = sqlx::query("COMMENT ON COLUMN happyhorse_logs.user_uid IS '用户短标识(users.uid)'").execute(pool).await;
+            let _ = sqlx::query(
+                "COMMENT ON COLUMN happyhorse_logs.user_uid IS '用户短标识(users.uid)'",
+            )
+            .execute(pool)
+            .await;
         }
         let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('happyhorse_logs_rename_user_id_to_user_uid')").execute(pool).await;
         done.insert("happyhorse_logs_rename_user_id_to_user_uid".into());
     }
-
 
     Ok(())
 }

@@ -7,7 +7,25 @@
 
 import type { RegistrationSettings, User } from '../types';
 
-type BindEnforcement = 'all' | 'any' | 'prompt_only';
+type BindEnforcement = 'all' | 'any' | 'prompt_all' | 'prompt_any' | 'prompt_only';
+
+function enforcementMode(reg?: RegistrationSettings | null): BindEnforcement {
+  const mode = reg?.bind_enforcement;
+  if (mode === 'any' || mode === 'prompt_all' || mode === 'prompt_any' || mode === 'prompt_only') {
+    return mode;
+  }
+  return 'all';
+}
+
+/** 只弹窗，不拦截创建令牌。prompt_only 为旧值，等同仅弹窗提示绑定全部 */
+function isPromptEnforcement(mode: BindEnforcement): boolean {
+  return mode === 'prompt_only' || mode === 'prompt_all' || mode === 'prompt_any';
+}
+
+/** 勾选项目里绑定一项即满足 */
+function requiresAnyBind(mode: BindEnforcement): boolean {
+  return mode === 'any' || mode === 'prompt_any';
+}
 
 export function hasValidMobile(mobile?: string | null): boolean {
   return !!(mobile && mobile.trim());
@@ -33,7 +51,7 @@ export function isBindSatisfied(
   const hasMobile = hasValidMobile(user?.mobile);
   const hasEmail = hasValidEmail(user?.email);
   if (needMobile && needEmail) {
-    return reg?.bind_enforcement === 'any' ? hasMobile || hasEmail : hasMobile && hasEmail;
+    return requiresAnyBind(enforcementMode(reg)) ? hasMobile || hasEmail : hasMobile && hasEmail;
   }
   if (needMobile) return hasMobile;
   if (needEmail) return hasEmail;
@@ -47,7 +65,7 @@ export function shouldBlockTokenCreate(
 ): boolean {
   if (user?.role === 'admin') return false;
   if (!isBindPolicyActive(reg)) return false;
-  if (reg?.bind_enforcement === 'prompt_only') return false;
+  if (isPromptEnforcement(enforcementMode(reg))) return false;
   return !isBindSatisfied(reg, user);
 }
 
@@ -55,7 +73,7 @@ export function tokenBindBlockI18nKey(reg?: RegistrationSettings | null): string
   const needMobile = !!reg?.require_bind_mobile;
   const needEmail = !!reg?.require_bind_email;
   if (needMobile && needEmail) {
-    return reg?.bind_enforcement === 'any'
+    return requiresAnyBind(enforcementMode(reg))
       ? 'tokens.bind_need_mobile_or_email'
       : 'tokens.bind_need_mobile_and_email';
   }
@@ -68,7 +86,7 @@ export function tokenBindBlockMessage(reg?: RegistrationSettings | null): string
   const needMobile = !!reg?.require_bind_mobile;
   const needEmail = !!reg?.require_bind_email;
   if (needMobile && needEmail) {
-    return reg?.bind_enforcement === 'any'
+    return requiresAnyBind(enforcementMode(reg))
       ? '创建 API 令牌前请先绑定手机号或邮箱'
       : '创建 API 令牌前请先绑定手机号和邮箱';
   }
@@ -80,10 +98,11 @@ export function tokenBindBlockMessage(reg?: RegistrationSettings | null): string
 export function bindPromptDescription(reg?: RegistrationSettings | null): string {
   const needMobile = !!reg?.require_bind_mobile;
   const needEmail = !!reg?.require_bind_email;
-  const soft = reg?.bind_enforcement === 'prompt_only';
+  const mode = enforcementMode(reg);
+  const soft = isPromptEnforcement(mode);
   let need = '';
   if (needMobile && needEmail) {
-    need = reg?.bind_enforcement === 'any' ? '手机号或邮箱' : '手机号和邮箱';
+    need = requiresAnyBind(mode) ? '手机号或邮箱' : '手机号和邮箱';
   } else if (needMobile) {
     need = '手机号';
   } else if (needEmail) {

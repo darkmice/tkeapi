@@ -250,11 +250,7 @@ impl MemoryQuotaGuard {
     }
 
     /// 只读校验（鉴权中间件）：直接基于已查出的 ApiToken，零额外 DB 查询
-    pub fn check_quota(
-        &self,
-        token: &ApiToken,
-        timedisplay: &str,
-    ) -> Result<(), QuotaMemoryError> {
+    pub fn check_quota(&self, token: &ApiToken, timedisplay: &str) -> Result<(), QuotaMemoryError> {
         let keys = local_period_keys(timedisplay);
         let slot = self
             .slots

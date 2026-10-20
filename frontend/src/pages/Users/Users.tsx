@@ -6,13 +6,15 @@
  */
 
 import React, { useEffect, useState, useMemo, startTransition } from 'react';
-import { Table, Button, Space, Tag, Modal, Form, Input, InputNumber, message, Popconfirm, Card, Typography, Select, Progress, Grid, Radio, Tabs, Timeline, Row, Col, Tooltip, DatePicker, Statistic, Spin, Switch, Alert, Checkbox, App, theme } from 'antd';
+import { Table, Button, Space, Tag, Modal, Form, Input, InputNumber, message, Popconfirm, Card, Typography, Select, Progress, Grid, Radio, Tabs, Timeline, Row, Col, Tooltip, DatePicker, Statistic, Spin, Switch, Alert, Checkbox, App, theme, Avatar, Upload } from 'antd';
 import MobileCardList, { MobileCard, CardRow, CardActions } from '../../components/MobileCardList';
-import { listPagination } from '../../components/ListPagination';
+import { listPagination, useListPager } from '../../components/ListPagination';
 import ModelSelector from '../../components/ModelSelector';
 import WalletBalanceDisplay from '../../components/WalletBalanceDisplay';
 import WalletDetailsView from '../../components/WalletDetailsView';
 import UserKycListManager from '../../components/UserKycListManager';
+import UserCouponPanel from './UserCouponPanel';
+import AvatarCropModal from '../../components/AvatarCropModal';
 import { KYC_STATUS_META } from '../../components/UserKycFormFields';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, WalletOutlined, LoginOutlined, ArrowLeftOutlined, CloseOutlined, SearchOutlined, IdcardOutlined, CheckSquareOutlined, CheckCircleOutlined, StopOutlined, CreditCardOutlined, SettingOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -27,6 +29,7 @@ const TAB_KEY_TO_SLUG: Record<string, string> = {
   '4': 'discount',
   '6': 'kyc',
   '7': 'invoices',
+  '8': 'coupons',
 };
 
 const SLUG_TO_TAB_KEY: Record<string, string> = {
@@ -47,6 +50,8 @@ const SLUG_TO_TAB_KEY: Record<string, string> = {
   invoices: '7',
   invoice: '7',
   '7': '7',
+  coupons: '8',
+  '8': '8',
 };
 import useSettingsStore from '../../store/settings';
 import { useThemeStore } from '../../store/theme';
@@ -58,6 +63,14 @@ import { formatApiDateTime } from '../../utils/timedisplay';
 import { toAbsoluteDateParam } from '../../utils/dateRangeParams';
 import { Resizable } from 'react-resizable';
 import type { ResizeCallbackData } from 'react-resizable';
+
+function birthYmPayload(value: unknown): string {
+  if (dayjs.isDayjs(value)) {
+    return value.isValid() ? value.format('YYYY-MM') : '';
+  }
+  if (typeof value === 'string') return value.trim();
+  return '';
+}
 
 const ResizableTitle = (props: any) => {
   const { onResize, width, ...restProps } = props;
@@ -121,7 +134,7 @@ const { useBreakpoint } = Grid;
 // Helper: check if email is a real user-bound email (not a placeholder)
 const isRealEmail = (email?: string) => !!email && !email.endsWith('@tokensbyte.local');
 
-type ContactKind = 'email' | 'mobile';
+type ContactKind = 'email' | 'mobile' | 'wechat';
 type ClickFilterKind = ContactKind | 'ip';
 type ContactFilter = { kind: ClickFilterKind; value: string };
 type ContactBindInfo = {
@@ -136,6 +149,19 @@ type ContactBindInfo = {
 /** 超级管理员：role=admin 且未绑定管理员等级 */
 const isSuperAdminUser = (user?: Pick<User, 'role' | 'admin_group_id'> | null) =>
   !!user && user.role === 'admin' && !user.admin_group_id;
+
+/** 已配置至少一条用户模型单独折扣 */
+function hasConfiguredModelDiscount(modelDiscounts?: string | null) {
+  if (!modelDiscounts) return false;
+  try {
+    const parsed = JSON.parse(modelDiscounts);
+    return !!parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+type UserFeatureFilter = 'all' | 'credit' | 'model_discount';
 
 /** 模型折扣 Tag：悬停一眼看全模型名与倍率（沿用早期友好布局） */
 function ModelDiscountHoverTag({
@@ -214,6 +240,30 @@ function KycStatusTags({ record, onOpen }: { record: User; onOpen: () => void })
   );
 }
 
+const USER_LIST_SORT_ROWS = [
+  { key: 'balance', label: '系统钱包余额' },
+  { key: 'gift_balance', label: '赠送钱包余额' },
+  { key: 'credit_limit', label: '信控额度' },
+  { key: 'consumption', label: '消费合计' },
+  { key: 'commission', label: '佣金钱包' },
+] as const;
+
+type UserListSort =
+  | 'default'
+  | 'balance_desc' | 'balance_asc'
+  | 'gift_balance_desc' | 'gift_balance_asc'
+  | 'credit_limit_desc' | 'credit_limit_asc'
+  | 'consumption_desc' | 'consumption_asc'
+  | 'commission_desc' | 'commission_asc';
+
+const userListSortOptions: { value: UserListSort; label: string }[] = [
+  { value: 'default', label: '默认排序' },
+  ...USER_LIST_SORT_ROWS.flatMap((row) => [
+    { value: `${row.key}_desc` as UserListSort, label: `${row.label} ↓` },
+    { value: `${row.key}_asc` as UserListSort, label: `${row.label} ↑` },
+  ]),
+];
+
 const Users: React.FC = () => {
   const { themeMode } = useThemeStore();
   const _isLight = themeMode === 'light';
@@ -232,7 +282,11 @@ const Users: React.FC = () => {
   const isAdminPage = location.pathname.includes('/admins');
   const targetRole = isAdminPage ? 'admin' : 'user';
   
-  const { settings } = useSettingsStore();
+  const { settings, updateStoreSettings, fetchSettings } = useSettingsStore();
+
+  useEffect(() => {
+    fetchSettings();
+  }, [fetchSettings]);
   const adminPath = settings?.site?.admin_path || 'admin1688';
   const basePath = isAdminPage ? 'admins' : 'users';
   const isInvoiceEnabled = settings?.invoices?.invoice_enabled !== false;
@@ -252,6 +306,8 @@ const Users: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarCropFile, setAvatarCropFile] = useState<File | null>(null);
   const [isRechargeModalVisible, setIsRechargeModalVisible] = useState(false);
   const [rechargingUser, setRechargingUser] = useState<User | null>(null);
   const [rechargeLoading, setRechargeLoading] = useState(false);
@@ -263,6 +319,7 @@ const Users: React.FC = () => {
   const [isBatchEditMode, setIsBatchEditMode] = useState<boolean>(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [batchLoading, setBatchLoading] = useState<boolean>(false);
+  const { page: currentPage, pageSize, setPage: setCurrentPage, onChange: onPageChange } = useListPager();
 
   useEffect(() => {
     if (users.length === 0 || walletTimeFilter !== 'month') {
@@ -339,8 +396,10 @@ const Users: React.FC = () => {
   };
 
   const [filterReferrer, setFilterReferrer] = useState('');
-  /** 排序：default / 系统钱包余额 / 赠送钱包余额 / 信控额度 / 消费合计 */
-  const [listSort, setListSort] = useState<'default' | 'balance_desc' | 'balance_asc' | 'gift_balance_desc' | 'gift_balance_asc' | 'credit_limit_desc' | 'credit_limit_asc' | 'consumption_desc' | 'consumption_asc'>('default');
+  const [featureFilter, setFeatureFilter] = useState<UserFeatureFilter>('all');
+  /** 排序：默认 / 系统钱包 / 赠送钱包 / 信控 / 消费合计 / 佣金钱包，升降序各一个值 */
+  const [listSort, setListSort] = useState<UserListSort>('default');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [form] = Form.useForm();
   const [rechargeForm] = Form.useForm();
   const rechargeActionType = Form.useWatch('actionType', rechargeForm);
@@ -413,6 +472,12 @@ const Users: React.FC = () => {
         : result.filter(user => user.user_group === filterGroup);
     }
 
+    if (!isAdminPage && featureFilter === 'credit') {
+      result = result.filter(user => (user.credit_limit || 0) > 0);
+    } else if (!isAdminPage && featureFilter === 'model_discount') {
+      result = result.filter(user => hasConfiguredModelDiscount(user.model_discounts));
+    }
+
     const trimmedFilterReferrer = filterReferrer.trim();
     if (trimmedFilterReferrer) {
       const lowerRef = trimmedFilterReferrer.toLowerCase();
@@ -434,6 +499,8 @@ const Users: React.FC = () => {
         result = result.filter(user => isRealEmail(user.email) && user.email!.toLowerCase() === want);
       } else if (contactFilter.kind === 'mobile') {
         result = result.filter(user => (user.mobile || '').trim() === contactFilter.value);
+      } else if (contactFilter.kind === 'wechat') {
+        result = result.filter(user => (user.wechat_id || '').trim() === contactFilter.value);
       } else {
         const want = contactFilter.value.toLowerCase();
         result = result.filter(user => (user.register_ip || '').trim().toLowerCase() === want);
@@ -449,6 +516,8 @@ const Users: React.FC = () => {
         user.nickname?.toLowerCase().includes(lower) ||
         (isRealEmail(user.email) && user.email!.toLowerCase().includes(lower)) ||
         user.mobile?.toLowerCase().includes(lower) ||
+        user.wechat_id?.toLowerCase().includes(lower) ||
+        user.wechat_name?.toLowerCase().includes(lower) ||
         user.register_ip?.toLowerCase().includes(lower) ||
         user.admin_remark?.toLowerCase().includes(lower)
       );
@@ -490,10 +559,33 @@ const Users: React.FC = () => {
           : (b.used_quota || 0);
         return listSort === 'consumption_desc' ? costB - costA : costA - costB;
       });
+    } else if (listSort === 'commission_desc' || listSort === 'commission_asc') {
+      result = [...result].sort((a, b) => {
+        const commA = a.commission_balance || 0;
+        const commB = b.commission_balance || 0;
+        return listSort === 'commission_desc' ? commB - commA : commA - commB;
+      });
     }
     
     return result;
-  }, [users, searchText, contactFilter, filterGroup, filterReferrer, allUsers, listSort, walletTimeFilter, monthConsumptionMap, isAdminPage]);
+  }, [users, searchText, contactFilter, filterGroup, featureFilter, filterReferrer, allUsers, listSort, walletTimeFilter, monthConsumptionMap, isAdminPage]);
+
+  // ===== 当前页用户列表（全选时仅全选当前页） =====
+  const currentPageUsers = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return displayedUsers.slice(startIndex, startIndex + pageSize);
+  }, [displayedUsers, currentPage, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchText, contactFilter, filterGroup, featureFilter, filterReferrer, listSort, walletTimeFilter]);
+
+  useEffect(() => {
+    const maxPage = Math.ceil(displayedUsers.length / pageSize);
+    if (maxPage > 0 && currentPage > maxPage) {
+      setCurrentPage(maxPage);
+    }
+  }, [displayedUsers.length, pageSize, currentPage]);
 
   const applyContactFilter = (kind: ClickFilterKind, value: string) => {
     const trimmed = value.trim();
@@ -508,6 +600,7 @@ const Users: React.FC = () => {
       setSearchParams(newParams, { replace: true });
     }
     setFilterReferrer('');
+    setFeatureFilter('all');
     setContactFilter({ kind, value: trimmed });
   };
 
@@ -583,10 +676,71 @@ const Users: React.FC = () => {
     }
   };
 
-  const renderContactLink = (kind: ClickFilterKind, value: string, opts?: { compact?: boolean }) => {
-    const normalize = (v: string) => (kind === 'mobile' ? v.trim() : v.trim().toLowerCase());
+  const [blacklistLoading, setBlacklistLoading] = useState(false);
+
+  const handleAddIpToBlacklist = async (ipToAdd: string) => {
+    const ip = ipToAdd.trim();
+    if (!ip) return;
+    setBlacklistLoading(true);
+    try {
+      let currentSettings = settings;
+      if (!currentSettings?.site) {
+        currentSettings = (await request.get('/settings')) as any;
+      }
+      const currentList = currentSettings?.site?.ip_blacklist || [];
+      if (currentList.includes(ip)) {
+        message.info(`IP ${ip} 已在黑名单列表中`);
+        return;
+      }
+      const nextList = [...currentList, ip];
+      const payload = {
+        site: {
+          ...currentSettings?.site,
+          ip_blacklist_enabled: true,
+          ip_blacklist: nextList,
+        },
+      };
+      const updated = (await request.post('/settings', payload)) as any;
+      updateStoreSettings(updated);
+      message.success(`已将 IP ${ip} 快捷加入注册黑名单并立即生效拦截`);
+    } catch (error) {
+      console.error('Failed to add IP to blacklist:', error);
+    } finally {
+      setBlacklistLoading(false);
+    }
+  };
+
+  const handleRemoveIpFromBlacklist = async (ipToRemove: string) => {
+    const ip = ipToRemove.trim();
+    if (!ip) return;
+    setBlacklistLoading(true);
+    try {
+      let currentSettings = settings;
+      if (!currentSettings?.site) {
+        currentSettings = (await request.get('/settings')) as any;
+      }
+      const currentList = currentSettings?.site?.ip_blacklist || [];
+      const nextList = currentList.filter((item: string) => item.trim() !== ip);
+      const payload = {
+        site: {
+          ...currentSettings?.site,
+          ip_blacklist: nextList,
+        },
+      };
+      const updated = (await request.post('/settings', payload)) as any;
+      updateStoreSettings(updated);
+      message.success(`已将 IP ${ip} 从注册黑名单中移除`);
+    } catch (error) {
+      console.error('Failed to remove IP from blacklist:', error);
+    } finally {
+      setBlacklistLoading(false);
+    }
+  };
+
+  const renderContactLink = (kind: ClickFilterKind, value: string, opts?: { compact?: boolean; displayText?: string }) => {
+    const normalize = (v: string) => (kind === 'mobile' || kind === 'wechat' ? v.trim() : v.trim().toLowerCase());
     const active = contactFilter?.kind === kind && normalize(contactFilter.value) === normalize(value);
-    const label = kind === 'email' ? '邮箱' : kind === 'mobile' ? '手机号' : '注册 IP';
+    const label = kind === 'email' ? '邮箱' : kind === 'mobile' ? '手机号' : kind === 'wechat' ? '微信' : '注册 IP';
     return (
       <Button
         type="link"
@@ -598,13 +752,13 @@ const Users: React.FC = () => {
           maxWidth: 220,
           color: active ? '#1677ff' : undefined,
         }}
-        title={`点击筛选该${label}下的账号`}
+        title={`点击筛选该${label}下的账号 (${value})`}
         onClick={(e) => {
           e.stopPropagation();
           applyContactFilter(kind, value);
         }}
       >
-        {value}
+        {opts?.displayText || value}
       </Button>
     );
   };
@@ -706,8 +860,10 @@ const Users: React.FC = () => {
 
     form.setFieldsValue({
       ...record,
+      email: isRealEmail(record.email) ? record.email : '',
       referred_by: initialReferredBy,
       password: '', // Don't show password
+      birth_ym: record.birth_ym ? dayjs(record.birth_ym) : null,
     });
     // 初始化模型折扣数据
     const md: Record<string, number> = record.model_discounts ? (() => { try { return JSON.parse(record.model_discounts); } catch { return {}; } })() : {};
@@ -796,10 +952,11 @@ const Users: React.FC = () => {
     const targetTab = resolvedTabKey || '1';
 
     if (actionId === 'new') {
+      const defaultGroupKey = userLevels.find((l: any) => l.is_default === 1)?.group_key || 'default';
       setIsModalVisible(true);
       setEditingUser(null);
       form.resetFields();
-      form.setFieldsValue({ role: targetRole, is_active: 1, balance: 0, gift_balance: 0, user_group: 'default' });
+      form.setFieldsValue({ role: targetRole, is_active: 1, balance: 0, gift_balance: 0, user_group: defaultGroupKey });
       setDiscountMap({});
       setDiscountMids([]);
       setKycCount(0);
@@ -829,7 +986,7 @@ const Users: React.FC = () => {
 
     // 列表未加载或未找到：从后端获取该用户详情
     loadUserData(actionId, targetTab);
-  }, [actionId, resolvedTabKey, allUsers.length]);
+  }, [actionId, resolvedTabKey, allUsers.length, userLevels.length]);
 
   // 当 allUsers 异步加载完成后，若当前正在编辑用户，同步校准推荐人字段值为其对应 id
   useEffect(() => {
@@ -954,6 +1111,7 @@ const Users: React.FC = () => {
     try {
       if (editingUser) {
         const payload = { ...values };
+        payload.birth_ym = birthYmPayload(payload.birth_ym);
         if (!payload.password || (payload.password as string).trim() === '') {
           delete payload.password;
         }
@@ -999,6 +1157,7 @@ const Users: React.FC = () => {
         message.success(t('common.success'));
       } else {
         const payload: any = { ...values, role: targetRole };
+        payload.birth_ym = birthYmPayload(payload.birth_ym);
         if (payload.referred_by && payload.username && String(payload.referred_by).trim() === String(payload.username).trim()) {
           message.error('不能将自己设置为上级推荐人');
           return;
@@ -1311,7 +1470,9 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                   </span>
                 </div>
                 <div style={{ fontSize: 12, color: textSecondary, marginTop: 2 }}>
-                  按 {ratioPercent}% {isAward ? '向上级' : '从上级'} {preview.inviter_username} {isAward ? '佣金钱包发放' : '扣回佣金'}
+                  {isAward
+                    ? `按 ${ratioPercent}% 向上级 ${preview.inviter_username} 佣金钱包发放`
+                    : `按已入账佣金从上级 ${preview.inviter_username} 扣回`}
                 </div>
                 {!isAward && choice === true && (
                   <div style={{ marginTop: 6, fontSize: 11, color: textSecondary, lineHeight: 1.5, borderTop: `1px dashed ${borderCard}`, paddingTop: 4 }}>
@@ -1517,6 +1678,42 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
     }
   };
 
+  const handleAvatarUpload = async (file: File) => {
+    const target = editingUser;
+    if (!target) return Upload.LIST_IGNORE;
+    if (!file.type.startsWith('image/')) {
+      message.error('头像只支持图片格式');
+      return Upload.LIST_IGNORE;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      message.error('图片不能超过 50MB');
+      return Upload.LIST_IGNORE;
+    }
+    setAvatarCropFile(file);
+    return Upload.LIST_IGNORE;
+  };
+
+  const handleAvatarCropped = async (blob: Blob) => {
+    const target = editingUser;
+    if (!target) return;
+    setAvatarUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', blob, 'avatar.jpg');
+      const res = await (request.post(`/users/${target.uid || target.id}/avatar`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }) as unknown as Promise<{ avatar: string }>);
+      setEditingUser(prev => (prev && prev.id === target.id ? { ...prev, avatar: res.avatar } : prev));
+      setAllUsers(prev => prev.map(u => (u.id === target.id ? { ...u, avatar: res.avatar } : u)));
+      setAvatarCropFile(null);
+      message.success('头像已更新');
+    } catch (err: any) {
+      message.error(err?.response?.data?.error?.message || err?.message || '头像上传失败');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const handleImpersonate = async (record: User) => {
     try {
       const resp = await (request.post(`/users/${record.uid || record.id}/impersonate`) as unknown as Promise<{ token: string; user: User }>);
@@ -1559,7 +1756,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
       render: (text: string, record: User) => (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <Space align="center" style={{ flexWrap: 'wrap' }}>
-            <UserOutlined />
+            <Avatar size={22} src={record.avatar || undefined} icon={<UserOutlined />} />
             <a onClick={() => handleEdit(record)} style={{ color: 'inherit' }}>
               <Text strong style={{ cursor: 'pointer' }}>{text}</Text>
             </a>
@@ -1635,6 +1832,22 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
               </span>
             </div>
           )}
+          {record.wechat_id && (
+            <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+              <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>微信: </Text>
+              <span style={{ marginLeft: 4, minWidth: 0 }}>
+                {isAdminPage ? (
+                  <Text type="secondary" style={{ maxWidth: 220 }} ellipsis={{ tooltip: record.wechat_name ? `${record.wechat_name} (${record.wechat_id})` : record.wechat_id }}>
+                    {record.wechat_name || record.wechat_id}
+                  </Text>
+                ) : (
+                  renderContactLink('wechat', record.wechat_id, {
+                    displayText: record.wechat_name ? `${record.wechat_name} (${record.wechat_id.slice(0, 8)}…)` : record.wechat_id,
+                  })
+                )}
+              </span>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>注册 IP: </Text>
             <span style={{ marginLeft: 4 }}>
@@ -1663,6 +1876,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
         
         const level = userLevels.find(l => l.group_key === group);
         const levelName = level ? level.name : (group || 'default').toUpperCase();
+        const levelDiscEnabled = level ? (((level.discount_type ?? 1) & 1) !== 0) : false;
         
         return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
@@ -1671,7 +1885,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
             </Tag>
             {level && (
               <Text type="secondary" style={{ fontSize: '12px' }}>
-                折扣倍率: {level.discount}x
+                {levelDiscEnabled ? `折扣倍率: ${level.discount}x` : `折扣倍率: ${level.discount}x (未启用)`}
               </Text>
             )}
           </div>
@@ -1759,11 +1973,15 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
             <Select
               value={filterGroup}
               onChange={handleFilterGroupChange}
-              style={{ width: screens.xs ? '100%' : 200, fontSize: 12, height: 32 }}
-              styles={{ popup: { root: { fontSize: 12 } } }}
+              popupMatchSelectWidth={false}
+              style={{ width: screens.xs ? '100%' : 128, fontSize: 12, height: 32 }}
+              styles={{ popup: { root: { fontSize: 12, minWidth: 200 } } }}
               options={[
                 { value: 'all', label: '全部用户等级' },
-                ...userLevels.map(level => ({ value: level.group_key, label: `${level.name} (${level.discount}x)` }))
+                ...userLevels.map(level => {
+                  const levelDiscEnabled = ((level.discount_type ?? 1) & 1) !== 0;
+                  return { value: level.group_key, label: `${level.name} (${level.discount}x${levelDiscEnabled ? '' : '·未启用'})` };
+                })
               ]}
             />
           )}
@@ -1782,20 +2000,76 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
           {!isAdminPage && (
             <Select
               value={listSort}
+              open={sortMenuOpen}
+              onOpenChange={setSortMenuOpen}
               onChange={setListSort}
-              style={{ width: screens.xs ? '100%' : 200, fontSize: 12, height: 32 }}
-              styles={{ popup: { root: { fontSize: 12 } } }}
-              options={[
-                { value: 'default', label: '默认排序' },
-                { value: 'balance_desc', label: '系统钱包余额 ↓' },
-                { value: 'balance_asc', label: '系统钱包余额 ↑' },
-                { value: 'gift_balance_desc', label: '赠送钱包余额 ↓' },
-                { value: 'gift_balance_asc', label: '赠送钱包余额 ↑' },
-                { value: 'credit_limit_asc', label: '信控额度 ↑' },
-                { value: 'credit_limit_desc', label: '信控额度 ↓' },
-                { value: 'consumption_desc', label: '消费合计 ↓' },
-                { value: 'consumption_asc', label: '消费合计 ↑' },
-              ]}
+              popupMatchSelectWidth={false}
+              style={{ width: screens.xs ? '100%' : 108, fontSize: 12, height: 32 }}
+              styles={{ popup: { root: { fontSize: 12, padding: 4, minWidth: 220 } } }}
+              options={userListSortOptions}
+              popupRender={() => (
+                <div onMouseDown={(e) => e.preventDefault()}>
+                  <div
+                    onClick={() => { setListSort('default'); setSortMenuOpen(false); }}
+                    style={{
+                      padding: '6px 8px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      background: listSort === 'default'
+                        ? (_isLight ? 'rgba(22,119,255,0.08)' : 'rgba(22,119,255,0.2)')
+                        : 'transparent',
+                    }}
+                  >
+                    默认排序
+                  </div>
+                  {USER_LIST_SORT_ROWS.map((row) => {
+                    const desc = `${row.key}_desc` as UserListSort;
+                    const asc = `${row.key}_asc` as UserListSort;
+                    const dirBtn = (value: UserListSort, glyph: string) => {
+                      const active = listSort === value;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => { setListSort(value); setSortMenuOpen(false); }}
+                          style={{
+                            width: 28,
+                            height: 24,
+                            border: 'none',
+                            borderRadius: 4,
+                            cursor: 'pointer',
+                            fontSize: 13,
+                            lineHeight: '24px',
+                            padding: 0,
+                            background: active ? '#1677ff' : 'transparent',
+                            color: active ? '#fff' : (_isLight ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.75)'),
+                          }}
+                        >
+                          {glyph}
+                        </button>
+                      );
+                    };
+                    return (
+                      <div
+                        key={row.key}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          padding: '2px 4px 2px 8px',
+                          borderRadius: 4,
+                        }}
+                      >
+                        <span>{row.label}</span>
+                        <span style={{ display: 'flex', gap: 2 }}>
+                          {dirBtn(desc, '↓')}
+                          {dirBtn(asc, '↑')}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             />
           )}
           {!isAdminPage && (
@@ -1809,13 +2083,14 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                 { label: '当月数据', value: 'month' },
                 { label: '全部数据', value: 'all' },
               ]}
-              style={{ width: screens.xs ? '100%' : 140, fontSize: 12, height: 32 }}
-              styles={{ popup: { root: { fontSize: 12 } } }}
+              popupMatchSelectWidth={false}
+              style={{ width: screens.xs ? '100%' : 108, fontSize: 12, height: 32 }}
+              styles={{ popup: { root: { fontSize: 12, minWidth: 120 } } }}
             />
           )}
           <Input 
             prefix={<SearchOutlined style={{ color: 'var(--ant-color-text-quaternary, #bfbfbf)' }} />}
-            placeholder="搜索用户名/ID/昵称/邮箱/手机号/IP/备注..." 
+            placeholder="搜索用户名/ID/昵称/邮箱/手机号/微信/IP/备注..." 
             allowClear 
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)} 
@@ -1833,6 +2108,19 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
               onBlur={() => setFilterReferrer(filterReferrer.trim())}
               onPressEnter={(e) => setFilterReferrer((e.target as HTMLInputElement).value.trim())}
               style={{ width: screens.xs ? '100%' : 220, fontSize: 12, height: 32 }}
+            />
+          )}
+          {!isAdminPage && (
+            <Select
+              value={featureFilter}
+              onChange={setFeatureFilter}
+              style={{ width: screens.xs ? '100%' : 108, fontSize: 12, height: 32 }}
+              styles={{ popup: { root: { fontSize: 12 } } }}
+              options={[
+                { value: 'all', label: '全部用户' },
+                { value: 'model_discount', label: '模型打折' },
+                { value: 'credit', label: '信控用户' },
+              ]}
             />
           )}
           {!isAdminPage && (
@@ -1861,19 +2149,59 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
           onClose={() => setContactFilter(null)}
           style={{ marginBottom: 12 }}
           message={
-            <Space wrap size={8}>
+            <Space wrap size={10} style={{ alignItems: 'center' }}>
               <span>
                 {contactFilter.kind === 'ip' ? (
                   `当前筛选注册 IP ${contactFilter.value}：共 ${displayedUsers.length} 个账号`
                 ) : (
                   <>
-                    当前筛选{contactFilter.kind === 'email' ? '邮箱' : '手机号'} {contactFilter.value}
+                    当前筛选{contactFilter.kind === 'email' ? '邮箱' : contactFilter.kind === 'mobile' ? '手机号' : '微信'} {contactFilter.value}
                     {contactBind
                       ? `：已绑定 ${contactBind.bound_count} 个账号，上限 ${contactBind.limit}${contactBind.is_override ? `（已单独设置，站点默认 ${contactBind.default_limit}）` : '（站点默认）'}`
                       : ''}
                   </>
                 )}
               </span>
+              {contactFilter.kind === 'ip' && (() => {
+                const ipVal = contactFilter.value.trim();
+                const isBlacklisted = (settings?.site?.ip_blacklist || []).includes(ipVal);
+                if (isBlacklisted) {
+                  return (
+                    <Space size={6}>
+                      <Tag color="error">已在黑名单</Tag>
+                      <Popconfirm
+                        title={`确定将 IP ${ipVal} 从注册黑名单中移出？`}
+                        okText="移出"
+                        cancelText="取消"
+                        onConfirm={() => handleRemoveIpFromBlacklist(ipVal)}
+                      >
+                        <Button type="link" size="small" danger loading={blacklistLoading} style={{ padding: 0 }}>
+                          移出黑名单
+                        </Button>
+                      </Popconfirm>
+                    </Space>
+                  );
+                }
+                return (
+                  <Popconfirm
+                    title={`确定将 IP ${ipVal} 加入黑名单？`}
+                    description="加入后，该 IP 将无法进行登录、注册、找回密码和绑定账号等操作。"
+                    okText="确认加入"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => handleAddIpToBlacklist(ipVal)}
+                  >
+                    <Button
+                      danger
+                      size="small"
+                      icon={<StopOutlined />}
+                      loading={blacklistLoading}
+                    >
+                      IP加入黑名单
+                    </Button>
+                  </Popconfirm>
+                );
+              })()}
               {contactFilter.kind !== 'ip' && (
                 <Button type="link" size="small" icon={<SettingOutlined />} onClick={openLimitModal}>修改上限</Button>
               )}
@@ -1901,7 +2229,8 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
             <Button
               size="small"
               onClick={() => {
-                setSelectedRowKeys(displayedUsers.map(u => u.id));
+                const ids = currentPageUsers.map(u => u.id);
+                setSelectedRowKeys(prev => Array.from(new Set([...prev.map(k => Number(k)), ...ids])));
               }}
             >
               全选
@@ -1981,10 +2310,15 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
 
       {screens.xs ? (
         <MobileCardList
-          dataSource={displayedUsers}
+          dataSource={currentPageUsers}
           loading={loading}
           rowKey="id"
-          pagination={listPagination()}
+          pagination={listPagination({
+            current: currentPage,
+            pageSize,
+            total: displayedUsers.length,
+            onChange: onPageChange,
+          })}
           renderCard={(record: any) => {
             const level = userLevels.find((l: any) => l.group_key === record.user_group);
             const levelName = level ? level.name : (record.user_group || 'default').toUpperCase();
@@ -2004,7 +2338,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                         }}
                       />
                     )}
-                    <UserOutlined />
+                    <Avatar size={22} src={record.avatar || undefined} icon={<UserOutlined />} />
                     <Text strong>{record.username}</Text>
                     {record.nickname && <Text type="secondary">({record.nickname})</Text>}
                   </Space>
@@ -2040,6 +2374,18 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                       <Text style={{ fontSize: 12 }}>{record.mobile}</Text>
                     ) : (
                       renderContactLink('mobile', record.mobile, { compact: true })
+                    )}
+                  </CardRow>
+                )}
+                {record.wechat_id && (
+                  <CardRow label="微信">
+                    {isAdminPage ? (
+                      <Text style={{ fontSize: 12 }}>{record.wechat_name || record.wechat_id}</Text>
+                    ) : (
+                      renderContactLink('wechat', record.wechat_id, {
+                        compact: true,
+                        displayText: record.wechat_name ? `${record.wechat_name} (${record.wechat_id.slice(0, 8)}…)` : record.wechat_id,
+                      })
                     )}
                   </CardRow>
                 )}
@@ -2106,7 +2452,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                       </Tag>
                       {level && (
                         <Text type="secondary" style={{ fontSize: '12px' }}>
-                          折扣倍率: {level.discount}x
+                          {((level.discount_type ?? 1) & 1) !== 0 ? `折扣倍率: ${level.discount}x` : `折扣倍率: ${level.discount}x (未启用)`}
                         </Text>
                       )}
                     </div>
@@ -2172,11 +2518,17 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
           rowKey="id"
           loading={loading}
           size="small"
-          pagination={listPagination()}
+          pagination={listPagination({
+            current: currentPage,
+            pageSize,
+            total: displayedUsers.length,
+            onChange: onPageChange,
+          })}
           scroll={{ x: 'max-content' }}
           showSorterTooltip={false}
           rowSelection={isBatchEditMode && !isAdminPage ? {
             selectedRowKeys,
+            preserveSelectedRowKeys: true,
             onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
           } : undefined}
         />
@@ -2207,6 +2559,18 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                     children: (
                       <>
           {editingUser?.uid && (
+            <Form.Item label="用户头像" extra="点击头像选择 50MB 以内的图片，在浏览器内裁剪后保存为 256×256">
+              <Upload accept="image/*" showUploadList={false} beforeUpload={handleAvatarUpload} disabled={avatarUploading}>
+                <Spin spinning={avatarUploading}>
+                  <Avatar size={64} src={editingUser.avatar || undefined} icon={<UserOutlined />} style={{ cursor: 'pointer' }} />
+                </Spin>
+              </Upload>
+              {avatarCropFile && (
+                <AvatarCropModal file={avatarCropFile} onCancel={() => setAvatarCropFile(null)} onConfirm={handleAvatarCropped} />
+              )}
+            </Form.Item>
+          )}
+          {editingUser?.uid && (
             <Form.Item label="用户 UID">
               <Input
                 value={editingUser.uid}
@@ -2236,6 +2600,32 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
             rules={[{ max: 24, message: '昵称长度最多不能超过 24 个字符' }]}
           >
             <Input placeholder="输入用户昵称" />
+          </Form.Item>
+          <Form.Item label="姓名" style={{ marginBottom: 0 }}>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <Form.Item
+                name="first_name"
+                style={{ flex: 1 }}
+                rules={[{ max: 32, message: '名长度最多不能超过 32 个字符' }]}
+              >
+                <Input addonBefore="名" placeholder="请输入名" allowClear />
+              </Form.Item>
+              <Form.Item
+                name="last_name"
+                style={{ flex: 1 }}
+                rules={[{ max: 32, message: '姓氏长度最多不能超过 32 个字符' }]}
+              >
+                <Input addonBefore="姓氏" placeholder="请输入姓氏" allowClear />
+              </Form.Item>
+            </div>
+          </Form.Item>
+          <Form.Item name="birth_ym" label="出生年月">
+            <DatePicker
+              picker="month"
+              style={{ width: '100%' }}
+              placeholder="选择出生年月"
+              disabledDate={(current) => !!current && (current.isAfter(dayjs(), 'month') || current.year() < 1900)}
+            />
           </Form.Item>
           <Form.Item name="admin_remark" label="用户备注 (管理员可见)">
             <Input.TextArea placeholder="写入简便备注例如: vip客户" rows={3} autoSize={{ minRows: 2, maxRows: 6 }} />
@@ -2280,8 +2670,11 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
           <Form.Item name="mobile" label="手机号" extra="同一手机号默认可绑定多个用户（上限见注册设置）；列表里点击手机号可筛选并单独改这条上限">
             <Input placeholder="输入用户手机号 (可选)" />
           </Form.Item>
-          <Form.Item name="email" label={t('users.email')} rules={[{ required: true, type: 'email' }]} extra="同一邮箱默认可绑定多个用户（上限见注册设置）；列表里点击邮箱可筛选并单独改这条上限">
-            <Input placeholder="email@example.com" />
+          <Form.Item name="email" label={t('users.email')} rules={[{ type: 'email' }]} extra="同一邮箱默认可绑定多个用户（上限见注册设置）；列表里点击邮箱可筛选并单独改这条上限；清空保存即可解绑邮箱">
+            <Input placeholder="email@example.com (可选)" allowClear />
+          </Form.Item>
+          <Form.Item name="wechat_id" label="微信标识 (OpenID / UnionID)" extra="同一微信默认可绑定多个用户（上限见注册设置）；列表里点击微信可筛选并单独改这条上限；清空保存即可解绑微信">
+            <Input placeholder="输入微信 OpenID 或 UnionID (可选)" allowClear />
           </Form.Item>
           <Form.Item 
             name="password" 
@@ -2321,11 +2714,14 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
           {!isAdminPage && (
             <Form.Item name="user_group" label="普通用户等级" initialValue="default">
               <Select>
-                {userLevels.map(level => (
-                  <Option key={level.id} value={level.group_key}>
-                    {level.name} (折扣倍率: {level.discount}x)
-                  </Option>
-                ))}
+                {userLevels.map(level => {
+                  const levelDiscEnabled = ((level.discount_type ?? 1) & 1) !== 0;
+                  return (
+                    <Option key={level.id} value={level.group_key}>
+                      {level.name} (折扣倍率: {level.discount}x{levelDiscEnabled ? '' : ' · 等级折扣未启用'})
+                    </Option>
+                  );
+                })}
               </Select>
             </Form.Item>
           )}
@@ -2472,7 +2868,9 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                         }, {
                           label: '💬 微信',
                           bound: !!editingUser.wechat_id,
-                          value: editingUser.wechat_name || editingUser.wechat_id || null,
+                          value: editingUser.wechat_name && editingUser.wechat_id && editingUser.wechat_name !== editingUser.wechat_id
+                            ? `${editingUser.wechat_name} (${editingUser.wechat_id})`
+                            : (editingUser.wechat_name || editingUser.wechat_id || null),
                         }].map(item => (
                           <div key={item.label} style={{ padding: '12px 16px', borderRadius: 8, background: 'var(--ant-color-fill-quaternary, rgba(0,0,0,0.02))', border: '1px solid var(--ant-color-border-secondary, #f0f0f0)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Space>
@@ -2518,7 +2916,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                     children: (
                       <div style={{ marginTop: 8 }}>
                         <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 13 }}>
-                          为该用户针对特定模型设置单独折扣。系统取 MIN(用户模型折扣, 全站折扣, 用户等级折扣) 最低值，再与渠道倍率相乘；若模型开启折扣限价则对乘积 MAX 保底。
+                          为该用户针对特定模型设置单独折扣。系统在用户等级已勾选的折扣项（用户等级折扣、用户模型折扣、模型全站折扣、上游渠道倍率）中匹配最低值，并与模型折扣限价匹配确保不低于限价（低于限价则按模型限价执行）。
                         </Typography.Text>
                         <Row gutter={24}>
                           {/* 左侧：已选模型及折扣设置 */}
@@ -2559,12 +2957,12 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                           <InputNumber
                                             size="small"
-                                            min={siteDiscount !== null ? siteDiscount : 0}
+                                            min={siteDiscount !== null && siteDiscount > 0 ? siteDiscount : 0.01}
                                             max={2}
                                             step={0.05}
                                             precision={2}
                                             value={discount}
-                                            onChange={(val) => setDiscountMap(prev => ({ ...prev, [mid]: val ?? 1 }))}
+                                            onChange={(val) => setDiscountMap(prev => ({ ...prev, [mid]: val && val > 0 ? val : 1 }))}
                                             style={{ width: 100 }}
                                             placeholder="折扣倍率"
                                             addonAfter="x"
@@ -2624,6 +3022,13 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
                         onKycCountChange={(cnt) => setKycCount(cnt)}
                       />
                     ),
+                  }] : []),
+                  ...(editingUser && !isAdminPage ? [{
+                    key: '8',
+                    label: '卡券详细',
+                    children: (
+                      <UserCouponPanel userId={editingUser.uid || editingUser.id} />
+                    ),
                   }] : [])
                 ]}
               />
@@ -2639,7 +3044,7 @@ const ConfirmModalContent: React.FC<ConfirmModalContentProps> = ({
       )}
 
       <Modal
-        title={`修改${contactFilter?.kind === 'email' ? '邮箱' : '手机号'}绑定上限`}
+        title={`修改${contactFilter?.kind === 'email' ? '邮箱' : contactFilter?.kind === 'mobile' ? '手机号' : '微信'}绑定上限`}
         open={limitModalOpen}
         onCancel={() => setLimitModalOpen(false)}
         onOk={saveContactLimit}

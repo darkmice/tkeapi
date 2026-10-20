@@ -8,7 +8,10 @@
 use crate::error::AppResult;
 use crate::time_system::DbTs;
 use crate::AppState;
-use axum::{extract::{Query, State}, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -31,10 +34,10 @@ pub struct FinanceQuery {
     pub order_no: Option<String>,
 }
 
-/// 财务列表筛选：始终按站点默认时区解释墙钟。落库仍是 UTC。
+/// 财务列表筛选：按管理后台展示时区解释墙钟。落库仍是 UTC。
 async fn finance_filter_tz(state: &AppState) -> chrono_tz::Tz {
-    let site_tz_name = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
-    crate::time_system::parse_timedisplay(&site_tz_name)
+    let tz_name = crate::relay::relay_settings::get_cached_admin_display_timezone(&state.db).await;
+    crate::time_system::parse_timedisplay(&tz_name)
 }
 
 // ========== 充值记录（recharge_records）==========
@@ -84,6 +87,8 @@ pub struct FinanceRechargeResponse {
     pub data: Vec<FinanceRechargeRecord>,
     pub total: i64,
     pub total_amount: f64,
+    /// 同一筛选条件下，模型卡券兑换面值。兑换当时一次核销，不进入用户余额。
+    pub voucher_writeoff_amount: f64,
 }
 
 pub async fn list_recharges(
@@ -188,7 +193,7 @@ pub async fn list_recharges(
     })?;
 
     let total_amount_sql = format!(
-        "SELECT COALESCE(SUM(rr.amount), 0.0) {}{}",
+        "SELECT COALESCE(SUM(rr.amount), 0.0) {}{} AND COALESCE(rr.recharge_type, '') != 'model_voucher'",
         base_from, where_clause
     );
     let total_amount_query_str = state.db.format_query(&total_amount_sql);
@@ -198,10 +203,22 @@ pub async fn list_recharges(
     }
     let total_amount = amount_q.fetch_one(&state.db.pool).await.unwrap_or(0.0);
 
+    let writeoff_sql = format!(
+        "SELECT COALESCE(SUM(rr.amount), 0.0) {}{} AND rr.recharge_type = 'model_voucher'",
+        base_from, where_clause
+    );
+    let writeoff_query_str = state.db.format_query(&writeoff_sql);
+    let mut writeoff_q = sqlx::query_scalar::<_, f64>(&writeoff_query_str);
+    for val in &binds {
+        writeoff_q = writeoff_q.bind(val);
+    }
+    let voucher_writeoff_amount = writeoff_q.fetch_one(&state.db.pool).await.unwrap_or(0.0);
+
     Ok(Json(FinanceRechargeResponse {
         data,
         total,
         total_amount,
+        voucher_writeoff_amount,
     }))
 }
 
@@ -220,6 +237,9 @@ pub struct FinanceOrderRecord {
     pub trade_no: Option<String>,
     pub created_at: DbTs,
     pub paid_at: Option<DbTs>,
+    pub pay_currency: Option<String>,
+    pub pay_amount: Option<f64>,
+    pub fx_rate: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +247,7 @@ pub struct FinanceOrderResponse {
     pub data: Vec<FinanceOrderRecord>,
     pub total: i64,
     pub total_amount: f64,
+    pub payment_methods: Vec<String>,
 }
 
 pub async fn list_orders(
@@ -255,8 +276,16 @@ pub async fn list_orders(
     }
 
     if let Some(ref method) = query.payment_method {
-        where_clause.push_str(" AND o.payment_method = ?");
-        binds.push(method.clone());
+        if method == "allinpay_wechat" || method == "allinpay wechat" {
+            where_clause
+                .push_str(" AND o.payment_method IN ('allinpay_wechat', 'allinpay wechat')");
+        } else if method == "allinpay_alipay" || method == "allinpay alipay" {
+            where_clause
+                .push_str(" AND o.payment_method IN ('allinpay_alipay', 'allinpay alipay')");
+        } else {
+            where_clause.push_str(" AND o.payment_method = ?");
+            binds.push(method.clone());
+        }
     }
 
     let tz = finance_filter_tz(&state).await;
@@ -321,10 +350,29 @@ pub async fn list_orders(
     }
     let total_amount = amount_q.fetch_one(&state.db.pool).await.unwrap_or(0.0);
 
+    let payment_methods_sql = "SELECT DISTINCT o.payment_method FROM orders o JOIN users u ON o.user_id = u.id WHERE o.payment_method IS NOT NULL AND o.payment_method != ''";
+    let raw_methods: Vec<String> =
+        sqlx::query_scalar(&state.db.format_query(payment_methods_sql))
+            .fetch_all(&state.db.pool)
+            .await
+            .unwrap_or_default();
+    let mut payment_methods: Vec<String> = Vec::new();
+    for m in raw_methods {
+        let normalized = match m.as_str() {
+            "allinpay wechat" => "allinpay_wechat".to_string(),
+            "allinpay alipay" => "allinpay_alipay".to_string(),
+            _ => m,
+        };
+        if !payment_methods.contains(&normalized) {
+            payment_methods.push(normalized);
+        }
+    }
+
     Ok(Json(FinanceOrderResponse {
         data,
         total,
         total_amount,
+        payment_methods,
     }))
 }
 
@@ -332,7 +380,10 @@ pub async fn list_recharge_types(
     State(state): State<Arc<AppState>>,
 ) -> AppResult<Json<Vec<String>>> {
     let types: Vec<String> = sqlx::query_scalar(&state.db.format_query(
-        "SELECT DISTINCT recharge_type FROM recharge_records WHERE recharge_type IS NOT NULL",
+        "SELECT DISTINCT recharge_type FROM recharge_records \
+         WHERE recharge_type IS NOT NULL \
+           AND COALESCE(wallet_type, 'system') = 'system' \
+           AND recharge_type NOT IN ('gift', 'registration', 'commission')",
     ))
     .fetch_all(&state.db.pool)
     .await?;
@@ -421,21 +472,10 @@ fn get_daily_stats_cache() -> &'static DashMap<String, (Instant, FinanceAnalysis
 
 pub async fn get_daily_stats(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
     Query(query): Query<FinanceDataAnalysisQuery>,
 ) -> AppResult<Json<FinanceAnalysisResponse>> {
-    let header_tz = headers
-        .get("x-timezone")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    // 财务聚合与 usage_daily_stats 归档一致：默认站点时区；header 可覆盖预览
-    let site_tz_name = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
-    let tz_src = if header_tz.trim().is_empty() {
-        site_tz_name.as_ref()
-    } else {
-        header_tz
-    };
-    let tz = crate::time_system::parse_timedisplay(tz_src);
+    // 财务日统计与 usage_daily_stats 归档一致：锁定站点运营时区，不受管理展示时区影响
+    let tz = crate::api::date_helper::resolve_site_operation_timezone(&state.db).await;
     let cache_key = format!(
         "{}_{}_{}",
         tz.name(),
@@ -524,7 +564,7 @@ async fn calculate_finance_stats(
                 SUM(total_cost) as total_cost,
                 COUNT(DISTINCT token_id) FILTER (WHERE token_id != -1) as active_tokens,
                 COUNT(DISTINCT user_id) as active_users,
-                SUM(GREATEST(total_cost - total_pre_deduct_gift, 0.0)) as system_cost
+                SUM(GREATEST(total_cost - total_pre_deduct_gift - COALESCE(total_pre_deduct_voucher, 0.0), 0.0)) as system_cost
              FROM usage_daily_stats
              WHERE {}
              GROUP BY stat_date
@@ -550,7 +590,7 @@ async fn calculate_finance_stats(
                 COALESCE(SUM(cost), 0.0),
                 COUNT(DISTINCT token_id),
                 COUNT(DISTINCT user_id),
-                COALESCE(SUM(GREATEST(cost - pre_deduct_gift, 0.0)), 0.0)
+                COALESCE(SUM(GREATEST(cost - pre_deduct_gift - COALESCE(pre_deduct_voucher, 0.0), 0.0)), 0.0)
             FROM logs
             WHERE {}
         ",
@@ -638,10 +678,11 @@ async fn calculate_finance_stats(
 
     // 第五步：获取充值数据（基础充值 + 每日充值）
     let mut base_recharge_sql =
-        "SELECT COALESCE(SUM(amount), 0.0) FROM recharge_records".to_string();
+        "SELECT COALESCE(SUM(amount), 0.0) FROM recharge_records WHERE COALESCE(recharge_type, '') NOT IN ('model_voucher', 'coupon_purchase', 'coupon_pack', 'coupon_subscription', 'ark_video_consume', 'ark_video_refund')"
+            .to_string();
     let mut base_recharge_binds = Vec::new();
     if let Some(ref start) = start_ts {
-        base_recharge_sql.push_str(" WHERE created_at < ?::timestamptz");
+        base_recharge_sql.push_str(" AND created_at < ?::timestamptz");
         base_recharge_binds.push(start.clone());
     }
     let formatted_base_recharge = state.db.format_query(&base_recharge_sql);
@@ -673,9 +714,12 @@ async fn calculate_finance_stats(
             CASE WHEN wallet_type = 'gift' THEN 'gift' ELSE 'system' END as wallet_group,
             COALESCE(SUM(amount), 0.0) as amount
         FROM recharge_records 
-        WHERE (wallet_type = 'gift')
-           OR (wallet_type = 'system' AND recharge_type = 'manual')
-           OR (recharge_type IN ('wechat', 'alipay', 'stripe', 'bonuspay'))
+        WHERE (
+            (wallet_type = 'gift')
+            OR (wallet_type = 'system' AND recharge_type = 'manual')
+            OR (recharge_type IN ('wechat', 'alipay', 'stripe', 'bonuspay'))
+        )
+        AND COALESCE(recharge_type, '') NOT IN ('ark_video_consume', 'ark_video_refund')
     "
     );
     let mut daily_wallet_recharge_binds = Vec::new();
@@ -722,7 +766,7 @@ async fn calculate_finance_stats(
             {date_bucket} as date, 
             COALESCE(SUM(amount), 0.0) as amount,
             COALESCE(SUM(CASE WHEN recharge_type IN ('wechat', 'alipay', 'stripe', 'bonuspay') THEN amount ELSE 0.0 END), 0.0) as online_amount
-        FROM recharge_records WHERE 1=1
+        FROM recharge_records WHERE COALESCE(recharge_type, '') NOT IN ('model_voucher', 'coupon_purchase', 'coupon_pack', 'coupon_subscription', 'ark_video_consume', 'ark_video_refund')
     "
     );
     let mut daily_recharge_binds = Vec::new();
@@ -947,7 +991,7 @@ pub async fn get_wallet_stats_batch(
         "SELECT user_id, wallet_type, COALESCE(SUM(amount), 0.0) as amount \
          FROM recharge_records \
          WHERE user_id IN ({}) \
-         AND COALESCE(recharge_type, '') NOT IN ('ark_video_consume', 'ark_video_refund')",
+         AND COALESCE(recharge_type, '') NOT IN ('ark_video_consume', 'ark_video_refund', 'coupon_purchase', 'coupon_pack', 'coupon_subscription')",
         placeholders
     );
     let mut binds: Vec<String> = req.user_ids.clone();
@@ -1058,11 +1102,13 @@ fn commission_ledger_from() -> &'static str {
             c.amount::float8 AS amount,
             c.ratio::float8 AS ratio,
             CASE
-                WHEN COALESCE(c.source_key, '') LIKE 'adjustclaw:%' THEN 'clawback'
+                WHEN COALESCE(c.source_key, '') LIKE 'adjustclaw:%'
+                    OR COALESCE(c.source_key, '') LIKE 'claw:%' THEN 'clawback'
+                WHEN COALESCE(c.source_key, '') LIKE 'daycons:%'
+                    OR COALESCE(c.source_key, '') LIKE 'log:%' THEN 'consumption'
                 WHEN COALESCE(c.source_key, '') LIKE 'arkrefund:%'
                     OR (c.amount < 0 AND COALESCE(c.source_key, '') LIKE 'ark:%') THEN 'refund'
                 WHEN COALESCE(c.source_key, '') LIKE 'ark:%' THEN 'video'
-                WHEN COALESCE(c.source_key, '') LIKE 'log:%' THEN 'consumption'
                 WHEN COALESCE(c.source_key, '') LIKE 'recharge:%' AND rr.recharge_type = 'manual' THEN 'system_award'
                 WHEN COALESCE(c.source_key, '') LIKE 'recharge:%' THEN 'recharge'
                 WHEN c.amount < 0 THEN 'refund'
@@ -1108,7 +1154,7 @@ fn commission_ledger_from() -> &'static str {
         WHERE rr.recharge_type IN ('commission', 'transfer')
            OR (
                 rr.recharge_type = 'manual'
-                AND rr.remark LIKE '下级 %余额调减，返佣差额从系统钱包扣回'
+                AND rr.remark LIKE '%返佣差额从系统钱包扣回'
            )
     ) q"#
 }
@@ -1125,7 +1171,12 @@ pub async fn list_commissions(
     let mut where_clause = " WHERE 1=1".to_string();
     let mut binds: Vec<String> = Vec::new();
 
-    if let Some(search) = query.user_id.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(search) = query
+        .user_id
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         where_clause.push_str(
             " AND (q.username LIKE ? OR q.uid = ? OR q.uid LIKE ? OR COALESCE(q.from_username, '') LIKE ? OR COALESCE(q.from_uid, '') = ? OR COALESCE(q.order_no, '') LIKE ? OR COALESCE(q.remark, '') LIKE ?)",
         );
@@ -1182,9 +1233,8 @@ pub async fn list_commissions(
         e
     })?;
 
-    let total_amount_sql = format!(
-        "SELECT COALESCE(SUM(q.amount), 0.0)::float8 {from_sql}{where_clause}"
-    );
+    let total_amount_sql =
+        format!("SELECT COALESCE(SUM(q.amount), 0.0)::float8 {from_sql}{where_clause}");
     let total_amount_sql = state.db.format_query(&total_amount_sql);
     let mut amount_q = sqlx::query_scalar::<_, f64>(&total_amount_sql);
     for val in &binds {
@@ -1211,4 +1261,3 @@ pub async fn list_commissions(
         total_amount,
     }))
 }
-

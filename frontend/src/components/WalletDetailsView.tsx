@@ -206,17 +206,24 @@ const WalletDetailsView: React.FC<WalletDetailsViewProps> = ({
     return rMs >= Date.parse(start_date) && rMs <= Date.parse(end_date);
   });
 
+  const isArkLedger = (type: string) => type === 'ark_video_consume' || type === 'ark_video_refund';
+  const isPlatformConsume = (type: string) =>
+    isArkLedger(type) ||
+    type === 'coupon_purchase' ||
+    type === 'coupon_pack' ||
+    type === 'coupon_subscription' ||
+    type === 'model_voucher';
+
   const systemRecharges = filteredRecharges.filter((r: any) => (r.wallet_type || 'system') === 'system');
   const giftRecharges = filteredRecharges.filter((r: any) => (r.wallet_type || 'system') === 'gift');
   const creditRecharges = filteredRecharges.filter((r: any) => (r.wallet_type || 'system') === 'credit');
 
-  const isArkLedger = (type: string) => type === 'ark_video_consume' || type === 'ark_video_refund';
-  // 充值合计只统计真实入金，排除方舟监控扣费/退款（退款为正会污染「充值」）
+  // 充值合计只统计充值/手动调账等入金，排除卡券加油包/订阅购买及方舟监控消费（但明细表格仍保留系统资金流水）
   const totalSystemRecharge = systemRecharges
-    .filter((r: any) => !isArkLedger(r.recharge_type || ''))
+    .filter((r: any) => !isPlatformConsume(r.recharge_type || ''))
     .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   const totalGiftRecharge = giftRecharges
-    .filter((r: any) => !isArkLedger(r.recharge_type || ''))
+    .filter((r: any) => !isPlatformConsume(r.recharge_type || ''))
     .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   const totalCreditRecharge = creditRecharges.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
   // 方舟流水：consume 为负、refund 为正 → 净消费 = -SUM(amount)；叠加到 /logs 消费合计
@@ -251,7 +258,6 @@ const WalletDetailsView: React.FC<WalletDetailsViewProps> = ({
     lineHeight: 1.2,
     whiteSpace: 'nowrap' as const,
     fontWeight: 600,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   };
 
   const getCreditValueStyle = () => ({
@@ -260,7 +266,6 @@ const WalletDetailsView: React.FC<WalletDetailsViewProps> = ({
     lineHeight: 1.2,
     whiteSpace: 'nowrap' as const,
     fontWeight: 600,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   });
 
   const rechargeColumns = [
@@ -278,7 +283,6 @@ const WalletDetailsView: React.FC<WalletDetailsViewProps> = ({
                 display: 'inline-flex',
                 alignItems: 'center',
                 whiteSpace: 'nowrap',
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
                 fontSize: 11,
                 letterSpacing: '-0.2px',
               }}

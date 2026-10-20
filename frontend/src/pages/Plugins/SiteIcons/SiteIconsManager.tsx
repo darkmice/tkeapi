@@ -256,6 +256,10 @@ const SiteIconsManager: React.FC = () => {
     setSvgPreview(applySvgEdits(base, next));
   };
   const handleOpenAdd = () => {
+    if (!storageInfo?.is_cloud) {
+      message.warning('请配置站点存储才可以添加图标');
+      return;
+    }
     setEditingIcon(null);
     form.resetFields();
     absorbSvg('', true);
@@ -352,12 +356,8 @@ const SiteIconsManager: React.FC = () => {
     }
   };
   const getSvgUrl = (icon: SiteIcon) => {
-    if (!icon?.file_path) return '';
-    const base = icon.file_path.startsWith('http://') || icon.file_path.startsWith('https://')
-      ? icon.file_path
-      : `/assets/${icon.file_path}`;
-    const sep = base.includes('?') ? '&' : '?';
-    return `${base}${sep}v=${encodeURIComponent(icon.updated_at || '')}`;
+    if (!icon?.name) return '';
+    return `/assets/icons/lobe/${encodeURIComponent(icon.name)}.svg?v=${encodeURIComponent(icon.updated_at || '')}`;
   };
 
   const syncPercent = syncTotal > 0 ? Math.round((syncCurrent / syncTotal) * 100) : 0;
@@ -443,7 +443,9 @@ const SiteIconsManager: React.FC = () => {
             </span>
           </Tooltip>
           <Tooltip title="查看同步日志"><Button icon={<HistoryOutlined />} onClick={() => { setLogModalVisible(true); fetchSyncLogs(); }} /></Tooltip>
-          <Button icon={<PlusOutlined />} onClick={handleOpenAdd}>手动添加</Button>
+          <Tooltip title={storageInfo?.is_cloud ? '上传到站点对象存储，并在本地留一份给编辑和模型广场' : '请配置站点存储才可以添加图标'}>
+            <Button icon={<PlusOutlined />} onClick={handleOpenAdd}>手动添加</Button>
+          </Tooltip>
           <Button type="primary" icon={<CloudDownloadOutlined />} loading={syncing} onClick={handleSync} disabled={syncing}>
             {syncing ? '同步中...' : '在线更新'}
           </Button>
@@ -574,7 +576,7 @@ const SiteIconsManager: React.FC = () => {
           <Form.Item name="tags" label="标签" extra="可选，按回车添加检索标签。">
             <Select mode="tags" placeholder="例如: 国产, 视觉, 开源" />
           </Form.Item>
-          <Form.Item label="SVG 内容" required={!editingIcon} extra="打开编辑会载入当前 SVG。可改尺寸、底色和深色填充，也可直接改源码。底色和填充会写进文件，深色图标在深色背景上也能看见。">
+          <Form.Item label="SVG 内容" required={!editingIcon} extra="打开编辑会载入当前 SVG。可改尺寸、底色和图标填充，也可直接改源码。底色会替换铺满画布的色块，填充会写进其余图形。">
             {svgLoading && <div style={{ textAlign: 'center', padding: 12 }}><Spin size="small" /></div>}
             {svgPreview.includes('<svg') && (
               <div style={{ marginBottom: 12 }}>
@@ -615,7 +617,7 @@ const SiteIconsManager: React.FC = () => {
                     <ColorPicker size="small" disabledAlpha allowClear value={svgBg || undefined} onChange={color => patchSvg({ background: color.cleared ? null : color.toHexString() })} />
                   </Space>
                   <Space wrap>
-                    <Text style={{ fontSize: 12 }}>深色填充</Text>
+                    <Text style={{ fontSize: 12 }}>填充</Text>
                     <Button size="small" type={svgFill ? 'default' : 'primary'} onClick={() => patchSvg({ iconColor: null })}>保持原色</Button>
                     <Button size="small" type={svgFill?.toLowerCase() === '#ffffff' ? 'primary' : 'default'} onClick={() => patchSvg({ iconColor: '#ffffff' })}>改为白色</Button>
                     <Button size="small" type={svgFill?.toLowerCase() === '#1677ff' ? 'primary' : 'default'} onClick={() => patchSvg({ iconColor: '#1677ff' })}>改为蓝色</Button>

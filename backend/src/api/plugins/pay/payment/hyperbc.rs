@@ -111,12 +111,23 @@ pub struct QueryOrderData {
 }
 
 impl QueryOrderData {
-    /// 统计 payments 中有效到账的代币总金额（过滤合法大于 0 的数值）
+    /// 统计 payments 中有效到账的稳定币总金额（仅统计链上已确认状态且币种为 USDT/USDC 的正数金额）
     pub fn get_actual_crypto_amount(&self) -> f64 {
         if let Some(ref list) = self.payments {
             list.iter()
+                .filter(|p| {
+                    p.status.is_none_or(|s| s == 1 || s == 2)
+                        && p.coin
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|c| !c.is_empty())
+                            .is_none_or(|c| {
+                                let upper = c.to_ascii_uppercase();
+                                upper.starts_with("USDT") || upper.starts_with("USDC")
+                            })
+                })
                 .filter_map(|p| p.amount.as_deref().and_then(|a| a.parse::<f64>().ok()))
-                .filter(|&a| a > 0.0)
+                .filter(|&a| a.is_finite() && a > 0.0)
                 .sum()
         } else {
             0.0
@@ -164,8 +175,8 @@ impl HyperbcClient {
     /// 从回调原始 JSON 字符串中自适应提取待签名内容：
     /// 基于全局公共 OrderedJson 机制，若包含 data 节点且为 Object 则提取 data 内部字段，否则提取根节点
     pub fn get_sign_content_from_raw(raw_json: &str) -> Result<String> {
-        let root: crate::utils::OrderedJson = serde_json::from_str(raw_json)
-            .map_err(|e| anyhow!("解析原始 JSON 失败: {}", e))?;
+        let root: crate::utils::OrderedJson =
+            serde_json::from_str(raw_json).map_err(|e| anyhow!("解析原始 JSON 失败: {}", e))?;
         Ok(root.data_or_self().to_sign_query(true, true, &["sign"]))
     }
 
@@ -292,10 +303,11 @@ impl HyperbcClient {
         let sign = self
             .rsa_sign(&serde_json::json!({ "success_data": "success" }))
             .unwrap_or_default();
-        format!(r#"{{"status":200,"sign":"{}","data":{{"success_data":"success"}}}}"#, sign)
+        format!(
+            r#"{{"status":200,"sign":"{}","data":{{"success_data":"success"}}}}"#,
+            sign
+        )
     }
-
-
 
     /// 创建 H5 Hosted Cashier 订单
     /// merchant_order_id: 商户订单号
@@ -450,6 +462,17 @@ impl HyperbcClient {
                 result.status,
                 result.msg
             ));
+        }
+
+        let sign = result
+            .sign
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("HyperBC query_order 响应缺少 sign 签名"))?;
+        let sign_content = Self::get_sign_content_from_raw(&resp_body)?;
+        if !self.verify_signature_str(&sign_content, sign)? {
+            return Err(anyhow!("HyperBC query_order 响应 RSA 签名校验失败"));
         }
 
         let data = result

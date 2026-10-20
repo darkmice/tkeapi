@@ -27,10 +27,12 @@ import { useTranslation } from 'react-i18next';
 import useAuthStore from '../../store/auth';
 import useSettingsStore from '../../store/settings';
 import AuthLayout from '../../layouts/AuthLayout';
+import SignedInEntryGate from './SignedInEntryGate';
 import type { AuthMethodOption } from '../../layouts/AuthLayout';
 import { WechatOutlined } from '@ant-design/icons';
 import WechatQR from '../../components/WechatQR';
 import GoogleIcon from '../../components/GoogleIcon';
+import { stripAuthParamsFromUrl } from '../../utils/safeRedirect';
 
 /** 发送成功后的倒计时（秒） */
 const CODE_COOLDOWN_SUCCESS = 60;
@@ -69,6 +71,7 @@ const Register: React.FC = () => {
   } | null>(null);
   const [agreed, setAgreed] = useState(false);
   const [wechatState, setWechatState] = useState('');
+  const [wechatTicket, setWechatTicket] = useState('');
 
   const navigate = useNavigate();
   const { setToken, setUser } = useAuthStore();
@@ -79,7 +82,7 @@ const Register: React.FC = () => {
   const { aff, team } = resolveInviteParams(searchParams.toString() ? `?${searchParams.toString()}` : '');
 
   useEffect(() => { 
-    if (!settings) fetchSettings(); 
+    void fetchSettings(true); 
   }, []);
 
   // 统计邀请链接点击：仅当 URL 带 aff（真实点开邀请链接）；主题页回退 from=promo 不计邀请
@@ -102,15 +105,19 @@ const Register: React.FC = () => {
     if (type === 'tos') {
       const mode = isZh ? agreement.tos_mode : agreement.tos_mode_en;
       if (mode === 'link') {
-        return isZh ? agreement.tos_link : (agreement.tos_link_en || agreement.tos_link);
+        const rawLink = isZh ? agreement.tos_link : (agreement.tos_link_en || agreement.tos_link);
+        const link = String(rawLink || '').trim();
+        return link ? (/^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`) : '#';
       }
-      return '/legal/terms';
+      return isZh ? '/legal/terms' : '/legal/terms?lang=en';
     } else {
       const mode = isZh ? agreement.privacy_mode : agreement.privacy_mode_en;
       if (mode === 'link') {
-        return isZh ? agreement.privacy_link : (agreement.privacy_link_en || agreement.privacy_link);
+        const rawLink = isZh ? agreement.privacy_link : (agreement.privacy_link_en || agreement.privacy_link);
+        const link = String(rawLink || '').trim();
+        return link ? (/^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`) : '#';
       }
-      return '/legal/privacy';
+      return isZh ? '/legal/privacy' : '/legal/privacy?lang=en';
     }
   };
 
@@ -166,12 +173,15 @@ const Register: React.FC = () => {
 
   // 默认 Tab 设置
   useEffect(() => {
-    if (regTabs.length > 0 && !activeTab) {
+    if (activeTab === 'wechat' && settings?.login?.enable_wechat_login) return;
+    if (regTabs.length > 0 && (!activeTab || !regTabs.some(tab => tab.key === activeTab))) {
       setActiveTab(regTabs[0].key);
+    } else if (regTabs.length === 0 && settings?.login?.enable_wechat_login) {
+      setActiveTab('wechat');
     }
-  }, [reg]);
+  }, [reg, settings?.login?.enable_wechat_login]);
 
-  const noRegistration = regTabs.length === 0;
+  const noRegistration = regTabs.length === 0 && !settings?.login?.enable_wechat_login;
 
   // 发送邮箱验证码
   const sendEmailCode = async () => {
@@ -236,6 +246,7 @@ const Register: React.FC = () => {
     setErrors({});
     setFormError('');
     setContactConflict(null);
+    setWechatTicket('');
     setShowPassword(false);
     setShowConfirmPassword(false);
     setAgreed(false);
@@ -250,6 +261,10 @@ const Register: React.FC = () => {
   };
 
   const goLoginWithCurrentContact = () => {
+    if (activeTab === 'wechat' && wechatTicket) {
+      navigate(`/login?code=${encodeURIComponent(wechatTicket)}&type=wechat`);
+      return;
+    }
     const params = new URLSearchParams();
     if (activeTab === 'email' && emailVal.trim()) {
       params.set('type', 'email');
@@ -264,6 +279,19 @@ const Register: React.FC = () => {
 
   const submitRegister = async (confirmNewAccount = false) => {
     let res: any;
+    if (activeTab === 'wechat' && wechatTicket) {
+      res = await request.post('/auth/exchange-login-code', {
+        code: wechatTicket,
+        intent: 'register',
+        confirm_new_account: confirmNewAccount,
+      }, { skipErrorHandler: true } as any);
+      setWechatTicket('');
+      setToken(res.token);
+      setUser(res.user);
+      message.success(t('auth.register_success'));
+      navigate('/dashboard');
+      return;
+    }
     const commonPayload = {
       password: passwordVal,
       timezone: browserTimezone(),
@@ -377,13 +405,51 @@ const Register: React.FC = () => {
   const showGoogle = settings?.login?.enable_google_login;
 
   const wechatAppId = settings?.wechat_oauth_app_id || '';
-  // 邀请参数走浏览器 3 天 cookie，勿塞进 redirect_uri（微信要求与后台登记完全一致）
-  const wechatRedirectUri = `${window.location.origin}/api/v1/auth/oauth/wechat/callback`;
+  const wechatBaseOrigin = settings?.wechat_oauth_callback_domain || window.location.origin;
+  const wechatRedirectUri = `${wechatBaseOrigin}/api/v1/auth/oauth/wechat/callback`;
+
+  useEffect(() => {
+    const ticket = searchParams.get('wechat_ticket')?.trim() || '';
+    if (!ticket) return;
+    stripAuthParamsFromUrl();
+    setWechatTicket(ticket);
+    setActiveTab('wechat');
+    setLoading(true);
+    request
+      .post('/auth/exchange-login-code', {
+        code: ticket,
+        intent: 'register',
+        confirm_new_account: false,
+      }, { skipErrorHandler: true } as any)
+      .then((res: any) => {
+        if (res?.token) {
+          setWechatTicket('');
+          setToken(res.token);
+          setUser(res.user);
+          message.success(t('auth.register_success'));
+          navigate('/dashboard');
+        }
+      })
+      .catch((e: any) => {
+        const err = e?.response?.data?.error;
+        if (!handleContactConflict(err)) {
+          setFormError(toFormError(e));
+          setShakeKey(k => k + 1);
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [searchParams]);
 
   useEffect(() => {
     if (!showWechat) return;
     let cancelled = false;
-    const params: Record<string, string> = { provider: 'wechat' };
+    const params: Record<string, string> = { 
+      provider: 'wechat',
+      origin: window.location.origin,
+      intent: 'register',
+    };
     if (aff) params.aff = aff;
     if (team) params.team = team;
     const tz = browserTimezone();
@@ -395,7 +461,7 @@ const Register: React.FC = () => {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showWechat, aff, team]);
+  }, [showWechat, aff, team, settings?.wechat_oauth_callback_domain]);
 
   const handleGoogleLogin = () => {
     // 发起时带上 aff/team，后端写入 OAuth state；cookie 作兜底
@@ -456,6 +522,7 @@ const Register: React.FC = () => {
   const registerSubtitle = settings?.site?.login_subtitle || 'Next-gen LLM API Gateway';
 
   return (
+    <SignedInEntryGate enabled={!team} hold={Boolean(token && team)}>
     <AuthLayout
       title={registerTitle}
       subtitle={registerSubtitle}
@@ -473,9 +540,11 @@ const Register: React.FC = () => {
           <div className="w-full rounded-md bg-amber-500/10 border border-amber-500/20 dark:bg-amber-500/15 dark:border-amber-500/30 px-3.5 py-2.5 text-xs font-medium text-amber-800 dark:text-amber-300 leading-relaxed text-center shadow-xs">
             {contactConflict.code === 'CONTACT_AT_LIMIT'
               ? t('auth.contact_at_limit_body', { count: contactConflict.boundCount, limit: contactConflict.limit })
-              : activeTab === 'mobile'
-                ? t('auth.contact_in_use_mobile')
-                : t('auth.contact_in_use_email')}
+              : activeTab === 'wechat'
+                ? t('auth.contact_in_use_wechat')
+                : activeTab === 'mobile'
+                  ? t('auth.contact_in_use_mobile')
+                  : t('auth.contact_in_use_email')}
           </div>
           {formError && (
             <p key={`form-${shakeKey}`} className="text-[12px] font-medium text-destructive text-center animate-shake">{formError}</p>
@@ -517,6 +586,7 @@ const Register: React.FC = () => {
                 disabled={loading}
                 onClick={() => {
                   setContactConflict(null);
+                  setWechatTicket('');
                   setFormError('');
                 }}
                 className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 w-full text-center transition-colors cursor-pointer disabled:opacity-50"
@@ -533,13 +603,15 @@ const Register: React.FC = () => {
           ) : (
             <div className="py-10 text-zinc-500 text-sm">加载中...</div>
           )}
-          <button 
-            type="button" 
-            onClick={() => handleTabChange(regTabs[0]?.key || 'username')}
-            className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 mt-2 transition-colors cursor-pointer"
-          >
-            {i18n.language.startsWith('zh') ? '返回注册方式' : 'Back to registration'}
-          </button>
+          {regTabs.length > 0 && (
+            <button 
+              type="button" 
+              onClick={() => handleTabChange(regTabs[0]?.key || 'username')}
+              className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 mt-2 transition-colors cursor-pointer"
+            >
+              {i18n.language.startsWith('zh') ? '返回注册方式' : 'Back to registration'}
+            </button>
+          )}
         </div>
       ) : noRegistration ? (
         <div className="flex flex-col items-center justify-center py-6 text-center space-y-2 text-zinc-500">
@@ -548,6 +620,32 @@ const Register: React.FC = () => {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+          {regTabs.length > 1 && (
+            <div
+              className={`grid w-full gap-1 p-1 bg-zinc-100 dark:bg-zinc-900 border border-zinc-200/50 dark:border-zinc-800/40 rounded-lg text-xs font-medium text-zinc-500 select-none ${
+                regTabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+              }`}
+            >
+              {regTabs.map(tab => {
+                const isSelected = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => handleTabChange(tab.key)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md transition-all duration-200 cursor-pointer
+                      ${isSelected
+                        ? 'bg-background text-zinc-900 dark:text-zinc-100 shadow-xs border border-zinc-200/50 dark:border-zinc-800/60 font-semibold'
+                        : 'hover:text-zinc-800 dark:hover:text-zinc-200'
+                      }`}
+                  >
+                    {tab.icon}
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* 1. 用户名注册输入字段 */}
           {activeTab === 'username' && (
@@ -818,6 +916,7 @@ const Register: React.FC = () => {
         </form>
       )}
     </AuthLayout>
+    </SignedInEntryGate>
   );
 };
 

@@ -28,7 +28,7 @@ fn stats_upsert_sql_template() -> String {
         stat_date, user_id, model, token_id, channel_id, action_type,
         total_requests, total_tokens, prompt_tokens, completion_tokens,
         with_video_tokens,
-        total_cost, total_pre_deduct_gift, success_count, fail_count
+        total_cost, total_pre_deduct_gift, total_pre_deduct_voucher, success_count, fail_count
     )
     SELECT
         ?::DATE,
@@ -44,6 +44,7 @@ fn stats_upsert_sql_template() -> String {
         SUM(CASE WHEN has_video = 1 THEN completion_tokens ELSE 0 END),
         SUM(cost),
         SUM(pre_deduct_gift),
+        SUM(pre_deduct_voucher),
         COUNT(*) FILTER (WHERE status_code >= 200 AND status_code < 400),
         COUNT(*) FILTER (WHERE status_code < 200 OR status_code >= 400)
     FROM logs
@@ -59,10 +60,11 @@ fn stats_upsert_sql_template() -> String {
         with_video_tokens = EXCLUDED.with_video_tokens,
         total_cost = EXCLUDED.total_cost,
         total_pre_deduct_gift = EXCLUDED.total_pre_deduct_gift,
+        total_pre_deduct_voucher = EXCLUDED.total_pre_deduct_voucher,
         success_count = EXCLUDED.success_count,
-        fail_count = EXCLUDED.fail_count".to_string()
+        fail_count = EXCLUDED.fail_count"
+        .to_string()
 }
-
 
 /// 按本地自然日推进；失败即中止；日间短暂让出连接池。
 async fn perform_batch_sync(
@@ -94,12 +96,11 @@ async fn perform_batch_sync(
         archive_tz.name()
     );
 
-    let min_log_ts: Option<DateTime<Utc>> = sqlx::query_scalar(
-        &state.db.format_query("SELECT MIN(created_at) FROM logs")
-    )
-    .fetch_one(&state.db.pool)
-    .await
-    .unwrap_or(None);
+    let min_log_ts: Option<DateTime<Utc>> =
+        sqlx::query_scalar(&state.db.format_query("SELECT MIN(created_at) FROM logs"))
+            .fetch_one(&state.db.pool)
+            .await
+            .unwrap_or(None);
 
     let mut current_day = start;
     while current_day < end {
@@ -153,8 +154,6 @@ fn local_ymd_num(local: chrono::DateTime<Tz>) -> u32 {
     use chrono::Datelike;
     (local.year() as u32) * 10000 + (local.month() as u32) * 100 + (local.day() as u32)
 }
-
-
 
 /// 定时增量更新最近 3 天日志至每日用量汇总表（自动调度，同一天防重复执行）
 pub async fn sync_daily_stats(state: &AppState) -> AppResult<()> {

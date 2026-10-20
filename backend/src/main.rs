@@ -5,6 +5,8 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
+#![recursion_limit = "256"]
+
 use std::sync::Arc;
 
 #[global_allocator]
@@ -59,13 +61,20 @@ pub struct AppState {
     pub video_submit_drain: std::sync::Arc<relay::VideoSubmitDrain>,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    // timesystem：进程级锁定 UTC+0（须早于任何 Local/日志时区依赖）
+    // timesystem：进程级锁定 UTC+0（须在创建 Tokio 多线程运行时之前单线程执行，避免多线程 setenv 竞争）
     time_system::enforce_process_utc();
     // 关于页运行时「启动时间」锚点
     services::runtime_info::mark_process_start();
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
 
     // 1. 初始化控制台标准输出写入器
     let (non_blocking_stdout, _stdout_guard) = tracing_appender::non_blocking(std::io::stdout());
@@ -136,19 +145,9 @@ async fn main() -> anyhow::Result<()> {
 
     let mut bg_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-    // 1. 启动时恢复：处理上次中断遗留的"处理中"日志，退还预扣费（并发异步恢复，不阻塞端口监听）
-    tokio::spawn(relay::proxy::recover_interrupted_logs(state.clone()));
-
     // 1b. 渠道与预设配额异步聚合批量刷盘任务（每 2 秒一次，消除 channels 单行排他锁争用；停机时 drain）
-    bg_handles.push(relay::channel_quota::start(state.db.clone(), shutdown_rx.clone()));
-
-    // 2. 启动后台异步任务轮询器（周期见 RelaySettings.poll_tick_secs，缓存；检查未结算视频/图片任务）
-    bg_handles.push(relay::task::start(state.clone(), shutdown_rx.clone()));
-
-    // 2b. ComfyUI 提交 worker：accept 后 admit→审图→/prompt；notify + 5s 扫库；随进程 shutdown 退出
-    #[cfg(feature = "plugin_comfyui")]
-    bg_handles.push(api::plugins::comfyui_bridge::start_submit_worker(
-        state.clone(),
+    bg_handles.push(relay::channel_quota::start(
+        state.db.clone(),
         shutdown_rx.clone(),
     ));
 
@@ -162,6 +161,230 @@ async fn main() -> anyhow::Result<()> {
         api::dashboard::run_dashboard_cache_cleanup_loop(state.clone(), shutdown_rx.clone()),
     ));
 
+    // 单例后台任务（扫库 / 定时 / 启动恢复）：蓝绿热更新时只允许一个进程运行。
+    // WORKERS_STANDBY=1：先提供 HTTP，后台竞选 leader 锁，旧进程退出后由新进程接管；
+    // 未设置：与历史行为一致，启动即运行。
+    if workers_standby_enabled() {
+        bg_handles.push(tokio::spawn(run_singleton_workers_as_leader(
+            state.clone(),
+            shutdown_rx.clone(),
+        )));
+    } else {
+        bg_handles.extend(start_singleton_workers(state.clone(), shutdown_rx.clone()));
+    }
+
+    let assets_dir = config_data.assets_dir.clone();
+    let portal_dir = config_data.portal_dir.clone();
+    let portal_pro_dir = config_data.portal_pro_dir.clone();
+    let legal_dir = format!("{}/legal", config_data.data_dir);
+    // 确保 portal 目录存在
+    std::fs::create_dir_all(&portal_dir).ok();
+    std::fs::create_dir_all(&portal_pro_dir).ok();
+    std::fs::create_dir_all(&legal_dir).ok();
+    // 确保 assets 目录存在
+    std::fs::create_dir_all(&assets_dir).ok();
+    api::plugins::site_portal::ensure_portal_assets(&portal_dir, &assets_dir).await;
+    #[cfg(feature = "commercial_plugins")]
+    api::plugins::site_portal_pro::ensure_portal_pro_assets(&portal_pro_dir, &assets_dir).await;
+    let _ = api::legal::ensure_legal_static_files(&state).await;
+    let app = api::build_router(state.clone())
+        .nest_service("/portal", tower_http::services::ServeDir::new(&portal_dir))
+        .nest_service(
+            "/portal-pro",
+            tower_http::services::ServeDir::new(&portal_pro_dir),
+        )
+        .nest_service("/assets", tower_http::services::ServeDir::new(&assets_dir));
+
+    let addr = format!("{}:{}", config_data.host, config_data.port);
+    eprintln!("⚙️ Binding server to {}", addr);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("🚀 TokensByte server running at http://{}", addr);
+    eprintln!(
+        "✅ TokensByte server is now completely online at http://{} !",
+        addr
+    );
+
+    // 优雅关闭：仅显式 APP_ENV=dev|development 时秒退；默认按生产优雅 drain
+    // 禁止用 CARGO_MANIFEST_DIR 推断（cargo run 注入会误伤生产）
+    let is_dev = matches!(
+        std::env::var("APP_ENV")
+            .or_else(|_| std::env::var("RUN_MODE"))
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "dev" | "development"
+    );
+    if is_dev {
+        tracing::warn!("⚡ APP_ENV=dev：关闭信号将秒退，跳过计费管道 drain（勿用于生产）");
+        drop(billing_pipeline);
+        let shutdown_signal_dev = async move {
+            wait_for_shutdown_signal().await;
+            tracing::info!("⚡ 开发环境收到关闭信号，强制秒退释放端口...");
+            std::process::exit(0);
+        };
+
+        tokio::select! {
+            res = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()) => {
+                res?;
+            }
+            _ = shutdown_signal_dev => {}
+        }
+    } else {
+        let shutdown_signal = async move {
+            wait_for_shutdown_signal().await;
+            tracing::info!("⏳ 收到关闭信号，停止接受新请求，等待进行中的任务完成...");
+            let _ = shutdown_tx.send(true);
+        };
+
+        let serve_future = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal);
+
+        let mut serve_shutdown_rx = shutdown_rx.clone();
+        tokio::select! {
+            res = serve_future => {
+                res?;
+            }
+            _ = async {
+                while !*serve_shutdown_rx.borrow() {
+                    if serve_shutdown_rx.changed().await.is_err() {
+                        break;
+                    }
+                }
+                let drain_secs = shutdown_drain_secs();
+                tokio::time::sleep(std::time::Duration::from_secs(drain_secs)).await;
+                tracing::warn!("⚠️ HTTP 服务未在 {} 秒内优雅关闭，强制结束连接", drain_secs);
+            } => {}
+        }
+
+        // 视频提交已脱离 HTTP 连接；时限覆盖素材转换与上游超时，不用下面 30 秒的后台上限
+        let video_budget = crate::services::http_client::upstream_timeout_duration()
+            + std::time::Duration::from_secs(180);
+        tracing::info!("⏳ 等待进行中的视频提交落账...");
+        match tokio::time::timeout(video_budget, state.video_submit_drain.wait_idle()).await {
+            Ok(()) => tracing::info!("✅ 视频提交已落账"),
+            Err(_) => tracing::warn!("⚠️ 视频提交未在上游时限内结束"),
+        }
+
+        // HTTP 服务已关闭，等待后台任务完成（包括正在轮询中的异步任务）
+        tracing::info!("⏳ HTTP 连接已关闭，等待后台任务完成...");
+        let wait_bg = async {
+            for h in bg_handles {
+                let _ = h.await;
+            }
+            // 计费管道：shutdown 已发出，Worker 排空 MPSC 剩余事件并刷库
+            billing_pipeline.join().await;
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(30), wait_bg).await {
+            Ok(_) => tracing::info!("✅ 所有后台任务已完成，服务安全退出"),
+            Err(_) => tracing::warn!("⚠️ 部分后台任务未在 30 秒内完成，强制退出"),
+        }
+    }
+
+    Ok(())
+}
+
+/// HTTP 优雅关闭排空窗口（秒）。默认 30；热更新时通过 SHUTDOWN_DRAIN_SECS 放宽以等待长流式请求，
+/// 且 compose 的 stop_grace_period 必须不小于该值。
+fn shutdown_drain_secs() -> u64 {
+    std::env::var("SHUTDOWN_DRAIN_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(30)
+}
+
+/// 是否启用单例后台任务 leader 选举（蓝绿热更新并存期使用）。
+fn workers_standby_enabled() -> bool {
+    matches!(
+        std::env::var("WORKERS_STANDBY")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    )
+}
+
+/// 单例后台任务 leader 锁（Postgres session 级 advisory lock，随持有连接关闭或进程退出自动释放）。
+const SINGLETON_WORKERS_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_lock(hashtext('tokensbyte_singleton_workers')::bigint)";
+
+/// 蓝绿并存期的单例任务调度：先竞选 leader 锁，拿到后才启动单例任务。
+/// 旧进程优雅退出后连接关闭、锁释放，新进程在下一个轮询周期接管。
+async fn run_singleton_workers_as_leader(
+    state: Arc<AppState>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut lock_conn: Option<sqlx::PgConnection> = None;
+    let mut announced_standby = false;
+    loop {
+        if *shutdown_rx.borrow() {
+            return;
+        }
+        // 锁必须绑定在独占连接上：detach 后不再归还连接池，本任务结束时随连接关闭释放
+        if lock_conn.is_none() {
+            match state.db.pool.acquire().await {
+                Ok(pooled) => lock_conn = Some(pooled.detach()),
+                Err(e) => tracing::warn!("[WorkersLeader] 获取 leader 锁连接失败: {:?}", e),
+            }
+        }
+        if let Some(conn) = lock_conn.as_mut() {
+            let res = sqlx::query_scalar::<_, bool>(SINGLETON_WORKERS_LOCK_SQL)
+                .fetch_one(&mut *conn)
+                .await;
+            match res {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!("[WorkersLeader] 竞选 leader 锁失败，将重建连接: {:?}", e);
+                    lock_conn = None;
+                }
+            }
+        }
+        if !announced_standby {
+            tracing::info!("⏸️ [WorkersLeader] 单例后台任务待命中，等待旧实例退出后接管");
+            announced_standby = true;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+            _ = shutdown_rx.changed() => return,
+        }
+    }
+
+    tracing::info!("▶️ [WorkersLeader] 已获得 leader 锁，启动单例后台任务");
+    let handles = start_singleton_workers(state, shutdown_rx);
+    for h in handles {
+        let _ = h.await;
+    }
+    // 单例任务全部退出后才释放 leader 锁
+    drop(lock_conn);
+}
+
+/// 启动所有单例后台任务：扫库轮询、定时任务、启动恢复与一次性回填。
+/// 蓝绿并存期间同一时刻只能有一个进程运行这些任务（尤其 `recover_interrupted_logs`
+/// 会退还"处理中"日志的预扣费，旧实例仍在处理请求时运行会造成误退款）。
+/// 进程内存聚合类任务（计费管道、配额刷盘、指标与缓存清理）不在此列，各进程独立运行。
+fn start_singleton_workers(
+    state: Arc<AppState>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut bg_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    // 1. 启动时恢复：处理上次中断遗留的"处理中"日志，退还预扣费（并发异步恢复，不阻塞端口监听）
+    tokio::spawn(relay::proxy::recover_interrupted_logs(state.clone()));
+
+    // 2. 启动后台异步任务轮询器（周期见 RelaySettings.poll_tick_secs，缓存；检查未结算视频/图片任务）
+    bg_handles.push(relay::task::start(state.clone(), shutdown_rx.clone()));
+
+    // 2b. ComfyUI 提交 worker：accept 后 admit→审图→/prompt；notify + 5s 扫库；随进程 shutdown 退出
+    #[cfg(feature = "plugin_comfyui")]
+    bg_handles.push(api::plugins::comfyui_bridge::start_submit_worker(
+        state.clone(),
+        shutdown_rx.clone(),
+    ));
+
     bg_handles.push(spawn_cron_task(
         state.clone(),
         shutdown_rx.clone(),
@@ -169,6 +392,16 @@ async fn main() -> anyhow::Result<()> {
         "UpstreamRateSync",
         |s| async move {
             api::channel_configs::run_upstream_rate_sync_tick(s).await;
+        },
+    ));
+
+    bg_handles.push(spawn_cron_task(
+        state.clone(),
+        shutdown_rx.clone(),
+        60,
+        "FxRateRefresh",
+        |s| async move {
+            services::fx_rates::run_refresh_tick(s).await;
         },
     ));
 
@@ -191,6 +424,18 @@ async fn main() -> anyhow::Result<()> {
         "OrphanLogsCleanup",
         |s| async move {
             relay::proxy::cleanup_orphan_pending_logs(&s).await;
+        },
+    ));
+
+    // 4a. 营销卡券：面值到期与临时会员等级回退（每 60 秒）
+    #[cfg(feature = "commercial_plugins")]
+    bg_handles.push(spawn_cron_task(
+        state.clone(),
+        shutdown_rx.clone(),
+        60,
+        "CouponMembershipExpiry",
+        |s| async move {
+            crate::api::plugins::marketing_membership::billing::run_expiry_tick(&s).await;
         },
     ));
 
@@ -334,114 +579,11 @@ async fn main() -> anyhow::Result<()> {
         },
     ));
 
-    let assets_dir = config_data.assets_dir.clone();
-    let portal_dir = config_data.portal_dir.clone();
-    let portal_pro_dir = config_data.portal_pro_dir.clone();
-    // 确保 portal 目录存在
-    std::fs::create_dir_all(&portal_dir).ok();
-    std::fs::create_dir_all(&portal_pro_dir).ok();
-    // 确保 assets 目录存在
-    std::fs::create_dir_all(&assets_dir).ok();
-    api::plugins::site_portal::ensure_portal_assets(&portal_dir, &assets_dir).await;
-    let app = api::build_router(state.clone())
-        .nest_service("/portal", tower_http::services::ServeDir::new(&portal_dir))
-        .nest_service(
-            "/portal-pro",
-            tower_http::services::ServeDir::new(&portal_pro_dir),
-        )
-        .nest_service("/assets", tower_http::services::ServeDir::new(&assets_dir));
-
-    let addr = format!("{}:{}", config_data.host, config_data.port);
-    eprintln!("⚙️ Binding server to {}", addr);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("🚀 TokensByte server running at http://{}", addr);
-    eprintln!(
-        "✅ TokensByte server is now completely online at http://{} !",
-        addr
-    );
-
-    // 优雅关闭：仅显式 APP_ENV=dev|development 时秒退；默认按生产优雅 drain
-    // 禁止用 CARGO_MANIFEST_DIR 推断（cargo run 注入会误伤生产）
-    let is_dev = matches!(
-        std::env::var("APP_ENV")
-            .or_else(|_| std::env::var("RUN_MODE"))
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str(),
-        "dev" | "development"
-    );
-    if is_dev {
-        tracing::warn!("⚡ APP_ENV=dev：关闭信号将秒退，跳过计费管道 drain（勿用于生产）");
-        drop(billing_pipeline);
-        let shutdown_signal_dev = async move {
-            wait_for_shutdown_signal().await;
-            tracing::info!("⚡ 开发环境收到关闭信号，强制秒退释放端口...");
-            std::process::exit(0);
-        };
-
-        tokio::select! {
-            res = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()) => {
-                res?;
-            }
-            _ = shutdown_signal_dev => {}
-        }
-    } else {
-        let shutdown_signal = async move {
-            wait_for_shutdown_signal().await;
-            tracing::info!("⏳ 收到关闭信号，停止接受新请求，等待进行中的任务完成...");
-            let _ = shutdown_tx.send(true);
-        };
-
-        let serve_future = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown_signal);
-
-        let mut serve_shutdown_rx = shutdown_rx.clone();
-        tokio::select! {
-            res = serve_future => {
-                res?;
-            }
-            _ = async {
-                while !*serve_shutdown_rx.borrow() {
-                    if serve_shutdown_rx.changed().await.is_err() {
-                        break;
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                tracing::warn!("⚠️ HTTP 服务未在 30 秒内优雅关闭，强制结束连接");
-            } => {}
-        }
-
-        // 视频提交已脱离 HTTP 连接；时限覆盖素材转换与上游超时，不用下面 30 秒的后台上限
-        let video_budget = crate::services::http_client::upstream_timeout_duration()
-            + std::time::Duration::from_secs(180);
-        tracing::info!("⏳ 等待进行中的视频提交落账...");
-        match tokio::time::timeout(video_budget, state.video_submit_drain.wait_idle()).await {
-            Ok(()) => tracing::info!("✅ 视频提交已落账"),
-            Err(_) => tracing::warn!("⚠️ 视频提交未在上游时限内结束"),
-        }
-
-        // HTTP 服务已关闭，等待后台任务完成（包括正在轮询中的异步任务）
-        tracing::info!("⏳ HTTP 连接已关闭，等待后台任务完成...");
-        let wait_bg = async {
-            for h in bg_handles {
-                let _ = h.await;
-            }
-            // 计费管道：shutdown 已发出，Worker 排空 MPSC 剩余事件并刷库
-            billing_pipeline.join().await;
-        };
-        match tokio::time::timeout(std::time::Duration::from_secs(30), wait_bg).await {
-            Ok(_) => tracing::info!("✅ 所有后台任务已完成，服务安全退出"),
-            Err(_) => tracing::warn!("⚠️ 部分后台任务未在 30 秒内完成，强制退出"),
-        }
-    }
-
-    Ok(())
+    bg_handles
 }
 
-static MAINTENANCE_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MAINTENANCE_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// 执行日常全量系统维护任务（用量增量统计、日志大字段清理、错误日志清理、日志归档、临时存储清理等）
 /// 严格遵循安全执行顺序：先聚合统计用量，再进行冷行删除归档。
@@ -484,7 +626,7 @@ async fn fetch_log_cleanup_settings(state: &AppState) -> models::LogCleanupSetti
 
 /// 清理超期日志的大字段内容（request_content / response_content / upstream_req_content）
 /// 仅置 NULL，不删除日志记录，统计数据不受影响
-async fn cleanup_log_content(state: &AppState, retention_days: i32) {
+async fn cleanup_log_content(state: &AppState, retention_days: i64) {
     if retention_days <= 0 {
         return;
     }
@@ -531,7 +673,7 @@ async fn cleanup_log_content(state: &AppState, retention_days: i32) {
 
 /// 将超期日志行迁入 logs_archive 并从热表删除（分批；`log_row_retention_days<=0` 时跳过）。
 /// jsonb 按列名填充，热表加列后无需再给 archive 做列序体操。
-async fn archive_old_logs(state: &AppState, row_days: i32) {
+async fn archive_old_logs(state: &AppState, row_days: i64) {
     if row_days <= 0 {
         return;
     }
@@ -542,7 +684,7 @@ async fn archive_old_logs(state: &AppState, row_days: i32) {
     }
 
     // 配置天数 +2 缓冲，降低「今日统计未落档就被迁走」的风险
-    let effective_days = (row_days as i64).saturating_add(2);
+    let effective_days = row_days.saturating_add(2);
     let archive_sql = state.db.format_query(
         "WITH candidates AS (\
             SELECT id FROM logs \
@@ -554,14 +696,14 @@ async fn archive_old_logs(state: &AppState, row_days: i32) {
                 cost, latency_ms, status_code, endpoint, error_message, upstream_url, request_content, response_content, \
                 upstream_req_content, is_stream, billing_detail, billing_pid, forward_eid, created_at, log_id, task_id, \
                 is_completed, pre_deduct_gift, action_type, channel_config_id, post_response, plugin_tag, is_ha, \
-                upstream_request_id, billing_features, archived_at\
+                upstream_request_id, billing_features, has_video, commission_posted, coupon_deduct, pre_deduct_voucher, archived_at\
             ) \
             SELECT \
                 l.id, l.user_id, l.channel_id, l.token_id, l.model, l.prompt_tokens, l.completion_tokens, l.cached_tokens, \
                 l.cost, l.latency_ms, l.status_code, l.endpoint, l.error_message, l.upstream_url, l.request_content, l.response_content, \
                 l.upstream_req_content, l.is_stream, l.billing_detail, l.billing_pid, l.forward_eid, l.created_at, l.log_id, l.task_id, \
                 l.is_completed, l.pre_deduct_gift, l.action_type, l.channel_config_id, l.post_response, l.plugin_tag, l.is_ha, \
-                l.upstream_request_id, l.billing_features, NOW() \
+                l.upstream_request_id, l.billing_features, l.has_video, l.commission_posted, l.coupon_deduct, l.pre_deduct_voucher, NOW() \
             FROM logs l \
             JOIN candidates c ON c.id = l.id \
             ON CONFLICT (id) DO NOTHING \
@@ -608,7 +750,7 @@ async fn archive_old_logs(state: &AppState, row_days: i32) {
 }
 
 /// 分批删除指定表中非 200 且非 0（排除 pending 状态）已结案的超期错误记录
-async fn delete_expired_error_logs(db: &crate::db::Database, table: &str, days: i32) -> u64 {
+async fn delete_expired_error_logs(db: &crate::db::Database, table: &str, days: i64) -> u64 {
     let sql = db.format_query(&format!(
         "DELETE FROM {table} WHERE id IN (\
             SELECT id FROM {table} \
@@ -639,7 +781,7 @@ async fn delete_expired_error_logs(db: &crate::db::Database, table: &str, days: 
 }
 
 /// 定期删除日志表 logs 与 logs_archive 中的超期错误记录（`error_log_retention_days <= 0` 时跳过）
-async fn cleanup_error_logs(state: &AppState, days: i32) {
+async fn cleanup_error_logs(state: &AppState, days: i64) {
     if days <= 0 {
         return;
     }
@@ -657,7 +799,10 @@ async fn cleanup_error_logs(state: &AppState, days: i32) {
 }
 
 /// 将 REGISTER_ENABLED 环境变量同步到数据库的 registration_settings
-pub(crate) async fn sync_registration_settings(db: &Database, register_enabled: bool) -> anyhow::Result<()> {
+pub(crate) async fn sync_registration_settings(
+    db: &Database,
+    register_enabled: bool,
+) -> anyhow::Result<()> {
     use crate::api::settings::default_registration_settings;
 
     let existing: Option<String> = sqlx::query_scalar(

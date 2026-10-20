@@ -13,6 +13,12 @@ export interface User {
   username: string;
   email: string;
   nickname?: string;
+  /** 名 */
+  first_name?: string;
+  /** 姓氏 */
+  last_name?: string;
+  /** 出生年月，格式 YYYY-MM */
+  birth_ym?: string;
   mobile?: string;
   wechat_id?: string;
   wechat_name?: string;
@@ -88,6 +94,8 @@ export interface UserLevel {
   daily_invite_limit: number;
   marketing_enabled: number;
   is_default: number;
+  /** 1=可以在会员卡券方案里被选为升级目标 */
+  purchasable?: number;
   max_token_count: number;
   allow_view_log_details: number;
   invoice_enabled?: number;
@@ -261,7 +269,8 @@ export interface ModelProvider {
   name: string;
   name_en?: string;
   sort_order: number;
-  is_active: boolean;
+  is_active: number | boolean;
+  is_system?: number;
   remark?: string;
   logo?: string;
   model_count?: number;
@@ -274,7 +283,8 @@ export interface ModelType {
   name: string;
   name_en?: string;
   sort_order: number;
-  is_active: boolean;
+  is_active: number | boolean;
+  is_system?: number;
   logo?: string;
   default_features?: string;
   model_count?: number;
@@ -288,6 +298,7 @@ export interface ClassificationCount {
   name_en?: string;
   count: number;
   logo?: string;
+  is_system?: number;
 }
 
 export interface RechargeRecord {
@@ -412,6 +423,14 @@ export interface Redemption {
   name: string;
   code: string;
   quota: number;
+  /** 余额兑换码的赠送金余额面值（计入 users.gift_balance） */
+  gift_quota?: number;
+  /** 模型卡券面额价值（展示价值） */
+  worth_quota?: number;
+  /** 模型卡券默认模型折扣倍率（1.0=原价） */
+  voucher_discount?: number;
+  /** 模型卡券单模型专属折扣 JSON 字符串 */
+  model_discounts?: string;
   is_used: number;
   used_at?: string;
   used_by?: string;
@@ -419,6 +438,8 @@ export interface Redemption {
   updated_at: string;
   /** 过期时间，空/null = 长期有效 */
   expires_at?: string | null;
+  /** 开始生效时间，空/null = 生成后立即生效 */
+  starts_at?: string | null;
   /** 单兑换码兑换次数，-1 = 不限（兼容历史 0） */
   max_uses?: number;
   /** 已兑换次数（按单个兑换码累计） */
@@ -427,21 +448,83 @@ export interface Redemption {
   per_user_limit?: number;
   /** 同一活动下单用户可兑换次数，-1 = 不限 */
   per_user_activity_limit?: number;
-  /** 状态: 1=正常, 0=禁用, -1=作废 */
+  /** 状态: 1=正常, 0=禁用, -1=作废, -2=已退换兑换余额 */
   status?: number;
+  /** balance | model_voucher */
+  code_type?: string;
+  /** 模型卡券可消耗的模型 ID，JSON 数组字符串 */
+  allowed_models?: string;
+  /** 兑换后有效天数，0=长期有效 */
+  valid_days?: number;
+  /** 活动 ID，4 位数字 */
+  activity_id?: string;
+  /** 0=全部满足，1=满足其中一项 */
+  condition_match?: number;
+  cond_min_balance?: number;
+  cond_month_spend?: number;
+  cond_total_spend?: number;
+  cond_month_recharge?: number;
+  cond_total_recharge?: number;
+  /** 活动简介 / 广告语，发放与兑换时展示 */
+  description?: string;
+  /** 管理员备注说明，仅后台管理者可见 */
+  remark?: string;
+  redeemers?: Array<{
+    user_id?: string;
+    username: string;
+    uid: string;
+    remark: string;
+    referrer_username: string;
+    referrer_uid: string;
+    /** 该用户兑换此码的次数，含已退换 */
+    times?: number;
+    /** 该用户尚未退换的系统余额入账合计 */
+    amount?: number;
+    /** 该用户尚未退换的赠送金余额入账合计 */
+    gift_amount?: number;
+    uses?: Array<{
+      /** redemption_logs.id，0 表示没有逐次日志的历史单次兑换 */
+      id: number;
+      amount: number;
+      gift_amount?: number;
+      created_at?: string | null;
+      /** 0=未退换，1=已退换这一次 */
+      refunded?: number;
+    }>;
+  }>;
 }
 
 export interface RedemptionGroup {
   name: string;
   total_count: number;
   total_quota: number;
+  total_gift_quota?: number;
+  total_worth_quota?: number;
+  voucher_discount?: number;
+  model_discounts?: string;
   created_at: string;
   expires_at?: string | null;
+  /** 开始生效时间，空/null = 生成后立即生效 */
+  starts_at?: string | null;
   total_used_count: number;
   max_uses: number;
   per_user_limit: number;
   /** 同一活动下单用户可兑换次数，-1 = 不限 */
   per_user_activity_limit?: number;
+  code_type?: string;
+  allowed_models?: string;
+  valid_days?: number;
+  activity_id?: string;
+  condition_match?: number;
+  cond_min_balance?: number;
+  cond_month_spend?: number;
+  cond_total_spend?: number;
+  cond_month_recharge?: number;
+  cond_total_recharge?: number;
+  /** 活动简介 / 广告语，发放与兑换时展示 */
+  description?: string;
+  /** 管理员备注说明，仅后台管理者可见 */
+  remark?: string;
 }
 
 export interface RequestLog {
@@ -507,6 +590,8 @@ export interface RequestLog {
   sub_channel_name?: string;
   task_id?: string;
   created_at: string;
+  /** 归档时间（仅 logs_archive 冷表包含） */
+  archived_at?: string;
 }
 
 export interface DashboardStats {
@@ -602,6 +687,8 @@ interface SiteSettings {
   login_style?: 'split' | 'classic';
   login_quote?: string;
   default_timezone?: string;
+  /** 管理后台展示时区；空则回退站点运营时区 */
+  admin_display_timezone?: string;
   show_timezone?: boolean;
   ip_blacklist_enabled?: boolean;
   ip_blacklist?: string[];
@@ -621,10 +708,34 @@ interface CurrencySettings {
   currency_symbol: string;
   currency_unit: string;
   token_ratio: number;
+  /** 由实时 / 手动汇率推导（只读） */
   auxiliary_currencies?: AuxiliaryCurrency[];
+  fx?: FxSettings;
   quick_amounts?: number[];
   min_recharge_amount?: number;
   max_recharge_amount?: number;
+}
+
+/** 单币种汇率：跟随实时、按百分比或数值加在实时汇率上，或手填固定汇率 */
+export interface FxCurrencyConfig {
+  code: string;
+  manual: boolean;
+  manual_rate: number;
+  /** 空 = 跟随实时；percent / amount / manual */
+  adjust?: '' | 'percent' | 'amount' | 'manual';
+  adjust_value?: number;
+  display: boolean;
+}
+
+interface FxSettings {
+  /** 实时汇率总开关，缺省为关闭 */
+  live_enabled?: boolean;
+  mode: 'auto' | 'manual';
+  refresh_interval_minutes: number;
+  markup_percent: number;
+  max_stale_hours: number;
+  manual_base?: string;
+  currencies: FxCurrencyConfig[];
 }
 
 interface LoginSettings {
@@ -644,15 +755,18 @@ export interface RegistrationSettings {
   require_bind_mobile?: boolean;
   /** 是否要求绑定邮箱 */
   require_bind_email?: boolean;
-  /** all=全部都要 / any=满足其一 / prompt_only=仅弹窗提示 */
-  bind_enforcement?: 'all' | 'any' | 'prompt_only';
+  /** all=弹窗必须绑定全部 / any=弹窗必须绑定其一 / prompt_all=仅弹窗提示绑定全部 / prompt_any=仅弹窗提示绑定其一；prompt_only 为旧值，等同 prompt_all */
+  bind_enforcement?: 'all' | 'any' | 'prompt_all' | 'prompt_any' | 'prompt_only';
   /** 是否开启站点用户实名认证（KYC） */
   enable_user_kyc?: boolean;
   /** 同一邮箱最多绑定用户数 */
   max_accounts_per_email?: number;
   /** 同一手机号最多绑定用户数 */
   max_accounts_per_mobile?: number;
+  /** 同一微信最多绑定用户数 */
+  max_accounts_per_wechat?: number;
   // 以下字段仅管理后台完整接口返回，公开接口不包含
+  username_ip_daily_limit?: number | null;
   ip_rate_limit_enabled?: boolean;
   ip_daily_limit?: number;
   email_validation_strict?: boolean;
@@ -758,10 +872,15 @@ export interface AllSettings {
     subtitle_en?: string | null;
     logo_url?: string | null;
     allinpay_methods?: string[];
+    recharge_limit_enabled?: boolean;
+    min_recharge_amount?: number;
+    max_recharge_amount?: number;
   }[];
   agreement?: AgreementSettings;
   /** 微信 OAuth app_id（前端扫码需要），公开接口仅返回此字段，不含 secret */
   wechat_oauth_app_id?: string;
+  /** 微信 OAuth 授权回调主域名（如 https://old.com），用于多域名免审中继 */
+  wechat_oauth_callback_domain?: string;
   /** Google OAuth client_id（前端 OAuth 跳转需要），公开接口仅返回此字段，不含 secret */
   google_oauth_client_id?: string;
   menu_config?: {
@@ -842,6 +961,9 @@ export interface AllSettings {
       logo_url?: string | null;
       allinpay_wechat_enabled?: boolean;
       allinpay_alipay_enabled?: boolean;
+      recharge_limit_enabled?: boolean;
+      min_recharge_amount?: number;
+      max_recharge_amount?: number;
     }[];
   };
   google_oauth?: any;
@@ -896,8 +1018,10 @@ export interface ChannelConfig {
   daily_reset_cooldown_minutes?: number;
   /** 1=启用, 0=禁用 */
   status?: number;
-  /** 上游分类（channel_categories.id） */
+  /** 上游分类（channel_categories.id，向前兼容单分类） */
   category_id?: number | null;
+  /** 上游多分类（channel_categories.id 列表，支持多选） */
+  category_ids?: number[];
   /** 上游系统：兼容 / 官方 / newapi / Tkeapi / 火山引擎 / 阿里云 */
   upstream_system?: string;
   /** NewAPI 已选同步分组 */
@@ -928,6 +1052,11 @@ interface BoundChannelSummary {
   is_ha?: boolean;
   /** 1=启用, 0=禁用 */
   status?: number;
+  effective_priority?: number;
+  effective_weight?: number;
+  custom_priority?: number | null;
+  custom_weight?: number | null;
+  has_custom_schedule?: boolean;
 }
 
 export interface Upstream {
@@ -985,6 +1114,9 @@ export interface MarketingTeam {
   description?: string;
   invite_code: string;
   max_members: number;
+  members_can_set_level?: number;
+  members_can_set_pay?: number;
+  members_can_view_logs?: number;
   leader_can_remove_members?: number;
   members_can_apply_invoice?: number;
   allowed_level_ids?: number[];
@@ -1032,6 +1164,7 @@ export interface ReferralRecharge {
   recharge_type: string;
   remark?: string;
   wallet_type?: string;
+  order_no?: string;
   operator?: string;
   created_at: string;
 }
@@ -1049,7 +1182,7 @@ export interface Announcement {
   active_expires_at?: string | null;
   /** created=新建时间, updated=最后修改时间 */
   display_time_mode?: 'created' | 'updated' | string;
-  /** 逗号分隔，可多选：console,playground_2026,portal_pro */
+  /** 逗号分隔，可多选：pay_modal,console,playground_2026,portal_pro */
   target_module?: string;
   /** 创作中心顶栏背景色，#RRGGBB */
   playground_banner_bg?: string | null;

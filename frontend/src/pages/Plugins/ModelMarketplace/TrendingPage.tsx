@@ -288,8 +288,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
   onViewAllModels,
   onSelectProvider
 }) => {
-  const { t: tp, i18n } = useTranslation('model_marketplace');
-  const isEnglish = i18n.language?.startsWith('en');
+  const { t: tp } = useTranslation('model_marketplace');
   const [favorites, setFavorites] = useState<{ [key: string]: boolean }>({});
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [currentHeroIndex, setCurrentHeroIndex] = useState(() => Math.floor(Math.random() * 100));
@@ -644,13 +643,15 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
   };
 
   const getCategoryLabel = (rawCategory?: string) => {
-    if (!rawCategory) return '图生图';
-    if (rawCategory.includes('image-to-video') || rawCategory.includes('图生视频')) return '图生视频';
-    if (rawCategory.includes('text-to-video') || rawCategory.includes('文生视频')) return '文生视频';
-    if (rawCategory.includes('video-to-video') || rawCategory.includes('视频生视频')) return '视频生视频';
-    if (rawCategory.includes('text-to-image') || rawCategory.includes('文生图')) return '文生图';
-    if (rawCategory.includes('speech') || rawCategory.includes('audio') || rawCategory.includes('语音')) return '文本转语音';
-    return rawCategory;
+    const source = rawCategory || '';
+    if (!source || source.includes('image-to-image') || source.includes('图生图')) return tp('cat_image_to_image');
+    if (source.includes('image-to-video') || source.includes('图生视频')) return tp('cat_image_to_video');
+    if (source.includes('text-to-video') || source.includes('文生视频')) return tp('cat_text_to_video');
+    if (source.includes('video-to-video') || source.includes('视频生视频')) return tp('cat_video_to_video');
+    if (source.includes('text-to-image') || source.includes('文生图')) return tp('cat_text_to_image');
+    if (source.includes('speech') || source.includes('audio') || source.includes('语音') || source.includes('文本转语音')) return tp('cat_text_to_speech');
+    if (source.includes('推荐模型')) return tp('cat_recommended');
+    return source;
   };
 
   const renderModelCard = (model: any, index: number, sectionPrefix: string = 'card') => {
@@ -844,7 +845,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                 color: isLight ? '#0284c7' : '#38bdf8',
                 fontWeight: 600
               }}>
-                {isEnglish ? `${displayItems.length} Items` : `展示 ${displayItems.length} 项`}
+                {tp('items_count', { count: displayItems.length })}
               </span>
             </div>
           </div>
@@ -884,7 +885,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                 color: isLight ? '#475569' : '#a1a1aa',
                 fontWeight: 600
               }}>
-                {isEnglish ? `${providersToRender.length} Providers` : `共 ${providersToRender.length} 家厂商`}
+                {tp('providers_count', { count: providersToRender.length })}
               </span>
             </div>
           </div>
@@ -1196,7 +1197,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
           {/* Category Badge Pill */}
           {(() => {
             const rawCategory = activeHeroTryModel?.type_name || activeHeroTryModel?.category || activeSlide?.category;
-            const badgeCategory = rawCategory ? getCategoryLabel(rawCategory) : '推荐模型';
+            const badgeCategory = rawCategory ? getCategoryLabel(rawCategory) : tp('cat_recommended');
             const modelDisplayName = activeHeroTryModel?.name || activeHeroTryModel?.original_id || activeSlide?.try_model_id || '';
             return (
               <div className="hero-stagger-1" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: '-14px', marginBottom: 16 }}>
@@ -1444,7 +1445,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
           >
             <SearchOutlined style={{ color: isLight ? '#94a3b8' : '#71717a', fontSize: 18 }} />
             <Input 
-              placeholder={tp('search_placeholder_trending', isEnglish ? 'Search by model, task, category and more' : '搜索模型、任务、分类等...')}
+              placeholder={tp('search_placeholder_trending')}
               value={searchQuery}
               onChange={handleInputChange}
               onPressEnter={() => {
@@ -1477,7 +1478,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                 whiteSpace: 'nowrap'
               }}
             >
-              {tp('view_all_models', isEnglish ? 'View all models' : '查看全部模型')}
+              {tp('view_all_models')}
             </Button>
           </div>
 
@@ -1495,7 +1496,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
             return (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 13, color: isLight ? '#64748b' : '#71717a', fontWeight: 500 }}>
-                  {isEnglish ? 'History:' : '历史记录:'}
+                  {tp('search_history')}
                 </span>
                 {displayTags.map((tagItem, idx) => (
                   <button
@@ -1538,7 +1539,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                     marginLeft: 4
                   }}
                 >
-                  {isEnglish ? 'Clear' : '清空历史'}
+                  {tp('clear_history')}
                 </button>
               </div>
             );
@@ -1553,7 +1554,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
               onClick={() => onViewAllModels?.()}
             >
               <Title level={4} style={{ margin: 0, fontSize: 20, fontWeight: 700, color: c.text1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {isEnglish ? 'Model Providers' : '模型品牌'} <RightOutlined style={{ fontSize: 14, color: isLight ? '#64748b' : '#a1a1aa' }} />
+                {tp('model_providers')} <RightOutlined style={{ fontSize: 14, color: isLight ? '#64748b' : '#a1a1aa' }} />
               </Title>
             </div>
           </div>
@@ -1701,11 +1702,11 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                     color: isLight ? '#0284c7' : '#38bdf8',
                     fontWeight: 600
                   }}>
-                    展示 {trendingModels.length} 项
+                    {tp('items_count', { count: trendingModels.length })}
                   </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Text style={{ fontSize: 13, color: c.text3 }}>{tp('per_section', isEnglish ? 'Per section' : '展示数量')}</Text>
+                  <Text style={{ fontSize: 13, color: c.text3 }}>{tp('per_section')}</Text>
                   <Select
                     value={perSectionLimit}
                     onChange={setPerSectionLimit}
@@ -1717,7 +1718,7 @@ const TrendingPage: React.FC<TrendingPageProps> = ({
                       { value: 16, label: '16' },
                       { value: 24, label: '24' },
                       { value: 32, label: '32' },
-                      { value: 'all', label: isEnglish ? 'All' : '全部' }
+                      { value: 'all', label: tp('filter_all') }
                     ]}
                   />
                 </div>

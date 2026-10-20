@@ -37,6 +37,21 @@ export interface PaymentChannelUiItem {
   allinpay_alipay_enabled?: boolean;
   /** 公开接口：已开启的通联子渠道 payment_method */
   allinpay_methods?: string[];
+  /** 渠道收款币种（按顺序优先）；后台未勾选为 null，公开接口为生效列表 */
+  currencies?: string[] | null;
+  /** 公开接口：按默认货币下单时渠道实际收款币种 */
+  pay_currency?: string;
+  pay_currency_symbol?: string;
+  /** 公开接口：1 默认货币 = pay_rate 收款币种（跨币种时已含加价） */
+  pay_rate?: number;
+  /** 公开接口：收款币种最小单位小数位 */
+  pay_decimals?: number;
+  /** 开启后使用本渠道最小/最大充值，关闭则沿用全局通用充值设置 */
+  recharge_limit_enabled?: boolean;
+  /** 渠道最小充值（默认货币）。0 表示不限制，仅单独开启时生效 */
+  min_recharge_amount?: number;
+  /** 渠道最大充值（默认货币）。0 表示不限制，仅单独开启时生效 */
+  max_recharge_amount?: number;
 }
 
 export interface PaymentChannelDefaultMeta {
@@ -152,6 +167,10 @@ export const mergeChannelList = (
         logo_url: existing.logo_url ?? null,
         allinpay_wechat_enabled: meta.id === 'allinpay' ? wechatOn : undefined,
         allinpay_alipay_enabled: meta.id === 'allinpay' ? alipayOn : undefined,
+        currencies: existing.currencies ?? null,
+        recharge_limit_enabled: !!existing.recharge_limit_enabled,
+        min_recharge_amount: Number(existing.min_recharge_amount) || 0,
+        max_recharge_amount: Number(existing.max_recharge_amount) || 0,
       };
     }
     return {
@@ -166,6 +185,9 @@ export const mergeChannelList = (
       ...(meta.id === 'allinpay'
         ? { allinpay_wechat_enabled: true, allinpay_alipay_enabled: true }
         : {}),
+      recharge_limit_enabled: false,
+      min_recharge_amount: 0,
+      max_recharge_amount: 0,
     };
   }).sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0) || a.id.localeCompare(b.id));
 };

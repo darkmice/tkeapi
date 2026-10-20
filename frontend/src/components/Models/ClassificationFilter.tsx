@@ -53,8 +53,7 @@ const ClassificationFilter: React.FC<ClassificationFilterProps> = ({
   const renderSystemIcon = (name: string, isLight: boolean, isSelected: boolean) => {
     const lowerName = name.toLowerCase();
     const style = { color: isSelected ? '#fff' : (isLight ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.65)') };
-    if (lowerName.includes('画质增强') || lowerName.includes('quality enhancement') || lowerName.includes('视频增强') || lowerName.includes('videoenhance') || lowerName.includes('video-enhance') || lowerName.includes('video_enhance')) return <Sparkles size={14} style={style} />;
-    if (lowerName.includes('图像增强') || lowerName.includes('image enhancement') || lowerName.includes('image-enhance') || lowerName.includes('imageenhance') || lowerName.includes('image_enhance')) return <Sparkles size={14} style={style} />;
+    if (lowerName.includes('封装') || lowerName.includes('encapsulation')) return <Sparkles size={14} style={style} />;
     if (lowerName.includes('图片') || lowerName.includes('image')) return <ImageIcon size={14} style={style} />;
     if (lowerName.includes('视频') || lowerName.includes('video')) return <Video size={14} style={style} />;
     if (lowerName.includes('音频') || lowerName.includes('audio')) return <AudioLines size={14} style={style} />;

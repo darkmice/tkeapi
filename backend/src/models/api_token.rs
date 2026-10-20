@@ -28,8 +28,8 @@ pub struct ApiToken {
     pub quota_used: f64,
     pub allowed_models: String, // JSON array
     pub allowed_ips: String,
-    pub rps_limit: i32,
-    pub rpm_limit: i32,
+    pub rps_limit: i64,
+    pub rpm_limit: i64,
     pub expires_at: Option<DbTs>,
 
     pub is_active: i64,
@@ -42,7 +42,7 @@ pub struct ApiToken {
     #[sqlx(default)]
     pub only_playground_2026: i64,
     #[sqlx(default)]
-    pub high_availability: i32,
+    pub high_availability: i64,
     #[sqlx(default)]
     pub daily_quota_limit: f64,
     #[sqlx(default)]
@@ -162,30 +162,30 @@ pub struct CreateTokenRequest {
     pub quota_limit: Option<f64>,
     pub allowed_models: Option<Vec<String>>,
     pub allowed_ips: Option<String>,
-    pub rps_limit: Option<i32>,
-    pub rpm_limit: Option<i32>,
+    pub rps_limit: Option<i64>,
+    pub rpm_limit: Option<i64>,
     pub expires_at: Option<String>,
     pub only_playground: Option<i64>,
     pub only_playground_2026: Option<i64>,
-    pub high_availability: Option<i32>,
+    pub high_availability: Option<i64>,
     pub daily_quota_limit: Option<f64>,
     pub weekly_quota_limit: Option<f64>,
     pub monthly_quota_limit: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateTokenRequest {
     pub name: Option<String>,
     pub quota_limit: Option<f64>,
     pub allowed_models: Option<Vec<String>>,
     pub allowed_ips: Option<String>,
-    pub rps_limit: Option<i32>,
-    pub rpm_limit: Option<i32>,
+    pub rps_limit: Option<i64>,
+    pub rpm_limit: Option<i64>,
     pub expires_at: Option<String>,
     pub is_active: Option<i64>,
     pub only_playground: Option<i64>,
     pub only_playground_2026: Option<i64>,
-    pub high_availability: Option<i32>,
+    pub high_availability: Option<i64>,
     pub daily_quota_limit: Option<f64>,
     pub weekly_quota_limit: Option<f64>,
     pub monthly_quota_limit: Option<f64>,

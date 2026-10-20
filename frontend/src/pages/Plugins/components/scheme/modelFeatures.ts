@@ -39,6 +39,32 @@ export const CHAT_FEATURE_VIDEO = 'understand-video';
 export const CHAT_FEATURE_FILE = 'understand-file';
 export const CHAT_UNDERSTAND_ATTRS = ['理解图片', '理解音频', '理解视频', '理解文件'];
 
+/** 图片生成的二级功能属性。旧名「图生图」并入「多图文生图」。 */
+export const IMAGE_GENERATION_ATTRS = ['文生图', '图文生图', '多图文生图'] as const;
+
+const IMAGE_ATTR_ALIAS: Record<string, string> = {
+  图生图: '多图文生图',
+  创建图片: '文生图',
+  编辑图片: '图文生图',
+};
+
+export function normalizeImageFeatureAttrs(attrs: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of attrs) {
+    const mapped = IMAGE_ATTR_ALIAS[raw] || raw;
+    if (!mapped || out.includes(mapped)) continue;
+    out.push(mapped);
+  }
+  return out;
+}
+
+/** 选项固定为文生图 / 图文生图 / 多图文生图，蒙版、坐标框等其余属性留在后面。 */
+export function imageFeatureOptions(attrs: string[]): string[] {
+  const normalized = normalizeImageFeatureAttrs(attrs);
+  const extras = normalized.filter((item) => !IMAGE_GENERATION_ATTRS.includes(item as (typeof IMAGE_GENERATION_ATTRS)[number]));
+  return [...IMAGE_GENERATION_ATTRS, ...extras];
+}
+
 export function featureKindFromTypeName(typeName?: string | null): ModelFeatureKind | null {
   const n = typeName || '';
   if (n.includes('图片')) return 'image';
@@ -221,21 +247,32 @@ function enabledSchemeInputKeys(scheme: { inputs?: unknown }): Set<string> {
 
 /** 视频方案当前 IO 实际支持的生成方式（仅已启用口） */
 export function videoGenerationModesFromScheme(scheme: {
+  id?: string;
   type?: string;
   inputs?: unknown;
+  allow_text_to_video?: boolean;
 }): ModelFeature[] {
   if (scheme?.type && scheme.type !== 'video') return [];
   const enabled = enabledSchemeInputKeys(scheme);
   if (enabled.size === 0) return [];
+  const blockText = scheme.allow_text_to_video === false || scheme.id === 'viduq4-preview';
   return VIDEO_MODE_FROM_IO.filter((row) => row.ports.some((k) => enabled.has(k)))
+    .filter((row) => !(blockText && row.key === 'text-to-video'))
     .map((row) => MODEL_FEATURES.find((f) => f.key === row.key))
     .filter((f): f is ModelFeature => !!f);
 }
 
 /** 用户端模型：按绑定方案（含 IO 覆写）的启用口推导功能分类 */
-export function videoFeatureKeysFromModel(m: { inputs?: unknown } | null | undefined): string[] {
+export function videoFeatureKeysFromModel(
+  m: { inputs?: unknown; scheme_id?: string; allow_text_to_video?: boolean } | null | undefined,
+): string[] {
   if (!m) return [];
-  return videoGenerationModesFromScheme({ type: 'video', inputs: m.inputs }).map((f) => f.key);
+  return videoGenerationModesFromScheme({
+    type: 'video',
+    inputs: m.inputs,
+    id: m.scheme_id,
+    allow_text_to_video: m.scheme_id === 'viduq4-preview' ? false : m.allow_text_to_video,
+  }).map((f) => f.key);
 }
 
 function modelSupportsVideoFeature(m: { inputs?: unknown }, key: string): boolean {
@@ -258,6 +295,47 @@ export function modelsForImageFeatureKey<T extends { feature_keys?: string[] }>(
   key: string,
 ): T[] {
   return models.filter((m) => modelHasFeatureKey(m, key));
+}
+
+function enabledReferenceImageMax(model: {
+  inputs?: unknown;
+  max_reference_images?: number;
+}): number {
+  const inputs = Array.isArray(model.inputs) ? model.inputs : [];
+  const port = inputs.find((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const row = item as { key?: string; bind_key?: string; enabled?: boolean };
+    if (row.enabled === false) return false;
+    return row.key === 'reference_images'
+      || row.bind_key === 'image_urls'
+      || row.bind_key === 'reference_urls';
+  }) as { max?: number } | undefined;
+  if (port) {
+    const max = Number(port.max);
+    return Number.isFinite(max) ? max : 1;
+  }
+  if (inputs.length > 0) return 0;
+  const legacy = Number(model.max_reference_images);
+  return Number.isFinite(legacy) && legacy >= 0 ? legacy : 0;
+}
+
+/** 图文生图：勾了该特性，或方案参考图口已启用且数量上限至少为 1。多图文生图同样能收一张参考图。 */
+export function modelSupportsImageTextToImage(model: {
+  feature_keys?: string[];
+  inputs?: unknown;
+  max_reference_images?: number;
+} | null | undefined): boolean {
+  if (!model) return false;
+  if (modelHasFeatureKey(model, 'edit-image')) return true;
+  return enabledReferenceImageMax(model) >= 1;
+}
+
+export function modelsForImageTextToImage<T extends {
+  feature_keys?: string[];
+  inputs?: unknown;
+  max_reference_images?: number;
+}>(models: T[]): T[] {
+  return models.filter((model) => modelSupportsImageTextToImage(model));
 }
 
 export function pickVideoFeatureForModel(

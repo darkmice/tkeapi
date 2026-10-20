@@ -23,6 +23,13 @@ use crate::{
     AppState,
 };
 
+const PLUGIN_NAME: &str = "site_icons";
+const STORAGE_REQUIRED: &str = "请配置站点存储才可以添加图标";
+
+async fn icon_store(state: &AppState) -> Option<crate::services::object_store::ObjectStore> {
+    crate::api::plugins::site_store_for_plugin(state, PLUGIN_NAME).await
+}
+
 /// 图标名仅允许字母数字下划线连字符，防止路径穿越。
 fn sanitize_icon_name(name: &str) -> Result<String, AppError> {
     let normalized = name.trim().to_lowercase().replace(' ', "_");
@@ -74,17 +81,39 @@ fn validate_svg_content(svg: &str) -> Result<(), AppError> {
     }
     // 危险事件处理器检测 (仅在属性赋值形如 ` onload=` 时触发，避免误伤常规文本或 CSS 属性)
     if has_dangerous_svg_event(&lower) {
-        return Err(AppError::BadRequest("SVG 含有不安全的事件处理器属性".into()));
+        return Err(AppError::BadRequest(
+            "SVG 含有不安全的事件处理器属性".into(),
+        ));
     }
     Ok(())
 }
 
 fn has_dangerous_svg_event(lower_svg: &str) -> bool {
     let dangerous_events = [
-        "onload", "onerror", "onclick", "onmouseover", "onmouseout", "onmouseenter",
-        "onmouseleave", "onmousedown", "onmouseup", "onmousemove", "onfocus", "onblur",
-        "onchange", "onsubmit", "onreset", "onselect", "onkeydown", "onkeypress",
-        "onkeyup", "onanimationstart", "onanimationend", "onbegin", "onend", "onrepeat",
+        "onload",
+        "onerror",
+        "onclick",
+        "onmouseover",
+        "onmouseout",
+        "onmouseenter",
+        "onmouseleave",
+        "onmousedown",
+        "onmouseup",
+        "onmousemove",
+        "onfocus",
+        "onblur",
+        "onchange",
+        "onsubmit",
+        "onreset",
+        "onselect",
+        "onkeydown",
+        "onkeypress",
+        "onkeyup",
+        "onanimationstart",
+        "onanimationend",
+        "onbegin",
+        "onend",
+        "onrepeat",
     ];
     for evt in &dangerous_events {
         if let Some(pos) = lower_svg.find(evt) {
@@ -218,7 +247,7 @@ pub async fn get_storage_status(
     Extension(claims): Extension<auth::Claims>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     require_admin(&state, &claims).await?;
-    if let Some(store) = crate::relay::tos_persist::load_system_object_store(&state).await {
+    if let Some(store) = icon_store(&state).await {
         Ok(Json(json!({
             "success": true,
             "provider": store.provider(),
@@ -278,7 +307,12 @@ pub async fn list_icons(
             binds.push(src.clone());
         }
     }
-    if let Some(letter) = params.initial.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(letter) = params
+        .initial
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let letter = letter.to_ascii_lowercase();
         if letter == "#" {
             conditions.push("substring(lower(name) from 1 for 1) !~ '^[a-z]$'".to_string());
@@ -396,54 +430,38 @@ pub async fn create_icon(
     let file_name = format!("{}.svg", safe_name);
     let assets_dir = &state.config.assets_dir;
 
-    // 1. 本地落盘：写入 icons/custom/ 目录
-    let custom_dir = format!("{}/icons/custom", assets_dir);
-    tokio::fs::create_dir_all(&custom_dir)
+    let Some(store) = icon_store(&state).await else {
+        return Err(AppError::BadRequest(STORAGE_REQUIRED.into()));
+    };
+    let object_key = store.full_key(&format!("icons/custom/{}", file_name));
+    store
+        .upload_file(
+            &object_key,
+            payload.svg_content.as_bytes().to_vec(),
+            "image/svg+xml",
+            None,
+        )
+        .await
+        .map_err(|e| AppError::BadRequest(format!("上传到站点存储失败: {}", e)))?;
+
+    // 展示、编辑和模型广场都读本地 icons/lobe/{name}.svg，云端只承接手动添加的副本。
+    let lobe_rel = format!("icons/lobe/{}", file_name);
+    let lobe_dir = format!("{}/icons/lobe", assets_dir);
+    tokio::fs::create_dir_all(&lobe_dir)
         .await
         .map_err(|e| AppError::Internal(format!("创建本地图标目录失败: {}", e)))?;
-    let rel_file_path = format!("icons/custom/{}", file_name);
-    let full_path = resolve_asset_path(assets_dir, &rel_file_path)?;
-    tokio::fs::write(&full_path, &payload.svg_content)
+    let lobe_full = resolve_asset_path(assets_dir, &lobe_rel)?;
+    tokio::fs::write(&lobe_full, &payload.svg_content)
         .await
         .map_err(|e| AppError::Internal(format!("写入本地 SVG 文件失败: {}", e)))?;
 
-    // 2. 本地双写兼容：写入 icons/lobe/ 目录，彻底兼容全站已有代码写死 `/assets/icons/lobe/${logo}.svg` 导致的 404
-    let lobe_dir = format!("{}/icons/lobe", assets_dir);
-    tokio::fs::create_dir_all(&lobe_dir).await.ok();
-    let lobe_path = format!("{}/{}", lobe_dir, file_name);
-    tokio::fs::write(&lobe_path, &payload.svg_content).await.ok();
-
-    // 3. 检查并联动站点绑定的对象存储（TOS / COS）
-    let mut stored_file_path = rel_file_path.clone();
-    if let Some(store) = crate::relay::tos_persist::load_system_object_store(&state).await {
-        let object_key = store.full_key(&format!("icons/custom/{}", file_name));
-        match store
-            .upload_file(
-                &object_key,
-                payload.svg_content.as_bytes().to_vec(),
-                "image/svg+xml",
-                None,
-            )
-            .await
-        {
-            Ok(cloud_url) => {
-                tracing::info!(
-                    "站点图标 [{}] 已成功同步上传至对象存储 ({}): {}",
-                    safe_name,
-                    store.provider(),
-                    cloud_url
-                );
-                stored_file_path = cloud_url;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "站点图标 [{}] 上传至对象存储失败，保持本地相对路径: {}",
-                    safe_name,
-                    e
-                );
-            }
-        }
+    let custom_rel = format!("icons/custom/{}", file_name);
+    let custom_dir = format!("{}/icons/custom", assets_dir);
+    tokio::fs::create_dir_all(&custom_dir).await.ok();
+    if let Ok(custom_full) = resolve_asset_path(assets_dir, &custom_rel) {
+        tokio::fs::write(&custom_full, &payload.svg_content).await.ok();
     }
+    let stored_file_path = lobe_rel;
 
     let title = payload.title.unwrap_or_else(|| safe_name.clone());
     let category = payload.category.unwrap_or_else(|| "自定义".to_string());
@@ -496,28 +514,24 @@ pub async fn get_icon_content(
 }
 
 async fn load_icon_svg(state: &AppState, icon: &SiteIcon) -> Result<String, AppError> {
-    if icon.file_path.starts_with("http://") || icon.file_path.starts_with("https://") {
-        let resp = crate::services::http_client::with_download_timeout(
-            state.http_client.get(&icon.file_path),
-        )
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("读取云端图标失败: {}", e)))?;
-        if !resp.status().is_success() {
-            return Err(AppError::Internal(format!(
-                "读取云端图标失败: HTTP {}",
-                resp.status()
-            )));
-        }
-        return resp
-            .text()
-            .await
-            .map_err(|e| AppError::Internal(format!("读取云端图标失败: {}", e)));
+    let mut candidates = vec![
+        format!("icons/lobe/{}.svg", icon.name),
+        format!("icons/custom/{}.svg", icon.name),
+    ];
+    if !icon.file_path.starts_with("http://") && !icon.file_path.starts_with("https://") {
+        candidates.push(icon.file_path.clone());
     }
-    let full = resolve_asset_path(&state.config.assets_dir, &icon.file_path)?;
-    tokio::fs::read_to_string(&full)
-        .await
-        .map_err(|_| AppError::NotFound("图标文件不存在".into()))
+    for rel in candidates {
+        let Ok(full) = resolve_asset_path(&state.config.assets_dir, &rel) else {
+            continue;
+        };
+        if let Ok(text) = tokio::fs::read_to_string(&full).await {
+            if text.to_lowercase().contains("<svg") {
+                return Ok(text);
+            }
+        }
+    }
+    Err(AppError::NotFound("图标文件不存在".into()))
 }
 
 /// 更新图标
@@ -551,49 +565,28 @@ pub async fn update_icon(
     let file_path = if let Some(ref svg) = payload.svg_content {
         validate_svg_content(svg)?;
         let file_name = format!("{}.svg", name);
-        let sub_dir = if current.source == "custom" {
-            "icons/custom"
-        } else {
-            "icons/lobe"
-        };
         let assets_dir = &state.config.assets_dir;
-
-        // 1. 本地落盘
-        let dir = format!("{}/{}", assets_dir, sub_dir);
-        tokio::fs::create_dir_all(&dir)
+        // 模型广场写死 /assets/icons/lobe/{name}.svg。展示路径必须是这份本地文件，
+        // 不能改成云 URL：同名对象会被 CDN 缓存，列表和再次编辑读到的仍是旧图。
+        let lobe_rel = format!("icons/lobe/{}", file_name);
+        let lobe_dir = format!("{}/icons/lobe", assets_dir);
+        tokio::fs::create_dir_all(&lobe_dir)
             .await
             .map_err(|e| AppError::Internal(format!("创建本地图标目录失败: {}", e)))?;
-        let fp = format!("{}/{}", sub_dir, file_name);
-        let full = resolve_asset_path(assets_dir, &fp)?;
-        tokio::fs::write(&full, svg)
+        let lobe_full = resolve_asset_path(assets_dir, &lobe_rel)?;
+        tokio::fs::write(&lobe_full, svg)
             .await
             .map_err(|e| AppError::Internal(format!("写入本地 SVG 文件失败: {}", e)))?;
 
-        // 2. 自定义图标本地双写到 icons/lobe/ 保证全站历史硬编码引用正常命中
         if current.source == "custom" {
-            let lobe_dir = format!("{}/icons/lobe", assets_dir);
-            tokio::fs::create_dir_all(&lobe_dir).await.ok();
-            let lobe_path = format!("{}/{}", lobe_dir, file_name);
-            tokio::fs::write(&lobe_path, svg).await.ok();
-        }
-
-        // 3. 同步至对象存储（若已配置）
-        let mut final_fp = fp;
-        if let Some(store) = crate::relay::tos_persist::load_system_object_store(&state).await {
-            let object_key = store.full_key(&format!("{}/{}", sub_dir, file_name));
-            if let Ok(cloud_url) = store
-                .upload_file(
-                    &object_key,
-                    svg.as_bytes().to_vec(),
-                    "image/svg+xml",
-                    None,
-                )
-                .await
-            {
-                final_fp = cloud_url;
+            let custom_rel = format!("icons/custom/{}", file_name);
+            let custom_dir = format!("{}/icons/custom", assets_dir);
+            tokio::fs::create_dir_all(&custom_dir).await.ok();
+            if let Ok(custom_full) = resolve_asset_path(assets_dir, &custom_rel) {
+                tokio::fs::write(&custom_full, svg).await.ok();
             }
         }
-        final_fp
+        lobe_rel
     } else {
         current.file_path
     };
@@ -611,6 +604,13 @@ pub async fn update_icon(
     .bind(id)
     .fetch_one(&state.db.pool)
     .await?;
+
+    if payload.svg_content.is_some() {
+        crate::api::plugins::get_marketplace_cache()
+            .write()
+            .await
+            .invalidate();
+    }
 
     Ok(Json(json!({
         "success": true,
@@ -643,16 +643,18 @@ pub async fn delete_icon(
             let custom_path = format!("{}/icons/custom/{}.svg", state.config.assets_dir, icon.name);
             tokio::fs::remove_file(&custom_path).await.ok();
         }
-        // 2. 对象存储清理
-        if let Some(store) = crate::relay::tos_persist::load_system_object_store(&state).await {
-            let object_key = if icon.file_path.starts_with("http://") || icon.file_path.starts_with("https://") {
-                store.extract_object_key(&icon.file_path).unwrap_or_else(|| {
-                    store.full_key(&format!("icons/custom/{}.svg", icon.name))
-                })
-            } else {
-                store.full_key(&icon.file_path)
-            };
-            store.delete_file(&object_key).await.ok();
+        // 2. 手动添加的图标才有云端副本
+        if icon.source == "custom" {
+            if let Some(store) = icon_store(&state).await {
+                let custom_key = store.full_key(&format!("icons/custom/{}.svg", icon.name));
+                store.delete_file(&custom_key).await.ok();
+                if icon.file_path.starts_with("http://") || icon.file_path.starts_with("https://")
+                {
+                    if let Some(key) = store.extract_object_key(&icon.file_path) {
+                        store.delete_file(&key).await.ok();
+                    }
+                }
+            }
         }
     }
 
@@ -716,7 +718,8 @@ pub async fn reset_icon_library(
 
 async fn remove_local_icon_files(assets_dir: &str, icons: &[SiteIcon]) -> usize {
     for icon in icons {
-        let remote = icon.file_path.starts_with("http://") || icon.file_path.starts_with("https://");
+        let remote =
+            icon.file_path.starts_with("http://") || icon.file_path.starts_with("https://");
         if !remote {
             if let Ok(full) = resolve_asset_path(assets_dir, &icon.file_path) {
                 tokio::fs::remove_file(&full).await.ok();
@@ -774,12 +777,17 @@ async fn list_icon_prefix(
 }
 
 async fn purge_cloud_icons(state: &AppState, icons: &[SiteIcon]) -> usize {
-    let Some(store) = crate::relay::tos_persist::load_system_object_store(state).await else {
+    let Some(legacy) = crate::relay::tos_persist::load_system_object_store(state).await else {
         return 0;
     };
+    let store = legacy.clone().scoped_to_plugin(PLUGIN_NAME);
     let mut keys = std::collections::HashSet::<String>::new();
-    let lobe_listed = list_icon_prefix(&store, "icons/lobe/", &mut keys).await;
-    let custom_listed = list_icon_prefix(&store, "icons/custom/", &mut keys).await;
+    let mut lobe_listed = true;
+    let mut custom_listed = true;
+    for s in [&store, &legacy] {
+        lobe_listed &= list_icon_prefix(s, "icons/lobe/", &mut keys).await;
+        custom_listed &= list_icon_prefix(s, "icons/custom/", &mut keys).await;
+    }
     let mut failed = usize::from(!lobe_listed) + usize::from(!custom_listed);
 
     for icon in icons {

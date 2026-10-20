@@ -31,15 +31,16 @@ fn is_read_post(path: &str) -> bool {
             | "/channel-configs/upstream-groups"
             | "/settings/database/verify"
             | "/settings/storage/test"
+            | "/settings/storage/buckets"
     ) || path.ends_with("/test-connection")
+        || path.ends_with("/list-buckets")
         || path.ends_with("/test-volcengine-connection")
         || path.ends_with("/preview")
         || path.ends_with("/ping")
 }
 
 fn starts_with_seg(path: &str, prefix: &str) -> bool {
-    path == prefix
-        || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
+    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
 }
 
 const CORE_PREFIXES: &[(&str, &str, bool)] = &[
@@ -62,6 +63,8 @@ const CORE_PREFIXES: &[(&str, &str, bool)] = &[
     ("/settings/sms", "settings.message_notification", false),
     ("/settings/notification", "settings.message_notification", false),
     ("/settings/usage-stats", "settings.database", false),
+    ("/settings/currency", "settings.payment", false),
+    ("/settings/upload", "settings.basic", false),
     (
         "/settings",
         "settings.basic|settings.payment|settings.message_notification|settings.oauth|settings.database|marketing.redemptions|marketing.registration_gifts",

@@ -5,6 +5,8 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
+import i18n from '../../../../i18n';
+
 export type UserNavModuleId = 'image' | 'video' | 'audio' | 'chat' | 'workflow';
 
 export type UserNavModule = {
@@ -110,13 +112,20 @@ export function normalizeUserNavModules(
   return items;
 }
 
+/** 后台填写的名称只替换简体中文；繁體、英语等系统语言包保持原文 */
+function isSimplifiedChineseUi(): boolean {
+  const raw = (i18n.resolvedLanguage || i18n.language || 'zh').trim().toLowerCase().replace('_', '-');
+  if (raw === 'zh-tw' || raw.startsWith('zh-hant') || raw === 'zh-hk' || raw === 'zh-mo') return false;
+  return raw === 'zh' || raw.startsWith('zh-');
+}
+
 export function resolveNavTitle(
   mod: UserNavModule,
   t: (key: string, fallback: string) => string,
 ): string {
-  const trimmed = (mod.title || '').trim();
-  if (trimmed) return trimmed;
   const def = NAV_DEF_MAP[mod.id];
+  const trimmed = (mod.title || '').trim();
+  if (trimmed && isSimplifiedChineseUi()) return trimmed;
   return t(def.i18nKey, def.defaultTitle);
 }
 

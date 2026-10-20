@@ -13,99 +13,112 @@ const ENHANCE_BILLING: &str = "火山 MediaKit 图像画质增强";
 const REMOVE_BG_BILLING: &str = "火山 MediaKit 图像背景移除";
 const ENHANCE_BILLING_PID: &str = "78243";
 const REMOVE_BG_BILLING_PID: &str = "78244";
+
+pub const VIDEO_ENHANCE_FORWARD: &str = "火山 MediaKit 视频画质增强";
+const VIDEO_ENHANCE_FORWARD_DESC: &str =
+    "火山视频画质增强（标准/专业/极速/大模型版）通用转发规则，支持 OpenAI 与官方多路由调用及异步任务轮询。";
+pub const VIDEO_ENHANCE_FORWARD_JSON: &str = r#"{"target_type":"volcengine_media_enhance","path_rewrites":[{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video"},{"old":"/api/v1/tools/enhance-video-fast","new":"/api/v1/tools/enhance-video-fast"},{"old":"/api/v1/tools/enhance-video-generative","new":"/api/v1/tools/enhance-video-generative"}],"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#;
+
+pub const SUBTITLE_ERASE_FORWARD: &str = "火山 MediaKit 视频字幕擦除";
+const SUBTITLE_ERASE_FORWARD_DESC: &str =
+    "火山视频字幕擦除（标准/精细版）通用转发规则，支持 OpenAI 与官方多路由调用及异步任务轮询。";
+pub const SUBTITLE_ERASE_FORWARD_JSON: &str = r#"{"target_type":"volcengine_media_enhance","path_rewrites":[{"old":"/v1/video/generations","new":"/api/v1/tools/erase-video-subtitle"},{"old":"/api/v1/tools/erase-video-subtitle-pro","new":"/api/v1/tools/erase-video-subtitle-pro"}],"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#;
+
 const ENHANCE_FORWARD: &str = "火山 MediaKit 图像画质增强";
-const REMOVE_BG_FORWARD: &str = "火山 MediaKit 图像背景移除";
+const ENHANCE_FORWARD_DESC: &str =
+    "火山图像画质增强同步转发，改写为 MediaKit tools-sync/enhance-image。";
 const ENHANCE_FORWARD_JSON: &str = r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/images/generations","new":"/api/v1/tools-sync/enhance-image"},"auth_type":"bearer"}"#;
+
+const REMOVE_BG_FORWARD: &str = "火山 MediaKit 图像背景移除";
+const REMOVE_BG_FORWARD_DESC: &str =
+    "火山图像背景移除同步转发，改写为 MediaKit tools-sync/remove-image-background。";
 const REMOVE_BG_FORWARD_JSON: &str = r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/images/generations","new":"/api/v1/tools-sync/remove-image-background"},"auth_type":"bearer"}"#;
-const TYPE_NAME: &str = "画质增强";
-const ORIGINAL_ID: &str = "画质增强";
-const PRESET_REMARK: &str = "系统预设";
-const VOLC_LOGO: &str = "volcengine";
-const TYPE_REMARK: &str = "画质增强、字幕擦除与图像背景移除处理模型";
+
+const LEGACY_VIDEO_ENHANCE_FORWARDS: [&str; 3] = [
+    "火山 MediaKit 视频画质增强 (标准/专业版)",
+    "火山 MediaKit 视频画质增强 (极速版)",
+    "火山 MediaKit 视频画质增强 (大模型版)",
+];
+
+const TYPE_NAME: &str = "封装";
+const TYPE_REMARK: &str = "封装、字幕擦除与图像背景移除处理模型";
 
 async fn unify_enhance_type(pool: &PgPool) -> anyhow::Result<()> {
     sqlx::query(
         r#"UPDATE model_types SET
-             name = '画质增强',
-             name_en = CASE WHEN name_en IS NULL OR name_en = '' OR name_en = 'Video Enhancement'
-                            THEN 'Quality Enhancement' ELSE name_en END,
-             remark = CASE WHEN remark IS NULL OR remark = '' OR remark = '视频画质增强与字幕擦除处理模型'
+             name = '封装',
+             name_en = CASE WHEN name_en IS NULL OR name_en = '' OR name_en IN ('Video Enhancement', 'Quality Enhancement')
+                            THEN 'Encapsulation' ELSE name_en END,
+             remark = CASE WHEN remark IS NULL OR remark = '' OR remark IN ('视频画质增强与字幕擦除处理模型', '画质增强、字幕擦除与图像背景移除处理模型')
                            THEN $1 ELSE remark END,
              is_system = 1
-           WHERE name = '视频增强'
-             AND NOT EXISTS (SELECT 1 FROM model_types WHERE name = '画质增强')"#,
+           WHERE id = (
+               SELECT id FROM model_types
+               WHERE name IN ('画质增强', '视频增强', '图像增强')
+                 AND NOT EXISTS (SELECT 1 FROM model_types WHERE name = '封装')
+               ORDER BY CASE name WHEN '画质增强' THEN 0 ELSE 1 END, id ASC
+               LIMIT 1
+           )"#,
     )
     .bind(TYPE_REMARK)
     .execute(pool)
     .await?;
     sqlx::query(
         r#"INSERT INTO model_types (name, name_en, sort_order, is_active, is_system, logo, remark)
-           SELECT '画质增强', 'Quality Enhancement', 35, 1, 1, 'volcengine', $1
-           WHERE NOT EXISTS (SELECT 1 FROM model_types WHERE name = '画质增强')"#,
+           SELECT '封装', 'Encapsulation', 35, 1, 1, 'volcengine', $1
+           WHERE NOT EXISTS (SELECT 1 FROM model_types WHERE name = '封装')"#,
     )
     .bind(TYPE_REMARK)
     .execute(pool)
     .await?;
     sqlx::query(
         r#"UPDATE model_types SET
-             name_en = CASE WHEN name_en IS NULL OR name_en = '' THEN 'Quality Enhancement' ELSE name_en END,
+             name_en = CASE WHEN name_en IS NULL OR name_en = '' OR name_en IN ('Video Enhancement', 'Quality Enhancement') THEN 'Encapsulation' ELSE name_en END,
              logo = CASE WHEN logo IS NULL OR logo = '' THEN 'volcengine' ELSE logo END,
-             remark = CASE WHEN remark IS NULL OR remark = '' THEN $1 ELSE remark END,
+             remark = CASE WHEN remark IS NULL OR remark = '' OR remark IN ('视频画质增强与字幕擦除处理模型', '画质增强、字幕擦除与图像背景移除处理模型') THEN $1 ELSE remark END,
              is_system = 1
-           WHERE name = '画质增强'"#,
+           WHERE name = '封装'"#,
     )
     .bind(TYPE_REMARK)
     .execute(pool)
     .await?;
 
     let enhance_id: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '画质增强' LIMIT 1")
+        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '封装' LIMIT 1")
             .fetch_optional(pool)
             .await?;
     let Some(enhance_id) = enhance_id else {
         return Ok(());
     };
-    for old in ["图像增强", "视频增强"] {
-        sqlx::query(
-            "UPDATE models SET type_id = $1 WHERE type_id IN (SELECT id FROM model_types WHERE name = $2)",
-        )
-        .bind(enhance_id)
-        .bind(old)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "UPDATE model_library SET type_id = $1 WHERE type_id IN (SELECT id FROM model_types WHERE name = $2)",
-        )
-        .bind(enhance_id)
-        .bind(old)
-        .execute(pool)
-        .await?;
-        sqlx::query(
-            "UPDATE billing_rules SET type_id = $1 WHERE type_id IN (SELECT id FROM model_types WHERE name = $2)",
-        )
-        .bind(enhance_id)
-        .bind(old)
-        .execute(pool)
-        .await?;
+    for table in ["models", "model_library", "billing_rules"] {
+        let sql = format!(
+            "UPDATE {table} SET type_id = $1 WHERE type_id IN (SELECT id FROM model_types WHERE name IN ('画质增强', '图像增强', '视频增强'))"
+        );
+        sqlx::query(&sql).bind(enhance_id).execute(pool).await?;
     }
     sqlx::query(
-        "UPDATE models SET original_id = '画质增强' WHERE original_id IN ('视频增强', '图像增强')",
+        "UPDATE models SET original_id = '封装' WHERE original_id IN ('画质增强', '视频增强', '图像增强')",
     )
     .execute(pool)
     .await?;
     sqlx::query(
-        "UPDATE model_library SET original_id = '画质增强' WHERE original_id IN ('视频增强', '图像增强')",
+        "UPDATE model_library SET original_id = '封装' WHERE original_id IN ('画质增强', '视频增强', '图像增强')",
     )
     .execute(pool)
     .await?;
-    sqlx::query(
-        "UPDATE forward_rules SET category = '画质增强' WHERE category IN ('视频增强', '图像增强')",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query("DELETE FROM model_types WHERE name IN ('图像增强', '视频增强')")
+    sqlx::query("DELETE FROM model_types WHERE name IN ('画质增强', '图像增强', '视频增强')")
         .execute(pool)
         .await?;
+    sqlx::query(
+        "UPDATE logs SET action_type = '封装' WHERE action_type IN ('画质增强', '视频增强', '图像增强')",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE billing_rules SET name = '火山级联封装默认计费' WHERE pid = '78242' OR name = '火山级联画质增强默认计费'",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -115,7 +128,7 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
         sqlx::query_scalar("SELECT id FROM model_providers WHERE name = '火山引擎' LIMIT 1")
             .fetch_optional(pool)
             .await?;
-    let volc_api_provider_id: Option<i64> = sqlx::query_scalar(
+    let _volc_api_provider_id: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM model_api_providers WHERE name ILIKE '%火山%' OR name ILIKE '%volcengine%' LIMIT 1",
     )
     .fetch_optional(pool)
@@ -163,36 +176,7 @@ pub async fn seed(pool: &PgPool) -> anyhow::Result<()> {
             .await?;
     }
 
-    for (name, desc, config) in [
-        (
-            ENHANCE_FORWARD,
-            "火山图像画质增强同步转发，改写为 MediaKit tools-sync/enhance-image。",
-            ENHANCE_FORWARD_JSON,
-        ),
-        (
-            REMOVE_BG_FORWARD,
-            "火山图像背景移除同步转发，改写为 MediaKit tools-sync/remove-image-background。",
-            REMOVE_BG_FORWARD_JSON,
-        ),
-    ] {
-        sqlx::query(
-            r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
-             SELECT $1, 'volcengine', $2, $3, '画质增强', 1,
-                    '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
-             WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = $1)"#,
-        )
-        .bind(name)
-        .bind(desc)
-        .bind(config)
-        .execute(pool)
-        .await?;
-    }
-    sqlx::query(r#"UPDATE forward_rules SET category = '画质增强' WHERE name IN ($1, $2)"#)
-        .bind(ENHANCE_FORWARD)
-        .bind(REMOVE_BG_FORWARD)
-        .execute(pool)
-        .await?;
-
+    sync_mediakit_forward_rules(pool).await?;
     ensure_enhance_library_catalog(pool).await?;
 
     Ok(())
@@ -378,7 +362,7 @@ pub fn billing_rule_listed(
     !(lower.contains("mediakit")
         || rule_kind == "volc_enhance_cascade"
         || pid == "78242"
-        || name == "火山级联画质增强默认计费")
+        || name == "火山级联封装默认计费")
 }
 
 pub async fn backfill_preset_billing_pids(pool: &PgPool) -> anyhow::Result<()> {
@@ -412,7 +396,10 @@ pub async fn load_preset_billing_pids(pool: &PgPool) -> anyhow::Result<serde_jso
             .map(|(_, pid)| pid.trim())
             .filter(|pid| !pid.is_empty())
             .unwrap_or(fallback);
-        map.insert((*mid).to_string(), serde_json::Value::String(pid.to_string()));
+        map.insert(
+            (*mid).to_string(),
+            serde_json::Value::String(pid.to_string()),
+        );
     }
     Ok(serde_json::Value::Object(map))
 }
@@ -422,42 +409,42 @@ const ENHANCE_PRESETS: &[(&str, &str, &str, &str, &str)] = &[
         "vve-sd",
         "火山画质增强-标准版",
         "volc_video_enhance_standard",
-        "火山 MediaKit 视频画质增强 (标准/专业版)",
+        VIDEO_ENHANCE_FORWARD,
         "火山 MediaKit 视频画质增强 (标准版)",
     ),
     (
         "vve-pf",
         "火山画质增强-专业版",
         "volc_video_enhance_professional",
-        "火山 MediaKit 视频画质增强 (标准/专业版)",
+        VIDEO_ENHANCE_FORWARD,
         "火山 MediaKit 视频画质增强 (专业版)",
     ),
     (
         "vve-ft",
         "火山画质增强-极速版",
         "volc_video_enhance_fast",
-        "火山 MediaKit 视频画质增强 (极速版)",
+        VIDEO_ENHANCE_FORWARD,
         "火山 MediaKit 视频画质增强 (极速版)",
     ),
     (
         "vve-gt",
         "火山画质增强-大模型版",
         "volc_video_enhance_generative",
-        "火山 MediaKit 视频画质增强 (大模型版)",
+        VIDEO_ENHANCE_FORWARD,
         "火山 MediaKit 视频画质增强 (大模型版)",
     ),
     (
         "vvs-er",
         "火山字幕擦除-标准版",
         "volc_video_subtitle_erase",
-        "火山 MediaKit 视频字幕擦除",
+        SUBTITLE_ERASE_FORWARD,
         "火山 MediaKit 视频字幕擦除 (标准版)",
     ),
     (
         "vvs-ep",
         "火山字幕擦除-精细版",
         "volc_video_subtitle_erase_pro",
-        "火山 MediaKit 视频字幕擦除",
+        SUBTITLE_ERASE_FORWARD,
         "火山 MediaKit 视频字幕擦除 (精细版)",
     ),
     (
@@ -485,11 +472,11 @@ async fn lookup_named_id(pool: &PgPool, sql: &str, name: &str) -> Option<i64> {
         .flatten()
 }
 
-/// 八条 MediaKit 预置模型补进模型仓库，分类固定为「画质增强」。已有目录行不覆盖。
+/// 八条 MediaKit 预置模型补进模型仓库，分类固定为「封装」。已有目录行不覆盖。
 pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()> {
     unify_enhance_type(pool).await?;
     let type_id: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '画质增强' LIMIT 1")
+        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '封装' LIMIT 1")
             .fetch_optional(pool)
             .await?;
     let provider_id: Option<i64> =
@@ -513,7 +500,7 @@ pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()>
                     created_at, updated_at
                )
                SELECT
-                    mid, name, model_id, COALESCE(NULLIF(original_id, ''), '画质增强'), model_id_alias,
+                    mid, name, model_id, COALESCE(NULLIF(original_id, ''), '封装'), model_id_alias,
                     provider_id, api_provider_id, type_id, group_ratios, billing_rule_id,
                     pre_deduction, is_active, forward_rule_ids, enable_log_content,
                     site_discount, site_discount_enabled, global_discount, global_discount_enabled,
@@ -558,7 +545,7 @@ pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()>
                     created_at, updated_at
                )
                VALUES (
-                    $1, $2, $3, '画质增强', $4, $5, $6, $7, $8, 0, 1, 'volcengine', '系统预设',
+                    $1, $2, $3, '封装', $4, $5, $6, $7, $8, 0, 1, 'volcengine', '系统预设',
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                )
                ON CONFLICT (mid) DO NOTHING"#,
@@ -579,7 +566,7 @@ pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()>
     sqlx::query(
         r#"UPDATE model_library
            SET type_id = COALESCE($1, type_id),
-               original_id = '画质增强',
+               original_id = '封装',
                updated_at = CURRENT_TIMESTAMP
            WHERE mid = ANY($2)"#,
     )
@@ -590,7 +577,7 @@ pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()>
     sqlx::query(
         r#"UPDATE models
            SET type_id = COALESCE($1, type_id),
-               original_id = '画质增强',
+               original_id = '封装',
                updated_at = CURRENT_TIMESTAMP
            WHERE mid = ANY($2)"#,
     )
@@ -601,44 +588,150 @@ pub async fn ensure_enhance_library_catalog(pool: &PgPool) -> anyhow::Result<()>
     Ok(())
 }
 
-const PRESET_FORWARDS: &[(&str, &str)] = &[
+const PRESET_FORWARDS: &[(&str, &str, &str)] = &[
     (
-        "火山 MediaKit 视频画质增强 (标准/专业版)",
-        r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
+        VIDEO_ENHANCE_FORWARD,
+        VIDEO_ENHANCE_FORWARD_DESC,
+        VIDEO_ENHANCE_FORWARD_JSON,
     ),
     (
-        "火山 MediaKit 视频画质增强 (极速版)",
-        r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video-fast"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
+        SUBTITLE_ERASE_FORWARD,
+        SUBTITLE_ERASE_FORWARD_DESC,
+        SUBTITLE_ERASE_FORWARD_JSON,
     ),
+    (ENHANCE_FORWARD, ENHANCE_FORWARD_DESC, ENHANCE_FORWARD_JSON),
     (
-        "火山 MediaKit 视频画质增强 (大模型版)",
-        r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video-generative"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
+        REMOVE_BG_FORWARD,
+        REMOVE_BG_FORWARD_DESC,
+        REMOVE_BG_FORWARD_JSON,
     ),
-    (
-        "火山 MediaKit 视频字幕擦除",
-        r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/erase-video-subtitle"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
-    ),
-    (ENHANCE_FORWARD, ENHANCE_FORWARD_JSON),
-    (REMOVE_BG_FORWARD, REMOVE_BG_FORWARD_JSON),
 ];
 
-/// 插件关掉再打开：八条模型回到模型仓库，计费和转发写回各自那一条预设，不另建副本。
-pub async fn refresh_presets_on_enable(pool: &PgPool) -> anyhow::Result<()> {
-    crate::api::billing_rules::restore_volc_preset_billing(pool).await?;
-    backfill_preset_billing_pids(pool).await?;
-    for (name, config) in PRESET_FORWARDS {
+/// 统一同步与合并火山 MediaKit 转发规则（单一事实来源）：
+/// 1. 将原 3 条视频画质增强规则（标准/专业版、极速版、大模型版）合并为 1 条 `火山 MediaKit 视频画质增强`；
+/// 2. 升级 `火山 MediaKit 视频字幕擦除` 支持 `/api/v1/tools/erase-video-subtitle` 与 `-pro` 多路由；
+/// 3. 将所有火山 MediaKit 转发规则的 `category` 统一设为 `封装`，并平滑重定向存量模型绑定。
+pub async fn sync_mediakit_forward_rules(pool: &PgPool) -> anyhow::Result<()> {
+    // 1. 若尚无合并后的主规则，优先将旧「标准/专业版」原地改名升级（保留原 ID 与 EID）
+    sqlx::query(
+        r#"UPDATE forward_rules
+           SET name = $1,
+               description = $2,
+               config_json = $3,
+               category = '封装',
+               is_system = 1,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = (
+               SELECT id FROM forward_rules
+               WHERE name = '火山 MediaKit 视频画质增强 (标准/专业版)'
+                 AND NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = $1)
+               ORDER BY id ASC LIMIT 1
+           )"#,
+    )
+    .bind(VIDEO_ENHANCE_FORWARD)
+    .bind(VIDEO_ENHANCE_FORWARD_DESC)
+    .bind(VIDEO_ENHANCE_FORWARD_JSON)
+    .execute(pool)
+    .await?;
+
+    // 2. 保障 4 条标准 MediaKit 转发规则存在且配置、分类、描述对齐
+    for (name, desc, config) in PRESET_FORWARDS {
+        sqlx::query(
+            r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
+               SELECT $1, 'volcengine', $2, $3, '封装', 1,
+                      '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
+               WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = $1)"#,
+        )
+        .bind(*name)
+        .bind(*desc)
+        .bind(*config)
+        .execute(pool)
+        .await?;
+
         sqlx::query(
             r#"UPDATE forward_rules
-               SET config_json = $1, is_active = 1, updated_at = CURRENT_TIMESTAMP
-               WHERE name = $2"#,
+               SET description = $1,
+                   config_json = $2,
+                   category = '封装',
+                   is_system = 1,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE name = $3"#,
         )
+        .bind(*desc)
         .bind(*config)
         .bind(*name)
         .execute(pool)
         .await?;
     }
-    let preset_mids: Vec<String> = ENHANCE_PRESETS.iter().map(|row| row.0.to_string()).collect();
-    let preset_model_ids: Vec<String> = ENHANCE_PRESETS.iter().map(|row| row.2.to_string()).collect();
+
+    // 3. 将仍绑定旧视频画质增强规则的模型平滑重绑至合并后的主规则，并清理冗余旧规则
+    let legacy_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM forward_rules WHERE name = ANY($1)")
+            .bind(&LEGACY_VIDEO_ENHANCE_FORWARDS[..])
+            .fetch_all(pool)
+            .await?;
+
+    if !legacy_ids.is_empty() {
+        if let Some(main_id) = lookup_named_id(
+            pool,
+            "SELECT id FROM forward_rules WHERE name = $1 LIMIT 1",
+            VIDEO_ENHANCE_FORWARD,
+        )
+        .await
+        {
+            for table in ["models", "model_library"] {
+                let sql = format!(
+                    r#"UPDATE {table}
+                       SET forward_rule_ids = (
+                           SELECT json_agg(DISTINCT CASE WHEN elem::bigint = ANY($2) THEN $1 ELSE elem::bigint END)::text
+                           FROM jsonb_array_elements_text(forward_rule_ids::jsonb) AS elem
+                       ),
+                       updated_at = CURRENT_TIMESTAMP
+                       WHERE forward_rule_ids LIKE '[%]'
+                         AND EXISTS (
+                             SELECT 1 FROM jsonb_array_elements_text(forward_rule_ids::jsonb) AS e
+                             WHERE e::bigint = ANY($2)
+                         )"#
+                );
+                sqlx::query(&sql)
+                    .bind(main_id)
+                    .bind(&legacy_ids)
+                    .execute(pool)
+                    .await?;
+            }
+            sqlx::query("DELETE FROM forward_rules WHERE id = ANY($1)")
+                .bind(&legacy_ids)
+                .execute(pool)
+                .await?;
+        }
+    }
+
+    // 4. 统一将所有火山 MediaKit 及旧画质/视频/图像增强分类的转发规则归入「封装」
+    sqlx::query(
+        r#"UPDATE forward_rules
+           SET category = '封装', updated_at = CURRENT_TIMESTAMP
+           WHERE (category IN ('画质增强', '视频增强', '图像增强')
+                  OR name LIKE '火山 MediaKit%'
+                  OR config_json LIKE '%"volcengine_media_enhance"%')
+             AND category <> '封装'"#,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// 插件关掉再打开：八条模型回到模型仓库，计费和转发写回各自那一条预设，不另建副本。
+pub async fn refresh_presets_on_enable(pool: &PgPool) -> anyhow::Result<()> {
+    crate::api::billing_rules::restore_volc_preset_billing(pool).await?;
+    backfill_preset_billing_pids(pool).await?;
+    sync_mediakit_forward_rules(pool).await?;
+    let forward_names: Vec<&str> = PRESET_FORWARDS.iter().map(|(n, _, _)| *n).collect();
+    sqlx::query("UPDATE forward_rules SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE name = ANY($1)")
+        .bind(&forward_names)
+        .execute(pool)
+        .await?;
+    let preset_model_ids: Vec<&str> = ENHANCE_PRESETS.iter().map(|row| row.2).collect();
     sqlx::query(
         r#"UPDATE models
            SET is_active = 1,
@@ -647,7 +740,7 @@ pub async fn refresh_presets_on_enable(pool: &PgPool) -> anyhow::Result<()> {
                updated_at = CURRENT_TIMESTAMP
            WHERE mid = ANY($1) OR library_mid = ANY($1) OR model_id = ANY($2)"#,
     )
-    .bind(&preset_mids)
+    .bind(&ENHANCE_MIDS[..])
     .bind(&preset_model_ids)
     .execute(pool)
     .await?;
@@ -752,7 +845,7 @@ mod tests {
             Some("78243"),
         ));
         assert!(super::billing_rule_listed(
-            "火山级联画质增强默认计费",
+            "火山级联封装默认计费",
             "78242",
             "volc_enhance_cascade",
             4,

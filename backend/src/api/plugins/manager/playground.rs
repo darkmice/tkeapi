@@ -22,10 +22,42 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{
-    dashscope_video_seed, doubao_seed_evolving_seed, doubao_tts_2_seed, duration_slider_seed,
-    glm_deepseek_chat_seed, gpt_image_2_seed, is_plugin_enabled, load_plugin_configs,
-    minimax_h3_seed, quick_bar_seed, seedance2_seed, seedream_5_0_pro_seed, upsert_config,
+    claude_fable_chat_seed, dashscope_video_seed, doubao_seed_evolving_seed, doubao_tts_2_seed,
+    duration_slider_seed, gemini_nano_banana_21_seed, glm_deepseek_chat_seed,
+    gpt_6_astra_chat_seed, gpt_image_2_seed, grok_4_6_chat_seed, is_plugin_enabled,
+    load_plugin_configs, minimax_h3_seed, quick_bar_seed, seedance2_seed, seedream_5_0_pro_seed,
+    upsert_config, viduq3_seed, viduq4_preview_seed,
 };
+
+/// 模型管理或模型广场改了页面排序后，创作中心2026配置里的 sort_order 写成同一个数。
+/// 没有该模型的配置行时不新建。
+pub async fn sync_playground_2026_page_sort(
+    state: &AppState,
+    model_id: i64,
+    sort_order: i64,
+) -> Result<(), sqlx::Error> {
+    let config_key = format!("pg_model_id_{model_id}");
+    let existing: Option<String> = sqlx::query_scalar(&state.db.format_query(
+        "SELECT config_value FROM plugin_configs WHERE plugin_name = 'playground_2026' AND config_key = ?",
+    ))
+    .bind(&config_key)
+    .fetch_optional(&state.db.pool)
+    .await?;
+    let Some(raw) = existing else {
+        return Ok(());
+    };
+    let mut val: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+    let Some(obj) = val.as_object_mut() else {
+        return Ok(());
+    };
+    if obj.get("sort_order").and_then(|v| v.as_i64()) == Some(sort_order) {
+        return Ok(());
+    }
+    obj.insert("sort_order".to_string(), json!(sort_order));
+    upsert_config(state, "playground_2026", &config_key, &val.to_string()).await?;
+    Ok(())
+}
+
 // ========== 体验中心配置 (Playground) ==========
 
 /// 系统内置体验方案默认种子（仅当 DB 中无自定义方案时用作初始化）
@@ -365,9 +397,15 @@ fn get_default_schemes_for(plugin_name: &str) -> Vec<serde_json::Value> {
         seedream_5_0_pro_seed::strip_seedream_scheme_size_params(&mut schemes);
         seedream_5_0_pro_seed::seed_seedream_output_format_radio(&mut schemes);
         gpt_image_2_seed::seed_gpt_image_2_scheme(&mut schemes);
+        gemini_nano_banana_21_seed::seed_gemini_nano_banana_21_scheme(&mut schemes);
+        viduq4_preview_seed::seed_viduq4_preview_scheme(&mut schemes);
+        viduq3_seed::seed_viduq3_schemes(&mut schemes);
         doubao_tts_2_seed::seed_doubao_tts_2_scheme(&mut schemes);
         doubao_seed_evolving_seed::seed_doubao_seed_evolving_scheme(&mut schemes);
         glm_deepseek_chat_seed::seed_glm_deepseek_chat_schemes(&mut schemes);
+        claude_fable_chat_seed::seed_claude_fable_chat_scheme(&mut schemes);
+        gpt_6_astra_chat_seed::seed_gpt_6_astra_chat_scheme(&mut schemes);
+        grok_4_6_chat_seed::seed_grok_4_6_chat_scheme(&mut schemes);
         duration_slider_seed::seed_video_duration_sliders(&mut schemes);
         for s in &mut schemes {
             sanitize_pg2026_video_scheme_io(s);
@@ -747,7 +785,9 @@ fn ensure_scheme_io(s: &mut serde_json::Value, plugin_name: &str) {
         }
         "audio" => doubao_tts_2_seed::doubao_tts_2_scheme_io(),
         "chat" if plugin_name == "playground_2026" => {
-            if glm_deepseek_chat_seed::is_thinking_on_chat_scheme_id(id) {
+            if glm_deepseek_chat_seed::is_thinking_on_chat_scheme_id(id)
+                || gpt_6_astra_chat_seed::is_gpt_6_astra_scheme_id(id)
+            {
                 doubao_seed_evolving_seed::doubao_chat_scheme_io()
             } else {
                 doubao_seed_evolving_seed::default_chat_scheme_io()
@@ -794,11 +834,20 @@ async fn load_schemes_from_db(state: &AppState, plugin_name: &str) -> Vec<serde_
 
                 // 移除在数据库中但已从代码默认配置中移除的系统方案
                 schemes.retain(|s| {
+                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    if plugin_name == "playground_2026"
+                        && matches!(
+                            id,
+                            "chat_standard" | "chat_creative" | "chat_precise"
+                        )
+                    {
+                        return false;
+                    }
                     if s.get("is_system")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
                     {
-                        if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
+                        if !id.is_empty() {
                             return default_ids.contains(id);
                         }
                     }
@@ -946,6 +995,9 @@ async fn load_schemes_from_db(state: &AppState, plugin_name: &str) -> Vec<serde_
                     seedream_5_0_pro_seed::seed_seedream_official_image_special(&mut schemes);
                     seedream_5_0_pro_seed::seed_seedream_output_format_radio(&mut schemes);
                     gpt_image_2_seed::seed_gpt_image_2_scheme(&mut schemes);
+                    gemini_nano_banana_21_seed::seed_gemini_nano_banana_21_scheme(&mut schemes);
+                    viduq4_preview_seed::seed_viduq4_preview_scheme(&mut schemes);
+                    viduq3_seed::seed_viduq3_schemes(&mut schemes);
                     for s in &mut schemes {
                         sanitize_pg2026_video_scheme_io(s);
                         #[cfg(feature = "commercial_plugins")]
@@ -992,6 +1044,15 @@ pub(crate) struct PlaygroundModelConfig {
     /// 仅 playground_2026 聊天：思考预设 ID
     #[serde(default)]
     pub thinking_profile: Option<String>,
+    /// 仅 playground_2026：同步模型广场展示状态
+    #[serde(default)]
+    pub mp_enabled: Option<bool>,
+    /// 仅 playground_2026：同步模型广场等级可见性配置
+    #[serde(
+        default,
+        deserialize_with = "super::marketplace_visibility::deserialize_opt_vec_i64_flexible"
+    )]
+    pub mp_level_ids: Option<Vec<i64>>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
@@ -1195,6 +1256,12 @@ pub(crate) async fn get_playground_config(
     }
 
     let configs = load_plugin_configs(&state, &name).await?;
+    let mp_configs = load_plugin_configs(&state, "model_marketplace").await?;
+    let mp_display_mode = mp_configs
+        .get("mp_display_mode")
+        .map(|s| s.as_str())
+        .unwrap_or("blacklist");
+    let mp_default_enabled = mp_display_mode == "blacklist";
 
     // 查出全部模型及其 type 信息
     let models: Vec<crate::models::Model> = sqlx::query_as(&state.db.format_query(
@@ -1221,6 +1288,15 @@ pub(crate) async fn get_playground_config(
             .or_else(|| configs.get(&old_key))
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or(json!({"enabled": false, "scheme_id": null}));
+
+        let mp_config_key = format!("mp_model_id_{}", m.id);
+        let mp_model_conf: serde_json::Value = mp_configs
+            .get(&mp_config_key)
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_else(|| json!({}));
+        let mp_is_enabled =
+            super::marketplace_visibility::mp_enabled(&mp_model_conf, mp_default_enabled);
+        let mp_level_ids = super::marketplace_visibility::parse_mp_level_ids(&mp_model_conf);
 
         let type_row = m.type_id.and_then(|tid| types.iter().find(|t| t.id == tid));
         let type_name = type_row.map(|t| t.name.clone()).unwrap_or_default();
@@ -1265,6 +1341,10 @@ pub(crate) async fn get_playground_config(
             "is_active": m.is_active,
             "global_discount": m.global_discount,
             "global_discount_enabled": m.global_discount_enabled,
+            "mp_enabled": mp_is_enabled,
+            "mp_level_ids": mp_level_ids,
+            "mp_description": mp_model_conf.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+            "mp_description_en": mp_model_conf.get("description_en").and_then(|v| v.as_str()).unwrap_or(""),
             "pg_enabled": model_conf.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false),
             "pg_scheme_id": model_conf.get("scheme_id").and_then(|v| v.as_str()).unwrap_or(""),
             "pg_param_overrides": model_conf.get("param_overrides").cloned().unwrap_or(serde_json::Value::Null),
@@ -1636,6 +1716,27 @@ pub(crate) async fn save_playground_config(
             val["io_overrides"] = o;
         }
         if name == "playground_2026" {
+            if let Some(sort_order) = mc.sort_order {
+                sqlx::query(
+                    &state.db.format_query(
+                        "UPDATE models SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    ),
+                )
+                .bind(sort_order)
+                .bind(mc.id)
+                .execute(&state.db.pool)
+                .await?;
+                crate::api::plugins::sync_marketplace_page_sort(&state, mc.id, sort_order).await?;
+            }
+            if mc.mp_enabled.is_some() || mc.mp_level_ids.is_some() {
+                crate::api::plugins::sync_marketplace_model_visibility(
+                    &state,
+                    mc.id,
+                    mc.mp_enabled,
+                    mc.mp_level_ids.as_deref(),
+                )
+                .await?;
+            }
             let type_name = type_name_by_model_id
                 .get(&mc.id)
                 .map(|s| s.as_str())
@@ -1750,6 +1851,7 @@ pub(crate) async fn get_playground_schemes(
         return Err(AppError::Forbidden("需要管理员权限".to_string()));
     }
     let schemes = load_schemes_from_db(&state, &name).await;
+    #[cfg_attr(not(feature = "commercial_plugins"), allow(unused_mut))]
     let mut body = json!({ "schemes": schemes, "defaults": get_default_schemes_for(&name) });
     if name == "playground_2026" {
         #[cfg(feature = "commercial_plugins")]
@@ -2152,6 +2254,8 @@ fn merge_io_overrides(
 pub(crate) async fn get_playground_public_config(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    claims: Option<Extension<auth::Claims>>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<serde_json::Value>> {
     let configs = load_plugin_configs(&state, &name).await?;
 
@@ -2235,6 +2339,26 @@ pub(crate) async fn get_playground_public_config(
     };
     let volc_enhance_plugin_active = is_plugin_enabled(&state, "volcengine_enhance").await;
     let schemes = load_schemes_from_db(&state, &name).await;
+    let (mp_viewer, mp_configs, mp_default_enabled) = if is_pg2026 {
+        let viewer = if let Some(Extension(ref c)) = claims {
+            super::marketplace::marketplace_viewer_for_user_id(&state, &c.sub).await
+        } else {
+            super::marketplace::marketplace_viewer_from_headers(&state, &headers).await
+        };
+        let mp_cfgs = load_plugin_configs(&state, "model_marketplace").await?;
+        let default_enabled = mp_cfgs
+            .get("mp_display_mode")
+            .map(|s| s.as_str())
+            .unwrap_or("blacklist")
+            == "blacklist";
+        (viewer, mp_cfgs, default_enabled)
+    } else {
+        (
+            super::marketplace_visibility::MarketplaceViewer::guest(),
+            HashMap::new(),
+            true,
+        )
+    };
 
     // 查出全部模型及其 type 信息
     let models: Vec<crate::models::Model> = sqlx::query_as(
@@ -2318,6 +2442,23 @@ pub(crate) async fn get_playground_public_config(
         if !is_enabled && !is_agent_chat && !include_pg2026_image_tool {
             continue;
         }
+        if is_pg2026 && !include_pg2026_image_tool {
+            let mp_config_key = format!("mp_model_id_{}", m.id);
+            let mp_model_conf: serde_json::Value = mp_configs
+                .get(&mp_config_key)
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| json!({}));
+            let mp_is_enabled =
+                super::marketplace_visibility::mp_enabled(&mp_model_conf, mp_default_enabled);
+            let mp_level_ids = super::marketplace_visibility::parse_mp_level_ids(&mp_model_conf);
+            if !super::marketplace_visibility::mp_visible_to(
+                mp_is_enabled,
+                &mp_level_ids,
+                mp_viewer,
+            ) {
+                continue;
+            }
+        }
 
         let sort_order = m.sort_order as i64;
 
@@ -2335,23 +2476,23 @@ pub(crate) async fn get_playground_public_config(
             .map(|t| t.name.clone())
             .unwrap_or_default();
 
-        let provider_name = m
+        let provider = m
             .provider_id
-            .and_then(|pid| providers.iter().find(|p| p.id == pid))
+            .and_then(|pid| providers.iter().find(|p| p.id == pid));
+        let provider_name = provider
             .map(|p| p.name.clone())
             .unwrap_or_default();
+        let provider_sort_order = provider.map(|p| p.sort_order);
 
         // 如果未绑定方案或方案不存在，按模型类型自动匹配第一个同类方案
         if scheme.is_none() && !type_name.is_empty() {
             let type_key = if include_pg2026_image_tool {
                 "image"
-            } else if type_name.contains("视频") || type_name.contains("画质增强") {
+            } else if type_name.contains("视频") || type_name.contains("封装") {
                 "video"
-            } else if type_name.contains("图片")
-                || (is_pg2026 && type_name.contains("图像增强"))
-            {
+            } else if type_name.contains("图片") {
                 "image"
-            } else if type_name.contains("聊天") {
+            } else if type_name.contains("聊天") && !is_pg2026 {
                 "chat"
             } else if is_pg2026 && (type_name.contains("音频") || type_name.contains("语音")) {
                 "audio"
@@ -2496,6 +2637,13 @@ pub(crate) async fn get_playground_public_config(
             "outputs": merged_outputs,
         });
         if is_pg2026 {
+            row["allow_text_to_video"] = scheme
+                .and_then(|s| s.get("allow_text_to_video"))
+                .cloned()
+                .unwrap_or(json!(true));
+            if let Some(order) = provider_sort_order {
+                row["provider_sort_order"] = json!(order);
+            }
             let attrs = pg2026_parse_attr_list(m.feature_attributes.as_deref());
             let mapped = pg2026_keys_from_attrs(&attrs, &type_name);
             let keys = if mapped.is_empty() {
@@ -2599,6 +2747,28 @@ pub(crate) async fn get_playground_public_config(
         advanced_nodes["agent_chat_models"] = json!(agent_chat_models);
     }
 
+    let default_model_mids = if is_pg2026 {
+        let visible_mids: std::collections::HashSet<&str> = enabled_models
+            .iter()
+            .filter_map(|m| m.get("mid").and_then(|v| v.as_str()))
+            .collect();
+        match default_model_mids {
+            serde_json::Value::Array(arr) => serde_json::Value::Array(
+                arr.into_iter()
+                    .filter(|v| v.as_str().map(|s| visible_mids.contains(s)).unwrap_or(false))
+                    .collect(),
+            ),
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.into_iter()
+                    .filter(|(_, v)| v.as_str().map(|s| visible_mids.contains(s)).unwrap_or(false))
+                    .collect(),
+            ),
+            other => other,
+        }
+    } else {
+        default_model_mids
+    };
+
     let mut body = json!({
         "models": enabled_models,
         "default_model_mids": default_model_mids,
@@ -2608,6 +2778,10 @@ pub(crate) async fn get_playground_public_config(
         body["feature_catalog"] = pg2026_feature_catalog(&types);
         #[cfg(feature = "commercial_plugins")]
         {
+            body["error_mappings"] =
+                crate::api::plugins::playground_2026::error_mappings::mappings_from_configs(
+                    &configs,
+                );
             let po_enabled = crate::api::plugins::playground_2026::prompt_optimize::config_enabled(
                 configs
                     .get(crate::api::plugins::playground_2026::prompt_optimize::ENABLED_KEY)
@@ -2775,12 +2949,34 @@ mod tests {
     }
 
     #[test]
+    fn playground_2026_has_grok_4_6_chat_scheme() {
+        let pg2026 = get_default_schemes_for("playground_2026");
+        assert!(
+            pg2026
+                .iter()
+                .any(|s| s.get("id").and_then(|v| v.as_str()) == Some("grok_4_6")),
+            "grok_4_6 should be injected for playground_2026"
+        );
+        let legacy = get_default_schemes_for("playground");
+        assert!(
+            legacy
+                .iter()
+                .all(|s| s.get("id").and_then(|v| v.as_str()) != Some("grok_4_6")),
+            "grok_4_6 must not be injected into legacy playground"
+        );
+    }
+
+    #[test]
     fn playground_2026_has_glm_and_deepseek_chat_schemes() {
         let pg2026 = get_default_schemes_for("playground_2026");
         let glm = pg2026
             .iter()
             .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("glm_5_2"))
             .expect("glm_5_2");
+        let glm53 = pg2026
+            .iter()
+            .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("glm_5_3"))
+            .expect("glm_5_3");
         let ds = pg2026
             .iter()
             .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("deepseek_v4_pro"))
@@ -2789,7 +2985,7 @@ mod tests {
             .iter()
             .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("qwen_3_7_max"))
             .expect("qwen_3_7_max");
-        for scheme in [glm, ds, qwen] {
+        for scheme in [glm, glm53, ds, qwen] {
             let keys: Vec<&str> = scheme
                 .get("params")
                 .and_then(|v| v.as_array())
@@ -2820,8 +3016,76 @@ mod tests {
         assert!(legacy.iter().all(|s| {
             !matches!(
                 s.get("id").and_then(|v| v.as_str()),
-                Some("glm_5_2" | "deepseek_v4_pro" | "qwen_3_7_max")
+                Some("glm_5_2" | "glm_5_3" | "deepseek_v4_pro" | "qwen_3_7_max" | "claude_fable_5" | "gpt_6_astra")
             )
         }));
+    }
+
+    #[test]
+    fn playground_2026_has_claude_fable_chat_scheme() {
+        let pg2026 = get_default_schemes_for("playground_2026");
+        let scheme = pg2026
+            .iter()
+            .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("claude_fable_5"))
+            .expect("claude_fable_5");
+        assert_eq!(scheme.get("type").and_then(|v| v.as_str()), Some("chat"));
+        assert_eq!(
+            scheme.get("is_system").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        let keys: Vec<&str> = scheme
+            .get("params")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.get("key").and_then(|v| v.as_str()))
+            .collect();
+        assert!(keys.contains(&"temperature"));
+        assert!(keys.contains(&"max_tokens"));
+        assert!(!keys.contains(&"top_p"));
+        assert!(!keys.contains(&"thinking"));
+        let thinking_on = scheme
+            .get("inputs")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .find(|p| p.get("key").and_then(|v| v.as_str()) == Some("thinking"))
+            .and_then(|p| p.get("enabled"))
+            .and_then(|v| v.as_bool());
+        assert_eq!(thinking_on, Some(false));
+    }
+
+    #[test]
+    fn playground_2026_has_gpt_6_astra_chat_scheme() {
+        let pg2026 = get_default_schemes_for("playground_2026");
+        let scheme = pg2026
+            .iter()
+            .find(|s| s.get("id").and_then(|v| v.as_str()) == Some("gpt_6_astra"))
+            .expect("gpt_6_astra");
+        assert_eq!(scheme.get("type").and_then(|v| v.as_str()), Some("chat"));
+        let keys: Vec<&str> = scheme
+            .get("params")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.get("key").and_then(|v| v.as_str()))
+            .collect();
+        assert!(keys.contains(&"max_completion_tokens"));
+        assert!(!keys.contains(&"temperature"));
+        assert!(!keys.contains(&"top_p"));
+        assert!(!keys.contains(&"max_tokens"));
+        let thinking_on = scheme
+            .get("inputs")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .find(|p| p.get("key").and_then(|v| v.as_str()) == Some("thinking"))
+            .and_then(|p| p.get("enabled"))
+            .and_then(|v| v.as_bool());
+        assert_eq!(thinking_on, Some(true));
+        let legacy = get_default_schemes_for("playground");
+        assert!(legacy
+            .iter()
+            .all(|s| s.get("id").and_then(|v| v.as_str()) != Some("gpt_6_astra")));
     }
 }

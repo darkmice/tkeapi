@@ -2,13 +2,11 @@
 
 클링 AI(Kling)는 매우 높은 수준의 비디오 화질과 동작 제어 성능으로 널리 사용되고 있습니다. 게이트웨이는 전용 Kling 라우트를 개설하여 클링 공식 API와 완전히 동기화했습니다. 
 
-### 1. 비디오 모델 API
-* **텍스트 기반 비디오 생성**: `/v1/videos/text2video` (`POST`)
-* **이미지 기반 비디오 생성**: `/v1/videos/image2video` (`POST`)
-* **Omni 비디오 참조 비디오 생성**: `/v1/videos/omni-video` (`POST`)
-* **작업 상태 조회**: `/v1/videos/{endpoint}/{task_id}` (`GET`)
-
-*주의: 조회 API에서 `{endpoint}`는 작업을 제출할 때 사용한 서비스 유형(예: `text2video`, `image2video` 등)에 해당합니다.*
+### 1. 비디오 모델 API (공식 네이티브)
+* **텍스트 기반 비디오 생성**: `/text-to-video/{model_id}` (`POST`)
+* **이미지 기반 비디오 생성**: `/image-to-video/{model_id}` (`POST`)
+* **Omni 비디오 참조 비디오 생성**: `/omni-video/{model_id}` (`POST`)
+* **작업 상태 조회**: `/tasks?task_ids={task_id}` (`GET`)
 
 ### 2. 이미지 모델 API
 * **표준 텍스트/이미지 기반 이미지 생성**: `/v1/images/generations` (`POST`)

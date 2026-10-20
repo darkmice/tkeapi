@@ -227,11 +227,7 @@ fn fill_from_content(
     insert_urls(out, "reference_audio_urls", audios);
 }
 
-fn insert_urls(
-    out: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    urls: Vec<String>,
-) {
+fn insert_urls(out: &mut serde_json::Map<String, serde_json::Value>, key: &str, urls: Vec<String>) {
     if !out.contains_key(key) && !urls.is_empty() {
         out.insert(key.into(), serde_json::json!(urls));
     }
@@ -298,7 +294,10 @@ pub(crate) fn inject_fal_poll_usage(json_str: &str, billing_features: &str) -> S
     usage.insert("input_seconds".to_string(), serde_json::json!(in_sec));
     usage.insert("output_seconds".to_string(), serde_json::json!(out_sec));
     usage.insert("input_image_count".to_string(), serde_json::json!(img_cnt));
-    usage.insert("input_audio_seconds".to_string(), serde_json::json!(audio_sec));
+    usage.insert(
+        "input_audio_seconds".to_string(),
+        serde_json::json!(audio_sec),
+    );
 
     val["usage"] = serde_json::Value::Object(usage);
     val.to_string()

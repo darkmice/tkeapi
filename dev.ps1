@@ -1,7 +1,7 @@
-﻿# tokensbyte opensource
-# (c) 2026 tokensbyte.ai
+﻿# tkeapi (tokensbyte) opensource
+# © 2026 tkeapi.com
 # @copyright      Copyright netbcloud/wstianxia 
-# @license        MIT (https://www.tokensbyte.ai/)
+# @license        MIT (https://www.tkeapi.com/)
 
 # TokensByte 开发环境启动脚本 (Windows PowerShell 5.1 / 7+)
 # ──────────────────────────────────────────────────
@@ -10,6 +10,8 @@
 # 停止：前台模式下 Ctrl+C / Ctrl+Z 释放本实例端口；下次启动会回收本仓库残留
 # 可选：PROJECT_NAME / BACKEND_PORT / FRONTEND_PORT / POSTGRES_PORT / DATABASE_URL / DEV_ATTACH
 #       TOKENSBYTE_FAST_LINK=0  关闭链接加速（默认 MSVC 设 rust-lld）
+# 编译缓存：勿随意删除 backend\target（或 %LOCALAPPDATA%\tokensbyte-dev\target\...）；
+#           清空会导致下次冷编译；链接加速只影响本机耗时，不改变运行行为
 
 $ErrorActionPreference = "Stop"
 
@@ -58,7 +60,17 @@ function Test-CmdBelongsToRepo([string]$Cmd, [string]$RootNorm) {
 
 function Test-PortInUse([int]$Port) {
     try {
-        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+        $client = [System.Net.Sockets.TcpClient]::new()
+        $asyncResult = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if ($asyncResult.AsyncWaitHandle.WaitOne(300)) {
+            $client.EndConnect($asyncResult)
+            $client.Close()
+            return $true
+        }
+        $client.Close()
+    } catch {}
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $Port)
         $listener.Start(); $listener.Stop()
         return $false
     } catch { return $true }
@@ -423,7 +435,10 @@ switch ($choice) {
             Write-Host "ℹ️  CARGO_TARGET_DIR -> $targetDir" -ForegroundColor Cyan
         }
 
-        if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = "1" }
+        # 注入 32MB 编译器最小栈空间，防止大型宏展开/复杂泛型在 Windows 下触发 0xc0000409 (STATUS_STACK_BUFFER_OVERRUN)
+        if (-not $env:RUST_MIN_STACK) {
+            $env:RUST_MIN_STACK = "33554432"
+        }
 
         $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $hasVS = $false
@@ -431,7 +446,16 @@ switch ($choice) {
             $vsInfo = & $vsWhere -prerelease -all -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
             if (![string]::IsNullOrEmpty($vsInfo)) { $hasVS = $true }
         }
-        if (-not $hasVS -and (Get-Command link.exe -ErrorAction SilentlyContinue)) { $hasVS = $true }
+        if (-not $hasVS) {
+            $linkCmd = Get-Command link.exe -ErrorAction SilentlyContinue
+            if ($linkCmd) {
+                # Only MSVC link.exe outputs 'Microsoft'; MinGW ld.exe does not
+                try {
+                    $linkOut = & $linkCmd.Source /? 2>&1 | Select-Object -First 3 | Out-String
+                    if ($linkOut -match 'Microsoft') { $hasVS = $true }
+                } catch {}
+            }
+        }
 
         $rustToolchain = ""
         $defaultToolchain = (rustup show active-toolchain 2>$null)
@@ -439,7 +463,9 @@ switch ($choice) {
             $gnu = (rustup toolchain list 2>$null | Where-Object { $_ -like "*gnu*" } | Select-Object -First 1)
             if ($gnu) {
                 $rustToolchain = "+" + (($gnu -split '\s+')[0])
-                Write-Host "ℹ️  未检测到 MSVC，切换 GNU: $rustToolchain" -ForegroundColor Cyan
+                # GNU 工具链在 Windows 下增量编译极易产生损坏缓存引发 0xc0000409，默认禁用
+                $env:CARGO_INCREMENTAL = "0"
+                Write-Host "ℹ️  未检测到 MSVC，切换 GNU: $rustToolchain (已自动适配防溢出栈大小)" -ForegroundColor Cyan
                 if ($PathHasNonAscii) {
                     Write-Host "⚠️  中文路径 + GNU 可能链接失败，建议安装 VS Build Tools 或改英文路径。" -ForegroundColor Yellow
                 }
@@ -447,6 +473,9 @@ switch ($choice) {
                 Write-Warning "⚠️ 未检测到 MSVC/GNU 工具链，本地编译可能失败。"
             }
         }
+
+        if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = "1" }
+
         # 工具链确定后再开链接加速（避免 MSVC/GNU 误配）
         Apply-DevRustLinkAccel $rustToolchain
 
@@ -497,13 +526,13 @@ switch ($choice) {
 
         $backendOff = [ref]0; $backendErrOff = [ref]0
         $frontendOff = [ref]0; $frontendErrOff = [ref]0
-        $WaitMax = if ($env:DEV_WAIT_MAX -match '^\d+$') { [int]$env:DEV_WAIT_MAX } else { 600 }
-
         if (-not $DevAttach) {
             # 后台：等端口就绪后退出，不杀进程（与 macOS ./dev.sh 一致）
-            Write-Host "⏳ 等待后端 (${BackendPort}) 和前端 (${FrontendPort}) 就绪（最长 ${WaitMax}s）..." -ForegroundColor Yellow
+            Write-Host "⏳ 等待后端 (${BackendPort}) 和前端 (${FrontendPort}) 就绪..." -ForegroundColor Yellow
             $backendUp = $false; $frontendUp = $false
-            for ($i = 1; $i -le $WaitMax; $i++) {
+            $i = 0
+            while ($true) {
+                $i++
                 if (-not $backendUp -and (Test-PortInUse $BackendPort)) {
                     $backendUp = $true
                     Write-Host "✅ 后端已监听 :${BackendPort}" -ForegroundColor Green
@@ -523,12 +552,10 @@ switch ($choice) {
                     $tip = @()
                     if (-not $backendUp) { $tip += "后端编译/启动中" }
                     if (-not $frontendUp) { $tip += "前端未就绪" }
-                    Write-Host ("… {0}s / {1}s  {2}" -f $i, $WaitMax, ($tip -join '；')) -ForegroundColor DarkGray
+                    Write-Host ("… {0}s  {1}" -f $i, ($tip -join '；')) -ForegroundColor DarkGray
                 }
                 Start-Sleep -Seconds 1
             }
-            Write-Host "❌ 启动超时，请检查日志目录: $logDir" -ForegroundColor Red
-            exit 1
         }
 
         $script:DevStopRequested = $false

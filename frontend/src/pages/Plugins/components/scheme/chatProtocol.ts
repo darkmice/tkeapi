@@ -12,11 +12,13 @@ export type ChatInputProtocolId =
   | 'qwen_vision'
   | 'qwen_vision_file'
   | 'doubao_vision'
-  | 'doubao_omni';
+  | 'doubao_omni'
+  | 'openai_vision';
 
 export type ChatThinkingProfileId =
   | 'on_off'
   | 'glm52'
+  | 'glm53'
   | 'deepseek'
   | 'qwen_budget'
   | 'qwen38'
@@ -91,6 +93,17 @@ export const CHAT_INPUT_PROTOCOLS: Array<ChatProtocolOption<ChatInputProtocolId>
       '音频保持 audio_url，不改成 input_audio。\n' +
       '理解文件：抽文字进 text，不发 type=file。',
   },
+  {
+    id: 'openai_vision',
+    label: 'GPT · 图片 + 文档抽文字',
+    detail:
+      '适用：gpt-6-astra、gpt-5.6-sol / luna / terra、gpt-5.5。\n\n' +
+      '勾选后写入 messages[].content 数组：\n' +
+      '  { "type": "text", "text": "..." }\n' +
+      '  { "type": "image_url", "image_url": { "url": "https://..." } }\n\n' +
+      '理解文件：抽文字进 text，不发原生 file。\n' +
+      '不发 video_url / audio_url / type=file。',
+  },
 ];
 
 export const CHAT_THINKING_PROFILES: Array<ChatProtocolOption<ChatThinkingProfileId>> = [
@@ -105,12 +118,22 @@ export const CHAT_THINKING_PROFILES: Array<ChatProtocolOption<ChatThinkingProfil
   },
   {
     id: 'glm52',
-    label: 'GLM-5.2 高=max / 中=high',
+    label: 'GLM-5.2 及以下 高=max / 中=high',
     detail:
-      '适用：GLM-5.2。用户端档位：高 / 中 / 关，默认高。\n\n' +
+      '适用：GLM-5.2 及更早的 GLM。用户端档位：高 / 中 / 关，默认高。\n\n' +
       '高：  thinking.type=enabled  +  reasoning_effort="max"\n' +
       '中：  thinking.type=enabled  +  reasoning_effort="high"\n' +
       '关：  thinking.type=disabled，并去掉 reasoning_effort',
+  },
+  {
+    id: 'glm53',
+    label: 'GLM-5.3 高=xhigh / 中=high',
+    detail:
+      '适用：GLM-5.3。用户端档位：高 / 中 / 关，默认高。\n\n' +
+      '高：  reasoning_effort="xhigh"\n' +
+      '中：  reasoning_effort="high"\n' +
+      '关：  reasoning_effort="none"\n\n' +
+      '不传 thinking。上游不接受该字段，也不接受 max。',
   },
   {
     id: 'deepseek',

@@ -1,16 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Col, Form, InputNumber, Row, Switch, TimePicker, Typography } from 'antd';
+import { Button, Col, Form, InputNumber, Radio, Row, Switch, TimePicker, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import { formatWallClock } from '../../utils/timedisplay';
 import TimeMultiplierChart from './TimeMultiplierChart';
+import { convertScheduleSlots, scheduleInputTzName, type ScheduleTzMode } from './scheduleTzConvert';
 import { discountChartItems, type DiscountSlotForm } from './discountSchedule';
 import {
   ALL_WEEKDAYS,
   formatWeekdayRange,
   isAllDayMultiplier,
   isAllWeekdays,
+  isFreeTimeMultiplier,
   normalizeWeekdays,
   resolveTimeMultiplierAt,
 } from '../../utils/timeMultipliers';
@@ -78,20 +81,73 @@ function currentClock(defaultTz: string) {
   return now;
 }
 
-const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string }> = ({ isLight, timezoneName }) => {
+function discountRateText(rate: number): string {
+  return isFreeTimeMultiplier(rate) ? '免费' : rate.toFixed(2);
+}
+
+const DiscountRateInput: React.FC<{
+  value?: number | null;
+  onChange?: (value: number | null) => void;
+  addonBefore?: React.ReactNode;
+}> = ({ value, onChange, addonBefore }) => {
+  const [editing, setEditing] = useState(false);
+  return (
+    <InputNumber
+      value={value ?? undefined}
+      onChange={(next) => {
+        if (next == null || (next as unknown) === '') {
+          onChange?.(null);
+          return;
+        }
+        const n = Number(next);
+        onChange?.(Number.isFinite(n) ? n : null);
+      }}
+      min={0}
+      precision={2}
+      step={0.1}
+      style={{ width: '100%' }}
+      addonBefore={addonBefore}
+      onFocus={() => setEditing(true)}
+      onBlur={() => setEditing(false)}
+      formatter={(raw, info) => {
+        if (info?.userTyping) return info.input;
+        if (raw == null || (raw as unknown) === '') return '';
+        const n = Number(raw);
+        if (isFreeTimeMultiplier(n)) return editing ? '0' : '免费';
+        return String(raw);
+      }}
+      parser={(raw) => {
+        const str = String(raw ?? '');
+        if (str.includes('免费')) return 0;
+        const text = str.trim();
+        if (text === '' || text === '.') return '' as unknown as number;
+        const n = Number(text);
+        return Number.isFinite(n) ? n : ('' as unknown as number);
+      }}
+    />
+  );
+};
+
+const DiscountScheduleEditor: React.FC<{
+  isLight: boolean;
+  operationTz: string;
+  adminTz: string;
+}> = ({ isLight, operationTz, adminTz }) => {
   const form = Form.useFormInstance();
   const enabled = Form.useWatch('discount_schedule_enabled', form);
   const siteOn = Form.useWatch('site_discount_enabled', form);
   const globalOn = Form.useWatch('global_discount_enabled', form);
+  const inputTzMode = (Form.useWatch('discount_schedule_input_tz', form) || 'operation') as ScheduleTzMode;
   const siteFallback = Number(Form.useWatch('site_discount', form) ?? 1);
   const globalFallback = Number(Form.useWatch('global_discount', form) ?? 1);
   const slots = (Form.useWatch('discount_slots', form) || []) as DiscountSlotForm[];
-  const [now, setNow] = useState(() => currentClock(timezoneName));
+  const clockTz = scheduleInputTzName(inputTzMode, operationTz, adminTz);
+  const [now, setNow] = useState(() => currentClock(clockTz));
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(currentClock(timezoneName)), 1000);
+    const timer = setInterval(() => setNow(currentClock(clockTz)), 1000);
     return () => clearInterval(timer);
-  }, [timezoneName]);
+  }, [clockTz]);
 
   const weekday = now.day() === 0 ? 7 : now.day();
   const minutes = now.hour() * 60 + now.minute();
@@ -112,21 +168,38 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
       background: isLight ? 'rgba(22,119,255,0.03)' : 'rgba(22,119,255,0.06)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
-        <Text strong>高级设置 · 按天规划时段折扣</Text>
+        <div>
+          <Text strong>高级设置 · 按天规划时段折扣</Text>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            {inputTzMode === 'admin_display' ? '后台时间' : '运营时间'}: {formatWallClock(clockTz)} · {clockTz}
+            {enabled && siteOn ? ` · 此刻折扣限价 ${discountRateText(siteNow)}` : ''}
+            {enabled && globalOn ? ` · 全站折扣 ${discountRateText(globalNow)}` : ''}
+          </Text>
+        </div>
         <Form.Item name="discount_schedule_enabled" valuePropName="checked" initialValue={false} style={{ margin: 0 }}>
           <Switch size="small" checkedChildren="开启" unCheckedChildren="关闭" />
         </Form.Item>
       </div>
-      <Text type="secondary" style={{ fontSize: 12, display: 'block', lineHeight: 1.6 }}>
-        上方是统一折扣。关闭时全天使用统一值。开启后按星期规划各时段的折扣限价和全站折扣，没命中的时段仍用统一值。时段只取一档、不叠加。按站点时区，在计费时锁定。
+      <Form.Item name="discount_schedule_input_tz" initialValue="operation" style={{ marginBottom: 8 }}>
+        <Radio.Group
+          buttonStyle="solid"
+          size="small"
+          onChange={(e) => {
+            const next = e.target.value as ScheduleTzMode;
+            const fromTz = scheduleInputTzName(inputTzMode, operationTz, adminTz);
+            const toTz = scheduleInputTzName(next, operationTz, adminTz);
+            form.setFieldsValue({
+              discount_slots: convertScheduleSlots(slots, fromTz, toTz),
+            });
+          }}
+        >
+          <Radio.Button value="operation">运营时区</Radio.Button>
+          <Radio.Button value="admin_display">后台时区</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+        按所选时钟填时段，保存后按运营时区计费。未命中用上方统一折扣。填 0 为免费；全站为免费时，限价也要是免费。
       </Text>
-      {enabled && (
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
-          当前 {now.format('HH:mm:ss')}
-          {siteOn ? ` · 折扣限价 ${siteNow.toFixed(2)}` : ''}
-          {globalOn ? ` · 全站折扣 ${globalNow.toFixed(2)}` : ''}
-        </Text>
-      )}
       <div style={{ display: enabled ? 'block' : 'none', marginTop: 12 }}>
         <Form.List name="discount_slots" initialValue={[]}>
           {(fields, { add, remove }) => (
@@ -166,7 +239,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
                             rules={globalOn && enabled && !allDay ? [{ required: true, message: '选择开始时间' }] : []}
                             style={{ marginBottom: 8 }}
                           >
-                            <TimePicker placeholder="开始时间" format="HH:mm" style={{ width: '100%' }} allowClear={false} />
+                            <TimePicker placeholder="开始时间" format="HH:mm" style={{ width: '100%' }} allowClear={false} needConfirm={false} />
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
@@ -176,7 +249,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
                             rules={globalOn && enabled && !allDay ? [{ required: true, message: '选择结束时间' }] : []}
                             style={{ marginBottom: 8 }}
                           >
-                            <TimePicker placeholder="结束时间" format="HH:mm" style={{ width: '100%' }} allowClear={false} />
+                            <TimePicker placeholder="结束时间" format="HH:mm" style={{ width: '100%' }} allowClear={false} needConfirm={false} />
                           </Form.Item>
                         </Col>
                       </Row>
@@ -189,7 +262,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
                           style={{ marginBottom: 8 }}
                           initialValue={1}
                         >
-                          <InputNumber min={0.01} precision={2} step={0.1} style={{ width: '100%' }} addonBefore="限价" />
+                          <DiscountRateInput addonBefore="限价" />
                         </Form.Item>
                       </Col>
                       <Col xs={24} sm={12} style={{ display: globalOn ? 'block' : 'none' }}>
@@ -199,7 +272,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
                           style={{ marginBottom: 8 }}
                           initialValue={1}
                         >
-                          <InputNumber min={0.01} precision={2} step={0.1} style={{ width: '100%' }} addonBefore="全站" />
+                          <DiscountRateInput addonBefore="全站" />
                         </Form.Item>
                       </Col>
                     </Row>
@@ -210,7 +283,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
                       </Form.Item>
                     </div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      {allDay ? `${daysLabel}全天按上面的折扣` : `${daysLabel}：这段用上面的折扣，其余回到统一折扣`}
+                      {allDay ? `${daysLabel}全天` : `${daysLabel}：此时段用上面折扣，其余用统一折扣`}
                     </Text>
                   </div>
                 );
@@ -259,7 +332,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
             invert={false}
             isLight={isLight}
             title="折扣限价"
-            description="横轴 00:00–24:00。色块数字是该时段折扣限价，未规划时段等于上方统一限价。只取一档、不叠加。"
+            description="色块是该时段折扣限价，空白用上方统一限价。"
           />
         )}
         {enabled && slots.length > 0 && globalOn && (
@@ -268,7 +341,7 @@ const DiscountScheduleEditor: React.FC<{ isLight: boolean; timezoneName: string 
             invert={false}
             isLight={isLight}
             title="全站折扣"
-            description="横轴 00:00–24:00。色块数字是该时段全站折扣，未规划时段等于上方统一折扣。只取一档、不叠加。"
+            description="色块是该时段全站折扣，空白用上方统一折扣。"
           />
         )}
       </div>

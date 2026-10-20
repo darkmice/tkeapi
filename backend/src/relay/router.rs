@@ -65,11 +65,10 @@ pub async fn get_cached_channel_configs(
         }
     }
 
-    let rows: Vec<ChannelConfig> = sqlx::query_as(
-        &db.format_query("SELECT * FROM channel_configs"),
-    )
-    .fetch_all(&db.pool)
-    .await?;
+    let rows: Vec<ChannelConfig> =
+        sqlx::query_as(&db.format_query("SELECT * FROM channel_configs"))
+            .fetch_all(&db.pool)
+            .await?;
 
     let map: HashMap<i64, ChannelConfig> = rows.into_iter().map(|c| (c.id, c)).collect();
     let arc_configs = Arc::new(map);
@@ -93,9 +92,9 @@ pub async fn get_cached_active_channels(
         }
     }
 
-    let channels: Vec<Channel> = sqlx::query_as(&db.format_query(
-        "SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id DESC",
-    ))
+    let channels: Vec<Channel> = sqlx::query_as(
+        &db.format_query("SELECT * FROM channels WHERE status = 1 ORDER BY priority DESC, id DESC"),
+    )
     .fetch_all(&db.pool)
     .await?;
 
@@ -112,11 +111,11 @@ pub async fn get_cached_active_channels(
 /// 同档加权随机：`weight` 越大被选概率越高；负权重按 0 计，合计 ≤0 时取首项。
 fn pick_weighted_by<T, F>(items: &[T], weight_of: F) -> &T
 where
-    F: Fn(&T) -> i32,
+    F: Fn(&T) -> i64,
 {
     debug_assert!(!items.is_empty());
     let weight = |item: &T| weight_of(item).max(0);
-    let total_weight: i32 = items.iter().map(|i| weight(i)).sum();
+    let total_weight: i64 = items.iter().map(|i| weight(i)).sum();
     if total_weight <= 0 {
         return &items[0];
     }
@@ -157,11 +156,9 @@ pub async fn select_channel(
         model_in_table = true;
         m
     } else {
-        let rows: Vec<(String, i32)> = sqlx::query_as(
-            &state
-                .db
-                .format_query("SELECT mid, is_active FROM models WHERE model_id = ? AND is_listed = 1"),
-        )
+        let rows: Vec<(String, i64)> = sqlx::query_as(&state.db.format_query(
+            "SELECT mid, is_active FROM models WHERE model_id = ? AND is_listed = 1",
+        ))
         .bind(model)
         .fetch_all(&state.db.pool)
         .await
@@ -239,9 +236,9 @@ pub async fn select_channel(
     for c in &channels {
         if c.provider_type != "high_availability_group" {
             if let Some(pid) = c.preset_id {
-                let unusable = all_channel_configs
-                    .get(&pid)
-                    .map_or(true, |p| p.status != 1 || !p.has_available_quota(&tz_name, &now_week, &now_month));
+                let unusable = all_channel_configs.get(&pid).map_or(true, |p| {
+                    p.status != 1 || !p.has_available_quota(&tz_name, &now_week, &now_month)
+                });
                 if unusable {
                     unusable_presets.insert(pid);
                 }
@@ -262,6 +259,11 @@ pub async fn select_channel(
                 if unusable_presets.contains(&pid) {
                     return false;
                 }
+            } else if c.provider_type != "volcengine"
+                && c.provider_type != "comfyui"
+                && c.base_url.trim().is_empty()
+            {
+                return false;
             }
             let excludes = c.get_exclude_user_groups();
             if !excludes.is_empty()
@@ -288,6 +290,21 @@ pub async fn select_channel(
     if channels.is_empty() {
         return Err(no_usable_channels(model));
     }
+
+    // 针对绑定上游预设的非 HA 渠道，按当前渠道分组的独立覆盖参数（未设置则回退上游默认）解析最终 priority/weight/rate 并重排
+    for c in &mut channels {
+        if c.provider_type != "high_availability_group" {
+            if let Some(pid) = c.preset_id {
+                if let Some(preset) = all_channel_configs.get(&pid) {
+                    let resolved = c.resolve_upstream_config(preset);
+                    c.priority = resolved.priority;
+                    c.weight = resolved.weight;
+                    c.rate = resolved.rate;
+                }
+            }
+        }
+    }
+    channels.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| b.id.cmp(&a.id)));
 
     // 物理渠 / HA 子渠：最高 priority 档内按 weight 比例随机分流
     // 顺序不变量：HA 子配注入并清 preset_id →（仅剩 preset 时）查 preset → 最后 volc
@@ -320,7 +337,11 @@ pub async fn select_channel(
 
         let rows: Vec<crate::models::ChannelConfig> = sub_channel_ids
             .iter()
-            .filter_map(|id| all_channel_configs.get(id).cloned())
+            .filter_map(|id| {
+                all_channel_configs
+                    .get(id)
+                    .map(|cfg| picked.resolve_upstream_config(cfg))
+            })
             .collect();
 
         let group_id = picked.id;
@@ -477,13 +498,16 @@ fn live_ha_subs(
     )
 }
 
-/// 将 channel_configs 的 base/key/rate/yid 写入内存 Channel（选渠 / 重载共用）
+/// 将 channel_configs 的 base/key/rate/priority/weight/yid 写入内存 Channel（选渠 / 重载共用，自动叠加分组内独立覆盖参数）
 #[inline]
 fn apply_config_base(ch: &mut crate::models::Channel, cfg: &crate::models::ChannelConfig) {
-    ch.base_url = cfg.base_url.clone();
-    ch.api_key = cfg.api_key.clone();
-    ch.rate = cfg.rate;
-    ch.yid = Some(cfg.yid.clone());
+    let resolved = ch.resolve_upstream_config(cfg);
+    ch.base_url = resolved.base_url;
+    ch.api_key = resolved.api_key;
+    ch.rate = resolved.rate;
+    ch.priority = resolved.priority;
+    ch.weight = resolved.weight;
+    ch.yid = Some(resolved.yid);
 }
 
 /// HA 子配注入：写 base/key/rate/yid/name/provider/group_aid，清 preset_id
@@ -510,7 +534,7 @@ pub(crate) fn apply_ha_sub_mapped(
 
 /// 按子配 id 叠加父渠 `ha_model_mapping`（保证异步 settle / 测试与同步选渠一致）
 #[inline]
-fn apply_ha_model_mapping(ch: &mut crate::models::Channel, sub_id: i64) {
+pub(crate) fn apply_ha_model_mapping(ch: &mut crate::models::Channel, sub_id: i64) {
     let Ok(config_val) = serde_json::from_str::<serde_json::Value>(&ch.config) else {
         return;
     };
@@ -549,7 +573,7 @@ fn apply_reload_cfg(ch: &mut crate::models::Channel, cfg: &crate::models::Channe
 pub async fn fetch_channel(
     state: &crate::AppState,
     channel_id: i64,
-    channel_config_id: Option<i32>,
+    channel_config_id: Option<i64>,
 ) -> Option<Channel> {
     let mut ch: Channel =
         sqlx::query_as(&state.db.format_query("SELECT * FROM channels WHERE id = ?"))
@@ -567,7 +591,7 @@ pub async fn fetch_channel(
 async fn hydrate_for_reload(
     state: &crate::AppState,
     ch: &mut crate::models::Channel,
-    channel_config_id: Option<i32>,
+    channel_config_id: Option<i64>,
 ) {
     if let Some(cid) = channel_config_id {
         if let Ok(Some(cfg)) = sqlx::query_as::<_, crate::models::ChannelConfig>(
@@ -575,7 +599,7 @@ async fn hydrate_for_reload(
                 .db
                 .format_query("SELECT * FROM channel_configs WHERE id = ?"),
         )
-        .bind(cid as i64)
+        .bind(cid)
         .fetch_optional(&state.db.pool)
         .await
         {

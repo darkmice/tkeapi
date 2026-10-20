@@ -2,13 +2,11 @@
 
 Kling AI は、非常に高い水準の動画画質とモーションコントロールにより、広く使用されています。ゲートウェイは Kling 専用のルーティングを用意し、Kling 公式 API と完全に整合させています。 
 
-### 1. 動画モデル API
-* **テキストからの動画生成 (Text to Video)**: `/v1/videos/text2video` (`POST`)
-* **画像からの動画生成 (Image to Video)**: `/v1/videos/image2video` (`POST`)
-* **Omni 動画参照からの動画生成**: `/v1/videos/omni-video` (`POST`)
-* **タスクステータス確認**: `/v1/videos/{endpoint}/{task_id}` (`GET`)
-
-*注: ステータス確認 API において、`{endpoint}` はタスク送信時に使用したサービスタイプ（例: `text2video`、`image2video` など）に対応します。*
+### 1. 動画モデル API (公式ネイティブ)
+* **テキストからの動画生成**: `/text-to-video/{model_id}` (`POST`)
+* **画像からの動画生成**: `/image-to-video/{model_id}` (`POST`)
+* **Omni 動画参照からの動画生成**: `/omni-video/{model_id}` (`POST`)
+* **タスクステータス確認**: `/tasks?task_ids={task_id}` (`GET`)
 
 ### 2. 画像モデル API
 * **標準テキスト/画像からの画像生成**: `/v1/images/generations` (`POST`)

@@ -22,17 +22,39 @@ const TOS_REGION_GROUPS: RegionGroup[] = [
   {
     group: '🌏 海外版 - BytePlus',
     regions: [
-      { label: '亚太地区（柔佛）', region: 'bp-ap-southeast-1', endpointExternal: 'https://tos-ap-southeast-1.bytepluses.com', endpointInternal: 'https://tos-ap-southeast-1.ibytepluses.com' },
-      { label: '中国（香港）', region: 'bp-cn-hongkong', endpointExternal: 'https://tos-cn-hongkong.bytepluses.com', endpointInternal: 'https://tos-cn-hongkong.ibytepluses.com' },
-      { label: '亚太地区（雅加达）', region: 'bp-ap-southeast-3', endpointExternal: 'https://tos-ap-southeast-3.bytepluses.com', endpointInternal: 'https://tos-ap-southeast-3.ibytepluses.com' },
-      { label: '中国（北京）', region: 'bp-cn-beijing', endpointExternal: 'https://tos-cn-beijing.bytepluses.com.cn', endpointInternal: 'https://tos-cn-beijing.ibytepluses.com.cn' },
-      { label: '中国（广州）', region: 'bp-cn-guangzhou', endpointExternal: 'https://tos-cn-guangzhou.bytepluses.com.cn', endpointInternal: 'https://tos-cn-guangzhou.ibytepluses.com.cn' },
-      { label: '中国（上海）', region: 'bp-cn-shanghai', endpointExternal: 'https://tos-cn-shanghai.bytepluses.com.cn', endpointInternal: 'https://tos-cn-shanghai.ibytepluses.com.cn' },
+      { id: 'byteplus:ap-southeast-1', label: 'Asia Pacific (Johor)', region: 'ap-southeast-1', endpointExternal: 'https://tos-ap-southeast-1.bytepluses.com', endpointInternal: 'https://tos-ap-southeast-1.ibytepluses.com' },
+      { id: 'byteplus:cn-hongkong', label: 'China (Hong Kong)', region: 'cn-hongkong', endpointExternal: 'https://tos-cn-hongkong.bytepluses.com', endpointInternal: 'https://tos-cn-hongkong.ibytepluses.com' },
+      { id: 'byteplus:ap-southeast-3', label: 'Asia Pacific (Jakarta)', region: 'ap-southeast-3', endpointExternal: 'https://tos-ap-southeast-3.bytepluses.com', endpointInternal: 'https://tos-ap-southeast-3.ibytepluses.com' },
+      { id: 'byteplus:cn-beijing', label: 'China (Beijing)', region: 'cn-beijing', endpointExternal: 'https://tos-cn-beijing.bytepluses.com.cn', endpointInternal: 'https://tos-cn-beijing.ibytepluses.com.cn' },
+      { id: 'byteplus:cn-guangzhou', label: 'China (Guangzhou)', region: 'cn-guangzhou', endpointExternal: 'https://tos-cn-guangzhou.bytepluses.com.cn', endpointInternal: 'https://tos-cn-guangzhou.ibytepluses.com.cn' },
+      { id: 'byteplus:cn-shanghai', label: 'China (Shanghai)', region: 'cn-shanghai', endpointExternal: 'https://tos-cn-shanghai.bytepluses.com.cn', endpointInternal: 'https://tos-cn-shanghai.ibytepluses.com.cn' },
     ]
   }
 ];
 
 const ALL_TOS_REGIONS = TOS_REGION_GROUPS.flatMap(g => g.regions);
+
+/** 已保存的地域 + 请求地址 → 下拉唯一值。旧配置的 bp- 前缀视为国际版 */
+export function tosOptionIdFromSaved(region?: string, endpoint?: string): string | undefined {
+  if (!region) return undefined;
+  const official = region.replace(/^bp-/, '');
+  if ((endpoint || '').includes('bytepluses.com') || region.startsWith('bp-')) {
+    return `byteplus:${official}`;
+  }
+  return official;
+}
+
+function matchTosRegion(regionOrId: string, endpointHint?: string) {
+  const byId = ALL_TOS_REGIONS.find(r => r.id === regionOrId);
+  if (byId) return byId;
+  const official = regionOrId.replace(/^bp-/, '');
+  const matches = ALL_TOS_REGIONS.filter(r => r.region === official);
+  if (matches.length <= 1) return matches[0];
+  const international = (endpointHint || '').includes('bytepluses.com') || regionOrId.startsWith('bp-');
+  return matches.find(r => (international
+    ? r.endpointExternal.includes('bytepluses.com')
+    : r.endpointExternal.includes('volces.com'))) || matches[0];
+}
 
 const COS_REGION_GROUPS: RegionGroup[] = [
   {
@@ -51,6 +73,10 @@ const COS_REGION_GROUPS: RegionGroup[] = [
     group: '🌏 境外',
     regions: [
       { label: '新加坡', region: 'ap-singapore', endpointExternal: 'https://cos.ap-singapore.myqcloud.com', endpointInternal: 'https://cos-internal.ap-singapore.tencentcos.cn' },
+      { label: '东京', region: 'ap-tokyo', endpointExternal: 'https://cos.ap-tokyo.myqcloud.com', endpointInternal: 'https://cos-internal.ap-tokyo.tencentcos.cn' },
+      { label: '首尔', region: 'ap-seoul', endpointExternal: 'https://cos.ap-seoul.myqcloud.com', endpointInternal: 'https://cos-internal.ap-seoul.tencentcos.cn' },
+      { label: '曼谷', region: 'ap-bangkok', endpointExternal: 'https://cos.ap-bangkok.myqcloud.com', endpointInternal: 'https://cos-internal.ap-bangkok.tencentcos.cn' },
+      { label: '雅加达', region: 'ap-jakarta', endpointExternal: 'https://cos.ap-jakarta.myqcloud.com', endpointInternal: 'https://cos-internal.ap-jakarta.tencentcos.cn' },
       { label: '硅谷', region: 'na-siliconvalley', endpointExternal: 'https://cos.na-siliconvalley.myqcloud.com', endpointInternal: 'https://cos-internal.na-siliconvalley.tencentcos.cn' },
       { label: '弗吉尼亚', region: 'na-ashburn', endpointExternal: 'https://cos.na-ashburn.myqcloud.com', endpointInternal: 'https://cos-internal.na-ashburn.tencentcos.cn' },
       { label: '法兰克福', region: 'eu-frankfurt', endpointExternal: 'https://cos.eu-frankfurt.myqcloud.com', endpointInternal: 'https://cos-internal.eu-frankfurt.tencentcos.cn' },
@@ -90,8 +116,8 @@ export const STORAGE_PROVIDERS: StorageProviderMeta[] = [
       const endpoint = ep || '';
       return endpoint.includes('ivolces.com') || endpoint.includes('ibytepluses.com') ? 'internal' : 'external';
     },
-    resolveEndpoint: (region: string, networkType: 'external' | 'internal') => {
-      const found = ALL_TOS_REGIONS.find(r => r.region === region);
+    resolveEndpoint: (region: string, networkType: 'external' | 'internal', endpointHint?: string) => {
+      const found = matchTosRegion(region, endpointHint);
       if (!found) return '';
       return networkType === 'internal' ? found.endpointInternal : found.endpointExternal;
     },
@@ -129,8 +155,13 @@ export const STORAGE_PROVIDERS: StorageProviderMeta[] = [
     },
     resolveEndpoint: (region: string, networkType: 'external' | 'internal') => {
       const found = ALL_COS_REGIONS.find(r => r.region === region);
-      if (!found) return '';
-      return networkType === 'internal' ? found.endpointInternal : found.endpointExternal;
+      if (found) {
+        return networkType === 'internal' ? found.endpointInternal : found.endpointExternal;
+      }
+      if (!region) return '';
+      return networkType === 'internal'
+        ? `https://cos-internal.${region}.tencentcos.cn`
+        : `https://cos.${region}.myqcloud.com`;
     },
     isConfigured: (values: Record<string, any>) => {
       return !!(values?.cos_secret_id && (values?.cos_bucket || values?.cos_endpoint));

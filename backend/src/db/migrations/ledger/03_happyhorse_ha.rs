@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── 初始化快乐小马智能路由系统配置及种子数据（受一次性迁移保护） ──
@@ -86,8 +86,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_log_id ON logs (log_id)"
     );
 
-
-
     // 回填存量数据的 log_id（使用 前缀 + 时间戳hex + id hex 拼接，保证唯一且有序，仅执行一次避免大表全扫描卡顿）
     once_migration!(pool, done, "backfill_logs_log_id_v1",
         "UPDATE logs SET log_id = CASE \
@@ -98,8 +96,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         END \
         WHERE log_id IS NULL"
     );
-
-
 
     // 自动清洗历史失败日志的脏扣费数据（受一次性迁移保护）
     once_migration!(pool, done, "clean_dirty_logs_cost_20260609",
@@ -202,17 +198,22 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
 
             // 2. 批量拉取映射 ID，规避复杂嵌套子查询，确保服务商、API 提供商和模型类型都获取到
             let volc_provider_id: Option<i64> = sqlx::query_scalar(
-                "SELECT id FROM model_providers WHERE name = '火山引擎' LIMIT 1"
-            ).fetch_optional(pool).await.unwrap_or(None);
+                "SELECT id FROM model_providers WHERE name = '火山引擎' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
             let volc_api_provider_id: Option<i64> = sqlx::query_scalar(
                 "SELECT id FROM model_api_providers WHERE name ILIKE '%火山%' OR name ILIKE '%volcengine%' LIMIT 1"
             ).fetch_optional(pool).await.unwrap_or(None);
 
             // 获取"视频增强"类型 ID（用于 6 个预置模型）
-            let enhance_type_id: Option<i64> = sqlx::query_scalar(
-                "SELECT id FROM model_types WHERE name = '视频增强' LIMIT 1"
-            ).fetch_optional(pool).await.unwrap_or(None);
+            let enhance_type_id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM model_types WHERE name = '视频增强' LIMIT 1")
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or(None);
 
             // 注册 4 个细分版本的视频画质计费规则 (按秒换算)
             let _ = sqlx::query(
@@ -259,10 +260,30 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             .bind(enhance_type_id)
             .execute(pool).await;
 
-            let rule_id_standard: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (标准版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_professional: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (专业版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_fast: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (极速版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_generative: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (大模型版)'").fetch_optional(pool).await.unwrap_or(None);
+            let rule_id_standard: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (标准版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_professional: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (专业版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_fast: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (极速版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_generative: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频画质增强 (大模型版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
             // 注册 2 个细分版本的字幕擦除计费规则 (按秒换算)
             let _ = sqlx::query(
@@ -287,8 +308,18 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             .bind(enhance_type_id)
             .execute(pool).await;
 
-            let rule_id_erase_standard: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频字幕擦除 (标准版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_erase_pro: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频字幕擦除 (精细版)'").fetch_optional(pool).await.unwrap_or(None);
+            let rule_id_erase_standard: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频字幕擦除 (标准版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_erase_pro: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山 MediaKit 视频字幕擦除 (精细版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
             // 3. 注册 4 个火山 MediaKit 内置转发规则，使用安全的 WHERE NOT EXISTS 语法防重，避开 ON CONFLICT 报错
             let preset_rules = vec![
@@ -330,18 +361,69 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
 
             // 4. 获取刚注册好的内置规则 ID 映射
             let rule_id_sd_pf: Option<i64> = sqlx::query_scalar("SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频画质增强 (标准/专业版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_ft: Option<i64> = sqlx::query_scalar("SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频画质增强 (极速版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_gt: Option<i64> = sqlx::query_scalar("SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频画质增强 (大模型版)'").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_erase: Option<i64> = sqlx::query_scalar("SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频字幕擦除'").fetch_optional(pool).await.unwrap_or(None);
+            let rule_id_ft: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频画质增强 (极速版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_gt: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频画质增强 (大模型版)'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            let rule_id_erase: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM forward_rules WHERE name = '火山 MediaKit 视频字幕擦除'",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
             // 5. 初始化 6 个画质增强预置模型，显式绑定 provider_id (火山引擎) 、默认转发规则 forward_rule_ids 以及默认计费规则 billing_rule_id
             let preset_models = vec![
-                ("vve-sd", "火山画质增强-标准版", "volc_video_enhance_standard", rule_id_sd_pf, rule_id_standard),
-                ("vve-pf", "火山画质增强-专业版", "volc_video_enhance_professional", rule_id_sd_pf, rule_id_professional),
-                ("vve-ft", "火山画质增强-极速版", "volc_video_enhance_fast", rule_id_ft, rule_id_fast),
-                ("vve-gt", "火山画质增强-大模型版", "volc_video_enhance_generative", rule_id_gt, rule_id_generative),
-                ("vvs-er", "火山字幕擦除-标准版", "volc_video_subtitle_erase", rule_id_erase, rule_id_erase_standard),
-                ("vvs-ep", "火山字幕擦除-精细版", "volc_video_subtitle_erase_pro", rule_id_erase, rule_id_erase_pro),
+                (
+                    "vve-sd",
+                    "火山画质增强-标准版",
+                    "volc_video_enhance_standard",
+                    rule_id_sd_pf,
+                    rule_id_standard,
+                ),
+                (
+                    "vve-pf",
+                    "火山画质增强-专业版",
+                    "volc_video_enhance_professional",
+                    rule_id_sd_pf,
+                    rule_id_professional,
+                ),
+                (
+                    "vve-ft",
+                    "火山画质增强-极速版",
+                    "volc_video_enhance_fast",
+                    rule_id_ft,
+                    rule_id_fast,
+                ),
+                (
+                    "vve-gt",
+                    "火山画质增强-大模型版",
+                    "volc_video_enhance_generative",
+                    rule_id_gt,
+                    rule_id_generative,
+                ),
+                (
+                    "vvs-er",
+                    "火山字幕擦除-标准版",
+                    "volc_video_subtitle_erase",
+                    rule_id_erase,
+                    rule_id_erase_standard,
+                ),
+                (
+                    "vvs-ep",
+                    "火山字幕擦除-精细版",
+                    "volc_video_subtitle_erase_pro",
+                    rule_id_erase,
+                    rule_id_erase_pro,
+                ),
             ];
 
             for (mid, name, model_id, rule_id, billing_rule_id) in &preset_models {
@@ -363,12 +445,33 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             }
 
             // 5.5 初始化两个豆包级联画质增强模型种子数据，强制绑定到级联计费规则与转发规则
-            let video_type_id: Option<i64> = sqlx::query_scalar("SELECT id FROM model_types WHERE name = '视频' LIMIT 1").fetch_optional(pool).await.unwrap_or(None);
-            let rule_id_cascade_billing: Option<i64> = sqlx::query_scalar("SELECT id FROM billing_rules WHERE name = '火山级联画质增强默认计费' LIMIT 1").fetch_optional(pool).await.unwrap_or(None);
+            let video_type_id: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM model_types WHERE name = '视频' LIMIT 1")
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or(None);
+            let rule_id_cascade_billing: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM billing_rules WHERE name = '火山级联画质增强默认计费' LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
             let cascade_models = vec![
-                ("dbs-sr", "豆包 Seedance 2.0 (画质增强级联)", "Doubao-seedance-2-0-sr", "doubao-seedance-2-0-260128", 30.0),
-                ("dbs-fs", "豆包 Seedance 2.0 极速版 (画质增强级联)", "Doubao-seedance-2-0-fast-sr", "doubao-seedance-2-0-fast-260128", 30.0),
+                (
+                    "dbs-sr",
+                    "豆包 Seedance 2.0 (画质增强级联)",
+                    "Doubao-seedance-2-0-sr",
+                    "doubao-seedance-2-0-260128",
+                    30.0,
+                ),
+                (
+                    "dbs-fs",
+                    "豆包 Seedance 2.0 极速版 (画质增强级联)",
+                    "Doubao-seedance-2-0-fast-sr",
+                    "doubao-seedance-2-0-fast-260128",
+                    30.0,
+                ),
             ];
 
             for (mid, name, model_id, alias, pre_deduct) in &cascade_models {
@@ -387,12 +490,15 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 .execute(pool).await;
             }
 
-            let _ = sqlx::query("INSERT INTO sys_migration_history (id) VALUES ('volcengine_enhance_init_v1')").execute(pool).await;
+            let _ = sqlx::query(
+                "INSERT INTO sys_migration_history (id) VALUES ('volcengine_enhance_init_v1')",
+            )
+            .execute(pool)
+            .await;
             done.insert("volcengine_enhance_init_v1".into());
             tracing::info!("火山引擎画质增强插件初始化完成");
         }
     }
-
 
     // 7. PostgreSQL 18.4 专用性能与稳定性优化：引入覆盖索引（Covering Indexes）加速大表查询与统计（受一次性迁移保护）
     once_migration!(pool, done, "pg18_performance_optimizations_v1",
@@ -401,12 +507,18 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 8. 将 'playground' 插件的 title 从 '模型体验中心' 修改为 '模型创作中心'（受一次性迁移保护）
-    once_migration!(pool, done, "rename_playground_title_to_creation_center_20260621",
+    once_migration!(
+        pool,
+        done,
+        "rename_playground_title_to_creation_center_20260621",
         "UPDATE plugins SET title = '模型创作中心' WHERE name = 'playground'"
     );
 
     // 9. 将系统默认菜单配置中 '/playground' 的 label_zh 从 '体验中心' 或 '操场' 修改为 '创作中心'（受一次性迁移保护）
-    once_migration!(pool, done, "update_menu_playground_label_to_creation_center_20260621",
+    once_migration!(
+        pool,
+        done,
+        "update_menu_playground_label_to_creation_center_20260621",
         "UPDATE settings SET value = replace(\
             replace(\
                 replace(\
@@ -418,7 +530,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
             '\"label_zh\": \"操场\"', '\"label_zh\": \"创作中心\"'\
         ) WHERE key = 'menu_config_settings'"
     );
-
 
     Ok(())
 }

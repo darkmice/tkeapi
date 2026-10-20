@@ -34,7 +34,6 @@ async fn load_registration(state: &AppState) -> AppResult<RegistrationSettings> 
         .unwrap_or_else(default_registration_settings))
 }
 
-
 async fn fetch_user_kyc_list(state: &AppState, user_id: &str) -> AppResult<Vec<UserKyc>> {
     let rows: Vec<UserKyc> = sqlx::query_as(
         &state
@@ -47,7 +46,11 @@ async fn fetch_user_kyc_list(state: &AppState, user_id: &str) -> AppResult<Vec<U
     Ok(rows)
 }
 
-async fn fetch_kyc_by_id(state: &AppState, user_id: &str, kyc_id: i64) -> AppResult<Option<UserKyc>> {
+async fn fetch_kyc_by_id(
+    state: &AppState,
+    user_id: &str,
+    kyc_id: i64,
+) -> AppResult<Option<UserKyc>> {
     let row: Option<UserKyc> = sqlx::query_as(
         &state
             .db
@@ -61,11 +64,9 @@ async fn fetch_kyc_by_id(state: &AppState, user_id: &str, kyc_id: i64) -> AppRes
 }
 
 async fn fetch_kyc(state: &AppState, user_id: &str) -> AppResult<UserKyc> {
-    let row: Option<UserKyc> = sqlx::query_as(
-        &state
-            .db
-            .format_query("SELECT * FROM user_kyc WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1"),
-    )
+    let row: Option<UserKyc> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM user_kyc WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1",
+    ))
     .bind(user_id)
     .fetch_optional(&state.db.pool)
     .await?;
@@ -160,10 +161,16 @@ fn validate_payload(
             if company_name.map(|s| s.trim().is_empty()).unwrap_or(true) {
                 return Err(AppError::BadRequest("请填写企业名称".to_string()));
             }
-            if company_doc_type.map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if company_doc_type
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
                 return Err(AppError::BadRequest("请选择企业证件类型".to_string()));
             }
-            if company_doc_number.map(|s| s.trim().is_empty()).unwrap_or(true) {
+            if company_doc_number
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
                 return Err(AppError::BadRequest("请填写企业证件号码".to_string()));
             }
             // 企业用户：企业联系邮箱必填，并校验格式
@@ -193,7 +200,6 @@ async fn resolve_user_id(state: &AppState, user_id_or_uid: &str) -> AppResult<St
     .await?;
     id.ok_or_else(|| AppError::NotFound("用户不存在".to_string()))
 }
-
 
 async fn insert_kyc_record(
     state: &AppState,
@@ -312,14 +318,7 @@ async fn insert_kyc_record(
         } else {
             ("none".to_string(), None)
         };
-        (
-            status,
-            None,
-            None,
-            None,
-            None,
-            submitted_at,
-        )
+        (status, None, None, None, None, submitted_at)
     };
 
     if is_admin && matches!(status.as_str(), "approved" | "pending") {
@@ -339,9 +338,9 @@ async fn insert_kyc_record(
         )?;
     }
 
-    let has_default: bool = sqlx::query_scalar(
-        &state.db.format_query("SELECT EXISTS(SELECT 1 FROM user_kyc WHERE user_id = ? AND is_default = TRUE)")
-    )
+    let has_default: bool = sqlx::query_scalar(&state.db.format_query(
+        "SELECT EXISTS(SELECT 1 FROM user_kyc WHERE user_id = ? AND is_default = TRUE)",
+    ))
     .bind(user_id)
     .fetch_one(&state.db.pool)
     .await
@@ -349,10 +348,14 @@ async fn insert_kyc_record(
 
     let is_default = req.is_default.unwrap_or(!has_default);
     if is_default {
-        let _ = sqlx::query(&state.db.format_query("UPDATE user_kyc SET is_default = FALSE WHERE user_id = ?"))
-            .bind(user_id)
-            .execute(&state.db.pool)
-            .await;
+        let _ = sqlx::query(
+            &state
+                .db
+                .format_query("UPDATE user_kyc SET is_default = FALSE WHERE user_id = ?"),
+        )
+        .bind(user_id)
+        .execute(&state.db.pool)
+        .await;
     }
 
     let inserted_id: i64 = sqlx::query_scalar(
@@ -457,9 +460,7 @@ async fn update_kyc_record(
         tax_registration_url,
         legal_notarization_url,
     ) = (
-        req.real_name
-            .and_then(empty_to_none)
-            .or(existing.real_name),
+        req.real_name.and_then(empty_to_none).or(existing.real_name),
         req.id_doc_type
             .as_deref()
             .and_then(|v| {
@@ -620,19 +621,22 @@ async fn update_kyc_record(
 
     let is_default = match req.is_default {
         Some(true) => {
-            let _ = sqlx::query(&state.db.format_query("UPDATE user_kyc SET is_default = FALSE WHERE user_id = ?"))
-                .bind(user_id)
-                .execute(&state.db.pool)
-                .await;
+            let _ = sqlx::query(
+                &state
+                    .db
+                    .format_query("UPDATE user_kyc SET is_default = FALSE WHERE user_id = ?"),
+            )
+            .bind(user_id)
+            .execute(&state.db.pool)
+            .await;
             true
         }
         Some(false) => false,
         None => existing.is_default,
     };
 
-    sqlx::query(
-        &state.db.format_query(
-            r#"UPDATE user_kyc SET
+    sqlx::query(&state.db.format_query(
+        r#"UPDATE user_kyc SET
                 kyc_type = ?,
                 status = ?,
                 real_name = ?,
@@ -660,8 +664,7 @@ async fn update_kyc_record(
                 submitted_at = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND user_id = ?"#,
-        ),
-    )
+    ))
     .bind(&kyc_type)
     .bind(&status)
     .bind(&real_name)
@@ -807,7 +810,9 @@ pub async fn user_set_default_kyc(
     Extension(claims): Extension<auth::Claims>,
     Path(kyc_id): Path<i64>,
 ) -> AppResult<Json<UserKyc>> {
-    Ok(Json(set_kyc_default_record(&state, &claims.sub, kyc_id).await?))
+    Ok(Json(
+        set_kyc_default_record(&state, &claims.sub, kyc_id).await?,
+    ))
 }
 
 /// 用户提交实名/详细信息（个人实名与企业实名独立保存，互不覆盖，对应管理后台 2 条记录）
@@ -863,31 +868,38 @@ pub async fn submit_my_kyc(
     req.is_default = Some(should_be_default);
 
     let result = if let Some(existing) = existing_row {
-        update_kyc_record(&state, &claims.sub, existing.id, req, false, None, kyc_enabled).await?
+        update_kyc_record(
+            &state,
+            &claims.sub,
+            existing.id,
+            req,
+            false,
+            None,
+            kyc_enabled,
+        )
+        .await?
     } else {
         insert_kyc_record(&state, &claims.sub, req, false, None, kyc_enabled).await?
     };
 
     if should_be_default {
-        let _ = sqlx::query(
-            &state.db.format_query(
+        let _ =
+            sqlx::query(&state.db.format_query(
                 "UPDATE user_kyc SET is_default = FALSE WHERE user_id = ? AND id != ?",
-            ),
-        )
-        .bind(&claims.sub)
-        .bind(result.id)
-        .execute(&state.db.pool)
-        .await;
+            ))
+            .bind(&claims.sub)
+            .bind(result.id)
+            .execute(&state.db.pool)
+            .await;
 
-        let _ = sqlx::query(
-            &state.db.format_query(
+        let _ =
+            sqlx::query(&state.db.format_query(
                 "UPDATE user_kyc SET is_default = TRUE WHERE user_id = ? AND id = ?",
-            ),
-        )
-        .bind(&claims.sub)
-        .bind(result.id)
-        .execute(&state.db.pool)
-        .await;
+            ))
+            .bind(&claims.sub)
+            .bind(result.id)
+            .execute(&state.db.pool)
+            .await;
     }
 
     fetch_kyc_by_id(&state, &claims.sub, result.id)
@@ -931,7 +943,16 @@ pub async fn admin_update_user_kyc_item(
     crate::admin_permission::require_edit(&ctx, "users.list")?;
     let user_id = resolve_user_id(&state, &user_id).await?;
     Ok(Json(
-        update_kyc_record(&state, &user_id, kyc_id, req, true, Some(&claims.username), true).await?,
+        update_kyc_record(
+            &state,
+            &user_id,
+            kyc_id,
+            req,
+            true,
+            Some(&claims.username),
+            true,
+        )
+        .await?,
     ))
 }
 
@@ -960,7 +981,9 @@ pub async fn admin_set_default_user_kyc(
 ) -> AppResult<Json<UserKyc>> {
     crate::admin_permission::require_edit(&ctx, "users.list")?;
     let user_id = resolve_user_id(&state, &user_id).await?;
-    Ok(Json(set_kyc_default_record(&state, &user_id, kyc_id).await?))
+    Ok(Json(
+        set_kyc_default_record(&state, &user_id, kyc_id).await?,
+    ))
 }
 
 /// 管理员保存/审核用户实名（兼容旧接口：传 id 则更新，未传按类型更新或新增）
@@ -977,8 +1000,16 @@ pub async fn admin_upsert_user_kyc(
     if let Some(kyc_id) = req.id {
         if kyc_id > 0 {
             return Ok(Json(
-                update_kyc_record(&state, &user_id, kyc_id, req, true, Some(&claims.username), true)
-                    .await?,
+                update_kyc_record(
+                    &state,
+                    &user_id,
+                    kyc_id,
+                    req,
+                    true,
+                    Some(&claims.username),
+                    true,
+                )
+                .await?,
             ));
         }
     }
@@ -1097,29 +1128,38 @@ pub async fn upload_kyc_document(
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .take(40)
         .collect::<String>();
-    let object_key = format!(
-        "kyc/{}/{}_{}.{}",
-        target_user_id,
-        if safe_field.is_empty() {
-            "doc"
-        } else {
-            &safe_field
-        },
-        chrono::Utc::now().timestamp_millis(),
-        ext
+    let target_uid: String = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT uid FROM users WHERE id = ? OR uid = ?"),
+    )
+    .bind(&target_user_id)
+    .bind(&target_user_id)
+    .fetch_optional(&state.db.pool)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("用户不存在".to_string()))?;
+    let object_key = tos_config.user_key(
+        &target_uid,
+        crate::services::object_store::UserFolder::Kyc,
+        &format!(
+            "{}_{}.{}",
+            if safe_field.is_empty() {
+                "doc"
+            } else {
+                &safe_field
+            },
+            chrono::Utc::now().timestamp_millis(),
+            ext
+        ),
     );
 
-    let file_url = tos_config.upload_file(
-        &object_key,
-        data.to_vec(),
-        &mime_type,
-        None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::warn!("KYC TOS upload failed: {}", e);
-        AppError::Internal("证件上传失败，请稍后重试".to_string())
-    })?;
+    let file_url = tos_config
+        .upload_file(&object_key, data.to_vec(), &mime_type, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!("KYC TOS upload failed: {}", e);
+            AppError::Internal("证件上传失败，请稍后重试".to_string())
+        })?;
 
     Ok(Json(serde_json::json!({
         "file_url": file_url,

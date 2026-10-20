@@ -43,6 +43,7 @@ pub async fn generic_relay(
     OriginalUri(uri): OriginalUri,
     Json(body): Json<serde_json::Value>,
 ) -> AppResult<Response> {
+    let req_start = std::time::Instant::now();
     let raw_path = uri.path();
     let entry_path = raw_path.to_string();
     let category = infer_category(raw_path);
@@ -60,12 +61,12 @@ pub async fn generic_relay(
     let ctx = proxy::get_user_context(&state, &token.user_id).await?;
 
     // ── 3. 渠道选择 + HA failover ──
-    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability).await;
+    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability, req_start).await;
     let mut billing_rule_cache = None;
     let mut access_cache = None;
 
     while ha.cont() {
-        let start_time = std::time::Instant::now();
+        let attempt_start = std::time::Instant::now();
         let mut ha_pool = None;
         let channel = match proxy::select_channel_for_model(
             &state,
@@ -128,7 +129,12 @@ pub async fn generic_relay(
             None => {
                 if forward::model_has_forward_rules(&state, model).await {
                     let err = forward::record_unsupported_forward_error(
-                        &state, &token, &channel, model, raw_path, &resolved_cat,
+                        &state,
+                        &token,
+                        &channel,
+                        model,
+                        raw_path,
+                        &resolved_cat,
                     )
                     .await;
                     ha.on_access_err(err);
@@ -243,7 +249,7 @@ pub async fn generic_relay(
                 let resp = match timeout_ctx.send(builder, false).await {
                     Ok(resp) => resp,
                     Err(err_msg) => {
-                        let latency_ms = start_time.elapsed().as_millis() as u32;
+                        let latency_ms = attempt_start.elapsed().as_millis() as u32;
                         let bill = crate::relay::ha::FailBill::transport(
                             latency_ms,
                             err_msg,
@@ -258,7 +264,7 @@ pub async fn generic_relay(
                 if !resp.status().is_success() {
                     let upstream_hdrs = resp.headers().clone();
                     let err = resp.text().await.unwrap_or_default();
-                    let latency_ms = start_time.elapsed().as_millis() as u32;
+                    let latency_ms = attempt_start.elapsed().as_millis() as u32;
                     let bill = crate::relay::ha::FailBill::http(
                         latency_ms,
                         status,
@@ -286,7 +292,7 @@ pub async fn generic_relay(
                 );
                 resp_text = converted;
                 if let Some(err_response) = post_err {
-                    let latency_ms = start_time.elapsed().as_millis() as u32;
+                    let latency_ms = attempt_start.elapsed().as_millis() as u32;
                     let bill = crate::relay::ha::FailBill::biz(
                         latency_ms,
                         resp_text,
@@ -308,7 +314,7 @@ pub async fn generic_relay(
                     &model,
                     pre_deduction,
                     &ep,
-                    start_time,
+                    req_start,
                     0,
                     &request_content_str,
                     &upstream_body.to_string(),
@@ -321,16 +327,19 @@ pub async fn generic_relay(
 
                 // 提取 usage tokens
                 let mut usage = usage_extractor::parse_usage(&resp_text);
-                // 差额修正：部分 rerank 模型（如阿里 qwen3-vl-rerank）返回的 total_tokens 大于 input_tokens，
-                // 或部分模型仅返回 total_tokens。为确保以 total_tokens 作为总消耗准确计费，
-                // 当 total 大于已知输入输出之和时，将差额统一补入 prompt 用量中。
-                let known_sum = (usage.prompt + usage.completion).max(usage.image_tokens + usage.completion);
+                // 向量化/重排端点以输入文本为主：若仅返回 total_tokens（被 parse_usage 归入 completion），在此调换为 prompt
+                if usage.prompt == 0 && usage.completion > 0 {
+                    usage.prompt = usage.completion;
+                    usage.completion = 0;
+                }
+                let known_sum =
+                    (usage.prompt + usage.completion).max(usage.image_tokens + usage.completion);
                 if usage.total > known_sum {
                     usage.prompt = (usage.total - usage.completion).max(usage.prompt);
                 }
 
                 // ── 计费结算 ──
-                let latency_ms = start_time.elapsed().as_millis() as u32;
+                let latency_ms = req_start.elapsed().as_millis() as u32;
                 let mut features = usage_extractor::ExtractedFeatures::default();
 
                 let (cost, billing_detail) = crate::relay::calculate_relay_cost(
@@ -368,7 +377,9 @@ pub async fn generic_relay(
                     features: Some(features),
                     time_multiplier: db_rule.as_ref().map(|r| r.applied_multiplier),
                     plugin_tag: None,
-                    upstream_request_id: upstream_headers::extract_upstream_request_id(&upstream_hdrs),
+                    upstream_request_id: upstream_headers::extract_upstream_request_id(
+                        &upstream_hdrs,
+                    ),
                 })
                 .await;
 
@@ -381,13 +392,10 @@ pub async fn generic_relay(
             .db(db_model.as_ref());
         match super::join_protected(&mut ha, result_rx, &bill_ctx, &channel, Some(&url)).await {
             super::ProtectJoin::Ok(raw) => {
-                let ms = start_time.elapsed().as_millis() as u32;
+                let ms = attempt_start.elapsed().as_millis() as u32;
                 ha.ok(&state, &channel, &url, ms).await;
                 return Ok(upstream_headers::with_request_id(
-                    upstream_headers::json_with_upstream_headers(
-                        &raw.headers,
-                        raw.body,
-                    ),
+                    upstream_headers::json_with_upstream_headers(&raw.headers, raw.body),
                     &log_id,
                 ));
             }

@@ -59,6 +59,7 @@
   "about_stat_developers": "全球活躍開發者",
   "about_stat_providers": "模型供應商",
   "about_stat_models": "集成前沿模型",
+  "about_press_title": "統一大模型接口體驗，讓接入 AI 零負擔",
   "about_press_title_prefix": "統一大模型接口體驗，",
   "about_press_title_suffix": " 讓接入 AI 零負擔",
   "about_press_desc": "旨在成爲開發者接入、對比、調用不同 AI 模型的首選聚合網關。只需一次接入，即可全量訪問數百個前沿模型。",

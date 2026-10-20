@@ -50,10 +50,10 @@ fn build_task_log_where(
         match at.as_str() {
             "chat" => where_clause.push_str(" AND l.action_type = '聊天'"),
             "image" | "图片" => {
-                where_clause.push_str(" AND l.action_type = ANY(ARRAY['图片','图像增强'])")
+                where_clause.push_str(" AND (l.action_type = '图片' OR (l.action_type = '封装' AND l.endpoint LIKE '%image%'))")
             }
             "video" | "视频" => {
-                where_clause.push_str(" AND l.action_type = ANY(ARRAY['视频','视频增强'])")
+                where_clause.push_str(" AND (l.action_type = '视频' OR (l.action_type = '封装' AND l.endpoint NOT LIKE '%image%'))")
             }
             "vision" | "视觉" => where_clause.push_str(SQL_VISION_ACTION_FILTER),
             "other" => where_clause.push_str(" AND l.action_type = '其它'"),
@@ -163,7 +163,7 @@ pub async fn list_task_logs(
             "SELECT l.id, l.log_id, l.user_id, l.channel_id, l.model, l.endpoint, \
              l.prompt_tokens, l.completion_tokens, l.cached_tokens, l.cost, l.latency_ms, l.status_code, \
              l.error_message, l.upstream_request_id, \
-             CASE WHEN l.action_type IN ('图片','视频','视频增强','图像增强') THEN l.response_content ELSE NULL END AS response_content, \
+             CASE WHEN l.action_type IN ('图片','视频','封装') THEN l.response_content ELSE NULL END AS response_content, \
              {SQL_BILLING_SETTLE_FLAGS}, \
              c.name AS channel_name, c.group_aid AS channel_group_aid, \
              COALESCE(u.nickname, u.username) AS user_nickname, u.uid AS user_uid, \
@@ -259,12 +259,12 @@ struct ExportRow {
     id: i64,
     user_id: String,
     model: String,
-    prompt_tokens: i32,
-    completion_tokens: i32,
-    cached_tokens: i32,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    cached_tokens: i64,
     cost: f64,
-    latency_ms: i32,
-    status_code: i32,
+    latency_ms: i64,
+    status_code: i64,
     action_type: Option<String>,
     task_id: Option<String>,
     billing_detail: Option<String>,
@@ -327,7 +327,10 @@ pub async fn export_task_logs(
             r.id,
             r.user_id,
             r.user_uid.as_deref().unwrap_or("-"),
-            r.user_nickname.as_deref().unwrap_or("-").replace('"', "\"\""),
+            r.user_nickname
+                .as_deref()
+                .unwrap_or("-")
+                .replace('"', "\"\""),
             r.model.replace('"', "\"\""),
             r.action_type.as_deref().unwrap_or("-"),
             r.task_id.as_deref().unwrap_or("-"),
@@ -337,7 +340,10 @@ pub async fn export_task_logs(
             crate::money::format_clean_money(r.cost),
             r.latency_ms,
             r.status_code,
-            r.billing_detail.as_deref().unwrap_or("").replace('"', "\"\""),
+            r.billing_detail
+                .as_deref()
+                .unwrap_or("")
+                .replace('"', "\"\""),
             formatted_time,
         ));
     }
@@ -363,13 +369,25 @@ pub async fn cancel_task_log(
     Extension(claims): Extension<auth::Claims>,
     axum::extract::Path(log_id): axum::extract::Path<String>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let row: Option<(i64, String, String, i64, Option<String>, String, Option<i32>)> = sqlx::query_as(
+    type CancelTaskLogRow = (
+        i64,
+        String,
+        String,
+        i64,
+        Option<String>,
+        String,
+        Option<i64>,
+        f64,
+        f64,
+        Option<i64>,
+    );
+    let row: Option<CancelTaskLogRow> = sqlx::query_as(
         &state.db.format_query(
-            "SELECT id, user_id, COALESCE(task_id, ''), channel_id, billing_detail, COALESCE(upstream_url, ''), channel_config_id FROM logs WHERE log_id = ?"
+            "SELECT id, user_id, COALESCE(task_id, ''), channel_id, billing_detail, COALESCE(upstream_url, ''), channel_config_id, cost, pre_deduct_gift, token_id FROM logs WHERE log_id = ?"
         )
     ).bind(&log_id).fetch_optional(&state.db.pool).await?;
 
-    let (id, user_id, task_id, channel_id, billing_detail, upstream_url, log_cfg_id) = match row {
+    let (id, user_id, task_id, channel_id, billing_detail, upstream_url, log_cfg_id, pre_deduction, pre_deduct_gift, token_id_opt) = match row {
         Some(r) => r,
         None => return Err(AppError::BadRequest("日志记录不存在".to_string())),
     };
@@ -394,9 +412,7 @@ pub async fn cancel_task_log(
     }
 
     if !upstream_url.contains("contents/generations") {
-        return Err(AppError::BadRequest(
-            "此任务不支持取消操作".to_string(),
-        ));
+        return Err(AppError::BadRequest("此任务不支持取消操作".to_string()));
     }
 
     let is_frozen = billing_detail
@@ -433,8 +449,8 @@ pub async fn cancel_task_log(
         .await
         .map_err(|e| AppError::UpstreamError(format!("请求上游失败: {}", e)))?;
 
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
+    let status = resp.status().as_u16();
+    if !resp.status().is_success() && status != 404 {
         let err_body = resp.text().await.unwrap_or_default();
         tracing::warn!(
             "[CancelTaskLog] 上游返回错误 status={}, body={}",
@@ -453,26 +469,18 @@ pub async fn cancel_task_log(
         return Err(AppError::UpstreamError(detail));
     }
 
-    let log_data: Option<(f64, f64, Option<i64>, Option<i64>, Option<i32>)> =
-        sqlx::query_as(&state.db.format_query(
-            "SELECT cost, pre_deduct_gift, token_id, channel_id, channel_config_id FROM logs WHERE id = ?",
-        ))
-        .bind(id)
-        .fetch_optional(&state.db.pool)
-        .await
-        .unwrap_or(None);
-
-    let (pre_deduction, pre_deduct_gift, token_id_opt, channel_id_opt, channel_config_id_opt) =
-        log_data.unwrap_or((0.0, 0.0, None, None, None));
+    let failure_meta = crate::relay::task::SettleFailureMeta {
+        cost: pre_deduction,
+        pre_deduct_gift,
+        user_id: &user_id,
+        token_id: token_id_opt,
+        channel_id: Some(channel_id),
+        channel_config_id: log_cfg_id,
+    };
     crate::relay::task::execute_refund_tx(
         &state,
         id,
-        &user_id,
-        token_id_opt,
-        channel_id_opt,
-        channel_config_id_opt,
-        pre_deduction,
-        pre_deduct_gift,
+        &failure_meta,
         "用户主动取消任务，预扣费已退回",
         499,
         Some("用户主动取消任务"),

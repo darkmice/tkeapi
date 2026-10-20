@@ -8,11 +8,12 @@
 import React, { useState, useEffect, useRef, Suspense, useMemo } from 'react';
 import { Typography, Switch, Button, Checkbox, Divider, Spin, Tag, Tabs, Input, InputNumber, Form, Space, Alert, Select, Table, Drawer, Radio, App, Segmented, Modal, Tooltip, Row, Col, Popconfirm } from 'antd';
 import { AppMessageBridge } from '../../components/AppMessageBridge';
-import { EyeOutlined, ArrowLeftOutlined, SaveOutlined, PictureOutlined, AppstoreOutlined, CloudServerOutlined, ApiOutlined, CheckCircleOutlined, LoadingOutlined, CloseCircleOutlined, SendOutlined, TeamOutlined, ExperimentOutlined, SettingOutlined, VideoCameraOutlined, PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, ShopOutlined, MessageOutlined, ReloadOutlined, HomeOutlined, ThunderboltOutlined, InfoCircleOutlined, BookOutlined, QuestionCircleOutlined, SafetyCertificateOutlined, TagsOutlined, SearchOutlined, CheckOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, AudioOutlined, MobileOutlined } from '@ant-design/icons';
+import { EyeOutlined, ArrowLeftOutlined, SaveOutlined, PictureOutlined, AppstoreOutlined, CloudServerOutlined, ApiOutlined, CheckCircleOutlined, LoadingOutlined, CloseCircleOutlined, SendOutlined, TeamOutlined, ExperimentOutlined, SettingOutlined, VideoCameraOutlined, PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, ShopOutlined, MessageOutlined, ReloadOutlined, HomeOutlined, ThunderboltOutlined, InfoCircleOutlined, BookOutlined, QuestionCircleOutlined, SafetyCertificateOutlined, TagsOutlined, SearchOutlined, CheckOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, AudioOutlined, MobileOutlined, CreditCardOutlined, CustomerServiceOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import request from '../../utils/request';
 import { invalidateAdminPluginsCache } from '../../utils/adminPlugins';
 import { invalidateActivePluginsCache } from '../../utils/activePlugins';
+import { invalidateCoalesce } from '../../utils/coalesceAsync';
 import { getPluginAdminTabs, resolvePluginAdminDefaultTab } from '../../utils/pluginAdminTabs';
 import { modelMatchesKeyword } from '../../utils/modelKeywordMatch';
 import { buildClassificationParams } from '../../utils/classificationParams';
@@ -28,16 +29,16 @@ import {
   PortalManager,
   PortalStyleSelection,
   PortalManagerPro,
+  PortalArticleManagerPro,
   PortalStyleSelectionPro,
   PortalDocsManager,
-  PortalAboutManagerPro,
-  PortalContactManagerPro,
   DocsManager,
   ApiAccessConfig,
   HaLogs,
   PlaygroundSkillConfigTab,
   PlaygroundChatConfigTab,
   PlaygroundPromptOptimizeConfigTab,
+  PlaygroundErrorMappingConfigTab,
   PlaygroundImageEditConfigTab,
   PlaygroundVideoEditConfigTab,
   PlaygroundDemoImageConfig,
@@ -52,7 +53,7 @@ import ModelIoOverridesEditor from './components/ModelIoOverridesEditor';
 import { validateSchemeIoForSave } from './components/scheme/schemeIo';
 import { SCHEME_QUICK_BAR_HELP, SCHEME_QUICK_BAR_MAX, countQuickBarEnabled, isQuickBarEligible } from './components/scheme/schemeQuickBar';
 import { formatChoiceLabel, formatParamLabel, isCountParam, isSingleCountParam } from './components/scheme/schemeParamUtils';
-import { CHAT_UNDERSTAND_ATTRS, featureKindFromTypeName, parseFeatureAttrList, videoGenerationModesFromScheme } from './components/scheme/modelFeatures';
+import { CHAT_UNDERSTAND_ATTRS, featureKindFromTypeName, imageFeatureOptions, normalizeImageFeatureAttrs, parseFeatureAttrList, videoGenerationModesFromScheme } from './components/scheme/modelFeatures';
 import { CHAT_INPUT_PROTOCOLS, CHAT_THINKING_PROFILES } from './components/scheme/chatProtocol';
 import { chatProtocolSelectLabel } from './components/scheme/ChatProtocolHelpMark';
 import FeatureAttributesEditor from './components/scheme/FeatureAttributesEditor';
@@ -358,28 +359,49 @@ const pluginIcons: Record<string, React.ReactNode> = {
   comfyui_bridge: <VideoCameraOutlined style={{ fontSize: 20 }} />,
   content_security: <SafetyCertificateOutlined style={{ fontSize: 20 }} />,
   mobile_app: <MobileOutlined style={{ fontSize: 20 }} />,
+  marketing_membership: <CreditCardOutlined style={{ fontSize: 20 }} />,
+  support_tickets: <CustomerServiceOutlined style={{ fontSize: 20 }} />,
+  logs_archive: <HistoryOutlined style={{ fontSize: 20 }} />,
 };
+
+/** 与后端 `MP_GUEST_LEVEL_ID` 一致：未登录游客，不是真实 user_levels 行。 */
+const MP_GUEST_LEVEL_ID = -1;
+const MP_GUEST_LEVEL_NAME = '未登录游客';
+
+const normalizeMpLevelId = (v: number | string): number | string =>
+  typeof v === 'string' && /^-?\d+$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : v;
 
 const MpLevelSelectCell: React.FC<{
   record: any;
   levels: UserLevel[];
   _isLight: boolean;
-  onChange: (id: number, vals: number[]) => void;
-}> = React.memo(({ record, levels, _isLight, onChange }) => {
+  showInactiveWarning?: boolean;
+  onToggle: (id: number | string, enabled: boolean) => void;
+  onChange: (id: number | string, vals: (number | string)[]) => void;
+}> = React.memo(({ record, levels, _isLight, showInactiveWarning, onToggle, onChange }) => {
+  const { t: tr } = useTranslation('playground_2026');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const isMpEnabled = !!record.mp_enabled;
+  const isModelDisabled = showInactiveWarning && Number(record.is_active) !== 1;
+  const guestLevelName = tr('admin_mp_guest_level', MP_GUEST_LEVEL_NAME);
 
   const selectedLevels = useMemo(() => {
-    const ids: number[] = record.mp_level_ids || [];
+    const ids: (number | string)[] = record.mp_level_ids || [];
     return ids.map(id => {
-      const found = levels.find(l => l.id === id);
+      if (String(id) === String(MP_GUEST_LEVEL_ID)) {
+        return { id, name: guestLevelName };
+      }
+      const found = levels.find(l => String(l.id) === String(id));
       return { id, name: found ? found.name : `ID: ${id}` };
     });
-  }, [record.mp_level_ids, levels]);
+  }, [record.mp_level_ids, levels, guestLevelName]);
 
   const tooltipTitle = selectedLevels.length > 0 ? (
     <div style={{ maxWidth: 300, padding: '2px 0' }}>
       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: 'rgba(255,255,255,0.95)' }}>
-        {record.mp_enabled ? '不可查看' : '可查看'}的用户等级 (共 {selectedLevels.length} 项)：
+        {isMpEnabled
+          ? tr('admin_mp_unviewable_levels', { count: selectedLevels.length, defaultValue: `不可查看的用户等级 (共 ${selectedLevels.length} 项)：` })
+          : tr('admin_mp_viewable_levels', { count: selectedLevels.length, defaultValue: `可查看的用户等级 (共 ${selectedLevels.length} 项)：` })}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 180, overflowY: 'auto' }}>
         {selectedLevels.map(lv => (
@@ -407,12 +429,32 @@ const MpLevelSelectCell: React.FC<{
       placement="topLeft"
       {...(isDropdownOpen ? { open: false } : {})}
     >
-      <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', marginBottom: 4 }}>
-          <span>{record.mp_enabled ? '不可查看' : '可查看'}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Tooltip title={isModelDisabled ? tr('admin_mp_model_disabled_tip', '模型已被禁用，即使开启也不会在广场中显示') : ''}>
+              <Switch
+                size="small"
+                checked={isMpEnabled}
+                onChange={(val) => onToggle(record.id, val)}
+                style={isModelDisabled ? { opacity: 0.5 } : {}}
+              />
+            </Tooltip>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 500,
+                color: isMpEnabled
+                  ? (_isLight ? 'rgba(0,0,0,0.65)' : 'rgba(255,255,255,0.65)')
+                  : (_isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)'),
+              }}
+            >
+              {isMpEnabled ? tr('admin_mp_on_unviewable', '开启 · 不可查看等级') : tr('admin_mp_off_viewable', '关闭 · 可查看等级')}
+            </span>
+          </div>
           {selectedLevels.length > 0 && (
-            <span style={{ color: _isLight ? '#1677ff' : '#4096ff', fontSize: 11, fontWeight: 500 }}>
-              已选 {selectedLevels.length} 项
+            <span style={{ color: _isLight ? '#1677ff' : '#4096ff', fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>
+              {tr('admin_mp_selected_count', { count: selectedLevels.length, defaultValue: `已选 ${selectedLevels.length} 项` })}
             </span>
           )}
         </div>
@@ -424,11 +466,14 @@ const MpLevelSelectCell: React.FC<{
           optionFilterProp="label"
           maxTagCount="responsive"
           maxTagPlaceholder={(omittedValues) => `+${omittedValues.length}...`}
-          placeholder={record.mp_enabled ? '默认全部可查看' : '默认全部不可查看'}
+          placeholder={isMpEnabled ? tr('admin_mp_ph_on', '默认全部可查看（可选不可看等级）') : tr('admin_mp_ph_off', '默认全部不可查看（可选可看等级）')}
           value={record.mp_level_ids || []}
           onOpenChange={setIsDropdownOpen}
-          onChange={(vals: number[]) => onChange(record.id, vals)}
-          options={levels.map(lv => ({ label: lv.name, value: lv.id }))}
+          onChange={(vals: (number | string)[]) => onChange(record.id, vals.map(normalizeMpLevelId))}
+          options={[
+            { label: guestLevelName, value: MP_GUEST_LEVEL_ID },
+            ...levels.map(lv => ({ label: lv.name, value: lv.id })),
+          ]}
           style={{ width: '100%' }}
         />
       </div>
@@ -533,9 +578,21 @@ const PluginConfigInner: React.FC = () => {
     setActiveTabKey(tabs[0]?.key ?? 'basic');
   }, [name, location.hash, t]);
 
+  // 栏目文章重置计数器（点击或切换到「栏目文章」Tab 时，重置到默认初始页面：栏目分类管理）
+  const [articleTabResetKey, setArticleTabResetKey] = useState(0);
+
+  const handleTabClick = (key: string) => {
+    if (key === 'article_manager') {
+      setArticleTabResetKey(prev => prev + 1);
+    }
+  };
+
   const handleTabChange = (key: string) => {
     setActiveTabKey(key);
     window.location.hash = key;
+    if (key === 'article_manager') {
+      setArticleTabResetKey(prev => prev + 1);
+    }
   };
 
   // 审核配置
@@ -643,7 +700,7 @@ const PluginConfigInner: React.FC = () => {
     try {
       const res = await (request.get(`/plugins/${name}/marketplace-models`) as Promise<any>);
       if (res.models) {
-        const sorted = [...res.models].sort((a, b) => (b.mp_sort_order || 0) - (a.mp_sort_order || 0));
+        const sorted = [...res.models].sort((a, b) => (Number(b.mp_sort_order) || 0) - (Number(a.mp_sort_order) || 0));
         setMpModels(sorted);
       }
       if (res.display_mode) setMpDisplayMode(res.display_mode);
@@ -665,16 +722,17 @@ const PluginConfigInner: React.FC = () => {
     }
   }, [name]);
 
-  const modelSortTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const modelSortTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const persistModelPageSort = async (id: number, sort: number) => {
+  const persistModelPageSort = async (id: number | string, sort: number) => {
     await request.put(`/models/${id}`, { sort_order: sort });
   };
 
-  const persistModelPageSortDebounced = (id: number, sort: number) => {
-    const prev = modelSortTimers.current[id];
+  const persistModelPageSortDebounced = (id: number | string, sort: number) => {
+    const key = String(id);
+    const prev = modelSortTimers.current[key];
     if (prev) clearTimeout(prev);
-    modelSortTimers.current[id] = setTimeout(() => {
+    modelSortTimers.current[key] = setTimeout(() => {
       persistModelPageSort(id, sort).catch((e) => {
         console.error(e);
         message.error('排序保存失败');
@@ -683,15 +741,15 @@ const PluginConfigInner: React.FC = () => {
   };
 
   const flushPendingModelPageSorts = async () => {
-    const pendingIds = Object.keys(modelSortTimers.current).map(Number);
+    const pendingIds = Object.keys(modelSortTimers.current);
     for (const timer of Object.values(modelSortTimers.current)) {
       clearTimeout(timer);
     }
     modelSortTimers.current = {};
     await Promise.all(pendingIds.map((id) => {
-      const row = mpModels.find((x) => x.id === id);
+      const row = mpModels.find((x) => String(x.id) === String(id));
       if (!row) return Promise.resolve();
-      return persistModelPageSort(id, row.mp_sort_order || 0);
+      return persistModelPageSort(id, Number(row.mp_sort_order) || 0);
     }));
   };
 
@@ -704,15 +762,16 @@ const PluginConfigInner: React.FC = () => {
         allow_guest: mpAllowGuest,
         trending_config: mpTrendingConfig,
         models: mpModels.map(m => ({
-          id: m.id,
-          enabled: m.mp_enabled,
-          sort_order: m.mp_sort_order || 0,
+          id: typeof m.id === 'string' && /^\d+$/.test(m.id) && Number.isSafeInteger(Number(m.id)) ? Number(m.id) : m.id,
+          enabled: !!m.mp_enabled,
+          sort_order: Number(m.mp_sort_order) || 0,
           description: m.mp_description || '',
           description_en: m.mp_description_en || '',
-          level_ids: m.mp_level_ids || []
+          level_ids: (m.mp_level_ids || []).map((lv: any) => normalizeMpLevelId(lv))
         }))
       };
       await request.post(`/plugins/${name}/marketplace-models`, payload);
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
       message.success('模型广场配置保存成功');
     } catch (e) {
       console.error(e);
@@ -721,38 +780,61 @@ const PluginConfigInner: React.FC = () => {
     }
   };
 
-  const handleMpToggle = async (id: number, enabled: boolean) => {
-    const target = mpModels.find(m => m.id === id);
+  const handleMpToggle = async (id: number | string, enabled: boolean) => {
+    const target = mpModels.find(m => String(m.id) === String(id)) || pgModels.find(m => String(m.id) === String(id));
     const prevLevelIds = target?.mp_level_ids || [];
-    setMpModels(prev => prev.map(m => m.id === id ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
+    setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
+    setPgModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
     try {
-      await request.post(`/plugins/${name}/marketplace-models/toggle`, {
+      await request.post('/plugins/model_marketplace/marketplace-models/toggle', {
         id,
         enabled,
-        sort_order: target?.mp_sort_order,
+        sort_order: Number(target?.mp_sort_order ?? target?.pg_sort_order) || 0,
         description: target?.mp_description,
         description_en: target?.mp_description_en,
       });
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
       message.success(enabled ? '已开启广场展示' : '已关闭广场展示');
     } catch (e) {
       console.error(e);
       message.error('切换广场展示状态失败');
-      setMpModels(prev => prev.map(m => m.id === id ? { ...m, mp_enabled: !enabled, mp_level_ids: prevLevelIds } : m));
+      setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_enabled: !enabled, mp_level_ids: prevLevelIds } : m));
+      setPgModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_enabled: !enabled, mp_level_ids: prevLevelIds } : m));
     }
   };
 
-  const handleMpLevelIdsChange = (id: number, levelIds: number[]) => {
-    setMpModels(prev => prev.map(m => m.id === id ? { ...m, mp_level_ids: levelIds } : m));
+  const handleMpLevelIdsChange = async (id: number | string, levelIds: (number | string)[]) => {
+    const normalized = (levelIds || []).map((lv: any) => normalizeMpLevelId(lv));
+    const target = mpModels.find(m => String(m.id) === String(id)) || pgModels.find(m => String(m.id) === String(id));
+    const prevLevelIds = target?.mp_level_ids || [];
+    setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_level_ids: normalized } : m));
+    setPgModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_level_ids: normalized } : m));
+    try {
+      await request.post('/plugins/model_marketplace/marketplace-models/toggle', {
+        id,
+        enabled: !!target?.mp_enabled,
+        level_ids: normalized,
+        sort_order: Number(target?.mp_sort_order ?? target?.pg_sort_order) || 0,
+        description: target?.mp_description,
+        description_en: target?.mp_description_en,
+      });
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
+    } catch (e) {
+      console.error(e);
+      message.error('更新用户等级失败');
+      setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_level_ids: prevLevelIds } : m));
+      setPgModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_level_ids: prevLevelIds } : m));
+    }
   };
 
-  const handleMpSortChange = (id: number, sort: number) => {
-    setMpModels(prev => prev.map(m => m.id === id ? { ...m, mp_sort_order: sort } : m));
+  const handleMpSortChange = (id: number | string, sort: number) => {
+    setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, mp_sort_order: sort } : m));
     persistModelPageSortDebounced(id, sort);
   };
 
-  const handleMpDescChange = (id: number, desc: string, language: 'zh' | 'en' = 'zh') => {
+  const handleMpDescChange = (id: number | string, desc: string, language: 'zh' | 'en' = 'zh') => {
     const field = language === 'en' ? 'mp_description_en' : 'mp_description';
-    setMpModels(prev => prev.map(m => m.id === id ? { ...m, [field]: desc } : m));
+    setMpModels(prev => prev.map(m => String(m.id) === String(id) ? { ...m, [field]: desc } : m));
   };
 
   const fetchPlaygroundConfigBase = async () => {
@@ -770,7 +852,9 @@ const PluginConfigInner: React.FC = () => {
         setPgModelTypes(res.model_types.map((t: any) => ({
           id: t.id,
           name: t.name || '',
-          default_features: parseFeatureAttrList(t.default_features),
+          default_features: (t.name || '').includes('图片')
+            ? imageFeatureOptions(parseFeatureAttrList(t.default_features))
+            : parseFeatureAttrList(t.default_features),
         })));
       }
       if (res.default_model_mids) {
@@ -927,6 +1011,7 @@ const PluginConfigInner: React.FC = () => {
     try {
       setSavingHa(true);
       await request.post(`/plugins/${name}/ha-config`, { def: haDef, rules: nextRules });
+      await request.post(`/plugins/${name}/ha-runtime/clear`);
       message.success(haDraftIsNew ? '新建高可用规则成功' : '编辑高可用规则成功');
       setHaRules(nextRules);
       setHaDraft(null);
@@ -965,6 +1050,7 @@ const PluginConfigInner: React.FC = () => {
     try {
       setSavingHa(true);
       await request.post(`/plugins/${name}/ha-config`, { def: haDef, rules: nextRules });
+      await request.post(`/plugins/${name}/ha-runtime/clear`);
       message.success('复制规则成功');
       setHaRules(nextRules);
       setHaCopySource(null);
@@ -981,6 +1067,7 @@ const PluginConfigInner: React.FC = () => {
     try {
       setSavingHa(true);
       await request.post(`/plugins/${name}/ha-config`, { def: id, rules: haRules });
+      await request.post(`/plugins/${name}/ha-runtime/clear`);
       setHaDef(id);
       message.success('已设为默认规则');
       await fetchHaConfigBase();
@@ -1004,6 +1091,7 @@ const PluginConfigInner: React.FC = () => {
     try {
       setSavingHa(true);
       await request.post(`/plugins/${name}/ha-config`, { def: haDef, rules: nextRules });
+      await request.post(`/plugins/${name}/ha-runtime/clear`);
       setHaRules(nextRules);
       message.success('删除规则成功');
       await fetchHaConfigBase();
@@ -1090,6 +1178,10 @@ const PluginConfigInner: React.FC = () => {
     ...(name === 'playground_2026' && pgSchemes.find((s: any) => s.id === m.pg_scheme_id)?.type === 'audio' ? {
       voice_library: m.pg_voice_library && typeof m.pg_voice_library === 'object' ? m.pg_voice_library : null,
     } : {}),
+    ...(name === 'playground_2026' ? {
+      ...(typeof m.mp_enabled === 'boolean' ? { mp_enabled: m.mp_enabled } : {}),
+      ...(Array.isArray(m.mp_level_ids) ? { mp_level_ids: m.mp_level_ids.map((lv: any) => normalizeMpLevelId(lv)) } : {}),
+    } : {}),
   }));
 
   /** 创作中心 2026：方案/调参/IO/特性确认后立刻落库，不再依赖「保存全部配置」 */
@@ -1103,6 +1195,7 @@ const PluginConfigInner: React.FC = () => {
         default_model_mids: extra?.defaultModelMids ?? pgDefaultModelMids,
         models: buildPlaygroundModelsPayload(nextModels),
       });
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
       message.success(extra?.successMessage || '已保存');
       return true;
     } catch (e) {
@@ -1159,6 +1252,7 @@ const PluginConfigInner: React.FC = () => {
             },
       };
       await request.post(`/plugins/${name}/playground-config`, payload);
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
       message.success('创作配置保存成功');
     } catch (e) {
       console.error(e);
@@ -1842,6 +1936,10 @@ function formatOptionLabelsDisplay(
   const { page: auditPage, pageSize: auditPageSize, setPage: setAuditPage, setPageSize: setAuditPageSize } = useListPager();
 
   useEffect(() => {
+    setApiLogs([]);
+    setApiLogsTotal(0);
+    setAuditLogs([]);
+    setExpandedAssetInfo({});
     fetchData();
   }, [name]);
 
@@ -2200,13 +2298,13 @@ function formatOptionLabelsDisplay(
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>启用状态</Text><br />
+            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>{pg2026T('admin_basic_enable_status', '启用状态')}</Text><br />
             <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>
-              {isSystemPlugin ? '开启后，有权限的管理员将在管理后台看到此插件' : '开启后，符合等级要求的用户将在菜单中看到此功能'}
+              {isSystemPlugin ? '开启后，有权限的管理员将在管理后台看到此插件' : pg2026T('admin_basic_enable_user_desc', '开启后，符合等级要求的用户将在菜单中看到此功能')}
             </Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tag color={isEnabled ? 'success' : 'default'} style={{ margin: 0 }}>{isEnabled ? '运行中' : '已停用'}</Tag>
+            <Tag color={isEnabled ? 'success' : 'default'} style={{ margin: 0 }}>{isEnabled ? pg2026T('admin_basic_status_running', '运行中') : pg2026T('admin_basic_status_stopped', '已停用')}</Tag>
             <Switch checked={isEnabled} onChange={handleToggle} />
           </div>
         </div>
@@ -2215,54 +2313,56 @@ function formatOptionLabelsDisplay(
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>左侧菜单显示</Text><br />
+            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>{pg2026T('admin_basic_left_menu', '左侧菜单显示')}</Text><br />
             <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>
-              开启后，管理后台「站点插件」下出现二级菜单，点击可直达本插件配置页。插件启用状态关闭时，此处开启也不会显示入口。
+              {pg2026T('admin_basic_left_menu_desc', '开启后，管理后台「站点插件」下出现二级菜单，点击可直达本插件配置页。插件启用状态关闭时，此处开启也不会显示入口。')}
             </Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Tag color={showInAdminMenu && isEnabled ? 'success' : 'default'} style={{ margin: 0 }}>
-              {showInAdminMenu ? (isEnabled ? '已开启' : '已开启（停用中不显示）') : '已关闭'}
+              {showInAdminMenu ? (isEnabled ? pg2026T('admin_enabled', '已开启') : pg2026T('admin_basic_enabled_hidden', '已开启（停用中不显示）')) : pg2026T('admin_disabled', '已关闭')}
             </Tag>
             <Switch checked={showInAdminMenu} onChange={setShowInAdminMenu} />
           </div>
         </div>
 
-        {showInAdminMenu && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 14 }}>
-            <div style={{ flex: '1 1 220px', minWidth: 180 }}>
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>左侧菜单名称</Text>
-              <Input
-                value={adminMenuTitle}
-                maxLength={64}
-                placeholder={plugin.title}
-                onChange={(e) => setAdminMenuTitle(e.target.value)}
-              />
-            </div>
-            <div style={{ flex: '1 1 200px', minWidth: 180 }}>
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>默认跳转 Tab</Text>
-              <Select
-                value={resolvePluginAdminDefaultTab(plugin.name, adminMenuDefaultTab, dynamicPlugins[plugin.name])}
-                onChange={setAdminMenuDefaultTab}
-                options={getPluginAdminTabs(plugin.name, dynamicPlugins[plugin.name], (k, fb) => t(k, { defaultValue: fb })).map((tab) => ({
-                  value: tab.key,
-                  label: tab.label,
-                }))}
-                style={{ width: '100%' }}
-              />
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 11, display: 'block', marginTop: 4 }}>点击左侧菜单后打开该 Tab，默认第一个</Text>
-            </div>
-            <div style={{ width: 160 }}>
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>排序权重</Text>
-              <InputNumber
-                value={adminMenuSort}
-                onChange={(v) => setAdminMenuSort(typeof v === 'number' ? v : 0)}
-                style={{ width: '100%' }}
-              />
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 11, display: 'block', marginTop: 4 }}>数字越大越靠前</Text>
-            </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 14 }}>
+          {showInAdminMenu && (
+            <>
+              <div style={{ flex: '1 1 220px', minWidth: 180 }}>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>{pg2026T('admin_basic_left_menu_title', '左侧菜单名称')}</Text>
+                <Input
+                  value={adminMenuTitle}
+                  maxLength={64}
+                  placeholder={plugin.title}
+                  onChange={(e) => setAdminMenuTitle(e.target.value)}
+                />
+              </div>
+              <div style={{ flex: '1 1 200px', minWidth: 180 }}>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>{pg2026T('admin_basic_default_tab', '默认跳转 Tab')}</Text>
+                <Select
+                  value={resolvePluginAdminDefaultTab(plugin.name, adminMenuDefaultTab, dynamicPlugins[plugin.name])}
+                  onChange={setAdminMenuDefaultTab}
+                  options={getPluginAdminTabs(plugin.name, dynamicPlugins[plugin.name], (k, fb) => t(k, { defaultValue: fb })).map((tab) => ({
+                    value: tab.key,
+                    label: tab.label,
+                  }))}
+                  style={{ width: '100%' }}
+                />
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 11, display: 'block', marginTop: 4 }}>{pg2026T('admin_basic_default_tab_hint', '点击左侧菜单后打开该 Tab，默认第一个')}</Text>
+              </div>
+            </>
+          )}
+          <div style={{ width: 160 }}>
+            <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 6 }}>{pg2026T('admin_basic_sort_weight', '排序权重')}</Text>
+            <InputNumber
+              value={adminMenuSort}
+              onChange={(v) => setAdminMenuSort(typeof v === 'number' ? v : 0)}
+              style={{ width: '100%' }}
+            />
+            <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 11, display: 'block', marginTop: 4 }}>{pg2026T('admin_basic_sort_weight_hint', '数字越大越靠前（菜单与插件列表共用）')}</Text>
           </div>
-        )}
+        </div>
       </div>
 
       {name === 'playground_2026' && (
@@ -2419,29 +2519,29 @@ function formatOptionLabelsDisplay(
             background: _isLight ? '#fff' : '#141414', borderRadius: 8,
             border: _isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)', padding: '20px', marginBottom: 16
           }}>
-            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>开放用户等级</Text><br />
-            <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>设置哪些用户等级可以使用此插件功能</Text>
+            <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>{pg2026T('admin_basic_open_levels', '开放用户等级')}</Text><br />
+            <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>{pg2026T('admin_basic_open_levels_desc', '设置哪些用户等级可以使用此插件功能')}</Text>
             <Divider style={{ borderColor: _isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)', margin: '14px 0' }} />
 
             <div
               style={{ padding: '12px 16px', borderRadius: 6, border: isAllLevels ? '1px solid rgba(22,119,255,0.4)' : (_isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)'), background: isAllLevels ? 'rgba(22,119,255,0.06)' : 'transparent', cursor: 'pointer', marginBottom: 8, transition: 'all 0.15s' }}
               onClick={() => { setIsAllLevels(true); }}
             >
-              <Checkbox checked={isAllLevels}><Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>对所有用户等级开放</Text></Checkbox>
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 12, display: 'block', marginLeft: 24, marginTop: 2 }}>包含当前及以后新增的所有用户等级</Text>
+              <Checkbox checked={isAllLevels}><Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>{pg2026T('admin_basic_all_levels', '对所有用户等级开放')}</Text></Checkbox>
+              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.3)', fontSize: 12, display: 'block', marginLeft: 24, marginTop: 2 }}>{pg2026T('admin_basic_all_levels_desc', '包含当前及以后新增的所有用户等级')}</Text>
             </div>
             <div
               style={{ padding: '12px 16px', borderRadius: 6, border: !isAllLevels ? '1px solid rgba(22,119,255,0.4)' : (_isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)'), background: !isAllLevels ? 'rgba(22,119,255,0.06)' : 'transparent', cursor: 'pointer', transition: 'all 0.15s' }}
               onClick={() => setIsAllLevels(false)}
             >
-              <Checkbox checked={!isAllLevels}><Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>按等级单独设置（覆盖全局默认值）</Text></Checkbox>
+              <Checkbox checked={!isAllLevels}><Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>{pg2026T('admin_basic_per_level', '按等级单独设置（覆盖全局默认值）')}</Text></Checkbox>
             </div>
 
             {!isAllLevels && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
                   <Text style={{ color: _isLight ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)', fontSize: 12 }}>
-                    已选择 {selectedLevels.length} 个等级
+                    {pg2026T('admin_basic_selected_levels_count', `已选择 ${selectedLevels.length} 个等级`, { count: selectedLevels.length })}
                   </Text>
                   <div style={{ display: 'flex', alignItems: 'center' }}>
                     <Button 
@@ -2450,7 +2550,7 @@ function formatOptionLabelsDisplay(
                       onClick={handleSelectAllLevels} 
                       style={{ padding: '0 4px', fontSize: 12, height: 'auto', lineHeight: 1, color: '#1677ff' }}
                     >
-                      全选
+                      {pg2026T('common_select_all', '全选')}
                     </Button>
                     <Divider type="vertical" style={{ margin: '0 8px', borderColor: _isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.15)' }} />
                     <Button 
@@ -2460,7 +2560,7 @@ function formatOptionLabelsDisplay(
                       onClick={handleClearAllLevels} 
                       style={{ padding: '0 4px', fontSize: 12, height: 'auto', lineHeight: 1 }}
                     >
-                      清除
+                      {pg2026T('admin_basic_clear', '清除')}
                     </Button>
                   </div>
                 </div>
@@ -2480,7 +2580,7 @@ function formatOptionLabelsDisplay(
                           <Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>
                             {lv.name}
                             <span style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, marginLeft: 6 }}>
-                              (ULID: {lvIdStr.padStart(4, '0')}{lv.discount != null ? `，折扣倍率: ${lv.discount}` : ''})
+                              (ULID: {lvIdStr.padStart(4, '0')}{lv.discount != null ? `，${pg2026T('admin_basic_discount_rate', '折扣倍率')}: ${lv.discount}` : ''})
                             </span>
                           </Text>
                         </div>
@@ -2522,7 +2622,7 @@ function formatOptionLabelsDisplay(
                     </div>
                   );
                 })}
-                {levels.length === 0 && <Text style={{ color: _isLight ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.25)', display: 'block', textAlign: 'center', padding: 16, fontSize: 13 }}>暂无用户等级，请先在「用户管理 → 用户等级」中创建</Text>}
+                {levels.length === 0 && <Text style={{ color: _isLight ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.25)', display: 'block', textAlign: 'center', padding: 16, fontSize: 13 }}>{pg2026T('admin_basic_no_levels', '暂无用户等级，请先在「用户管理 → 用户等级」中创建')}</Text>}
               </div>
             )}
           </div>
@@ -2532,24 +2632,24 @@ function formatOptionLabelsDisplay(
               background: _isLight ? '#fff' : '#141414', borderRadius: 8,
               border: _isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)', padding: '20px', marginBottom: 16
             }}>
-              <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>资源配额管理</Text><br />
-              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>{isAllLevels ? '全局默认的模型创作中心配额（对所有用户生效）' : '按已选等级单独设置资源配额'}</Text>
+              <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14 }}>{pg2026T('admin_quota_title', '资源配额管理')}</Text><br />
+              <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12 }}>{isAllLevels ? pg2026T('admin_quota_all_desc', '全局默认的模型创作中心配额（对所有用户生效）') : pg2026T('admin_quota_per_level_desc', '按已选等级单独设置资源配额')}</Text>
               <Divider style={{ borderColor: _isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)', margin: '14px 0' }} />
 
               {/* 表头 */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr repeat(3, 140px)', gap: 8, padding: '0 14px 8px', alignItems: 'center' }}>
-                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11 }}>等级</Text>
-                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>存储空间</Text>
-                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>项目限制</Text>
-                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>每个项目素材</Text>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11 }}>{pg2026T('admin_quota_col_level', '等级')}</Text>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>{pg2026T('admin_quota_col_storage', '存储空间')}</Text>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>{pg2026T('admin_quota_col_projects', '项目限制')}</Text>
+                <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 11, textAlign: 'center' }}>{pg2026T('admin_quota_col_assets', '每个项目素材')}</Text>
               </div>
 
               {/* 全局默认行（仅在对所有用户等级开放时显示） */}
               {isAllLevels && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr repeat(3, 140px)', gap: 8, padding: '10px 14px', borderRadius: 6, border: '1px solid rgba(22,119,255,0.3)', background: 'rgba(22,119,255,0.04)', marginBottom: 8, alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13, fontWeight: 500 }}>全局默认</Text>
-                    <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>默认值</Tag>
+                    <Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13, fontWeight: 500 }}>{pg2026T('admin_quota_global_default', '全局默认')}</Text>
+                    <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>{pg2026T('admin_quota_default_tag', '默认值')}</Tag>
                   </div>
                   <InputNumber size="small" min={1} max={10240}
                     value={defaultQuota} onChange={(val) => setDefaultQuota(val ?? 100)}
@@ -2559,12 +2659,12 @@ function formatOptionLabelsDisplay(
                   <InputNumber size="small" min={1} max={1000}
                     value={defaultMaxProjects} onChange={(val) => setDefaultMaxProjects(val ?? 3)}
                     style={{ width: '100%' }}
-                    addonAfter="个"
+                    addonAfter={pg2026T('admin_wf_node_unit', '个')}
                   />
                   <InputNumber size="small" min={1} max={1000}
                     value={defaultMaxAssets} onChange={(val) => setDefaultMaxAssets(val ?? 10)}
                     style={{ width: '100%' }}
-                    addonAfter="个"
+                    addonAfter={pg2026T('admin_wf_node_unit', '个')}
                   />
                 </div>
               )}
@@ -2583,7 +2683,7 @@ function formatOptionLabelsDisplay(
                           <Text style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 13 }}>
                             {lv.name}
                             <span style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, marginLeft: 6 }}>
-                              (ULID: {lv.id.toString().padStart(4, '0')}{lv.discount != null ? `，折扣倍率: ${lv.discount}` : ''})
+                              (ULID: {lv.id.toString().padStart(4, '0')}{lv.discount != null ? `，${pg2026T('admin_basic_discount_rate', '折扣倍率')}: ${lv.discount}` : ''})
                             </span>
                           </Text>
                         </div>
@@ -2597,13 +2697,13 @@ function formatOptionLabelsDisplay(
                           value={levelMaxProjects[lv.id.toString()] ?? defaultMaxProjects}
                           onChange={(val) => setLevelMaxProjects(prev => ({ ...prev, [lv.id.toString()]: val ?? defaultMaxProjects }))}
                           style={{ width: '100%' }}
-                          addonAfter="个"
+                          addonAfter={pg2026T('admin_wf_node_unit', '个')}
                         />
                         <InputNumber size="small" min={1} max={1000}
                           value={levelMaxAssets[lv.id.toString()] ?? defaultMaxAssets}
                           onChange={(val) => setLevelMaxAssets(prev => ({ ...prev, [lv.id.toString()]: val ?? defaultMaxAssets }))}
                           style={{ width: '100%' }}
-                          addonAfter="个"
+                          addonAfter={pg2026T('admin_wf_node_unit', '个')}
                         />
                       </div>
                     ))}
@@ -2697,7 +2797,7 @@ function formatOptionLabelsDisplay(
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSaveBasic}>保存配置</Button>
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSaveBasic}>{pg2026T('admin_save_config', '保存配置')}</Button>
       </div>
     </div>
   );
@@ -3374,7 +3474,7 @@ function formatOptionLabelsDisplay(
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 160,
+      width: 185,
       render: (t: string) => t ? <Text style={{ fontSize: 12 }}>{formatApiDateTime(t)}</Text> : '-'
     },
   ];
@@ -3384,7 +3484,7 @@ function formatOptionLabelsDisplay(
     if (!assetId || expandedAssetInfo[assetId]) return;
     try {
       setLoadingAssetInfo(prev => ({ ...prev, [assetId]: true }));
-      const res = await (request.get(`/assets/admin/get-asset-info/${assetId}`) as any);
+      const res = await (request.get(`/assets/admin/get-asset-info/${assetId}`, { headers: { 'x-plugin-ns': name } }) as any);
       setExpandedAssetInfo(prev => ({ ...prev, [assetId]: res }));
     } catch (e: any) {
       setExpandedAssetInfo(prev => ({ ...prev, [assetId]: { error: e?.response?.data?.error?.message || '查询失败' } }));
@@ -3491,7 +3591,7 @@ function formatOptionLabelsDisplay(
         return <Tag color="error">失败 ({s})</Tag>;
       }
     },
-    { title: '请求时间', dataIndex: 'created_at', key: 'created_at', width: 180, render: (t: string) => <Text style={{ fontSize: 12 }}>{formatApiDateTime(t)}</Text> },
+    { title: '请求时间', dataIndex: 'created_at', key: 'created_at', width: 185, render: (t: string) => <Text style={{ fontSize: 12 }}>{formatApiDateTime(t)}</Text> },
   ];
 
   const apiLogTab = (
@@ -3585,7 +3685,7 @@ function formatOptionLabelsDisplay(
 
   const pgModelColumns = [
     {
-      title: '模型名称',
+      title: name === 'playground_2026' ? pg2026T('admin_col_model_name', '模型名称') : '模型名称',
       dataIndex: 'name',
       key: 'name',
       width: 260,
@@ -3636,7 +3736,7 @@ function formatOptionLabelsDisplay(
       width: 100,
       render: (t: string) => t ? (
         <Tag style={{ borderRadius: 4, background: _isLight ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.04)', border: _isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)', color: _isLight ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)' }}>
-          {t.includes('画质增强') || t.includes('图像增强') || t.includes('视频增强') ? <ThunderboltOutlined style={{ marginRight: 4 }} /> : t.includes('视频') ? <VideoCameraOutlined style={{ marginRight: 4 }} /> : t.includes('图片') ? <PictureOutlined style={{ marginRight: 4 }} /> : (name === 'playground_2026' && t.includes('音频')) ? <AudioOutlined style={{ marginRight: 4 }} /> : null}
+          {t.includes('封装') ? <ThunderboltOutlined style={{ marginRight: 4 }} /> : t.includes('视频') ? <VideoCameraOutlined style={{ marginRight: 4 }} /> : t.includes('图片') ? <PictureOutlined style={{ marginRight: 4 }} /> : (name === 'playground_2026' && t.includes('音频')) ? <AudioOutlined style={{ marginRight: 4 }} /> : null}
           {t}
         </Tag>
       ) : <Text type="secondary">-</Text>
@@ -3653,6 +3753,26 @@ function formatOptionLabelsDisplay(
         />
       )
     },
+    ...(name === 'playground_2026' ? [
+      {
+        title: (
+          <Tooltip title={pg2026T('admin_col_mp_enabled_tip', '与「模型广场管理 → 模型列表 → 模型广场展示」双向同步：开关开启时选择不可查看的用户等级（含未登录游客，默认全部可查看）；开关关闭时选择可查看的用户等级（默认全部不可查看）。不支持展示的用户等级即使开启创作，在创作中心用户端也不会展示该模型。')}>
+            <span>{pg2026T('admin_col_mp_enabled', '模型广场展示')}</span>
+          </Tooltip>
+        ),
+        key: 'mp_level_ids',
+        width: 240,
+        render: (_: any, record: any) => (
+          <MpLevelSelectCell
+            record={record}
+            levels={levels}
+            _isLight={_isLight}
+            onToggle={handleMpToggle}
+            onChange={handleMpLevelIdsChange}
+          />
+        )
+      },
+    ] : []),
     {
       title: name === 'playground_2026' ? pg2026T('admin_col_bound_scheme', '绑定方案') : '绑定方案',
       key: 'pg_scheme_id',
@@ -3863,7 +3983,11 @@ function formatOptionLabelsDisplay(
               icon={<TagsOutlined />}
               onClick={() => {
                 setPgFeatureModelId(record.id);
-                setPgFeatureDraft(parseFeatureAttrList(record.feature_attributes));
+                setPgFeatureDraft(
+                  featureKind === 'image'
+                    ? normalizeImageFeatureAttrs(parseFeatureAttrList(record.feature_attributes))
+                    : parseFeatureAttrList(record.feature_attributes),
+                );
                 setPgInputProtocolDraft(typeof record.pg_input_protocol === 'string' ? record.pg_input_protocol : '');
                 setPgThinkingProfileDraft(typeof record.pg_thinking_profile === 'string' ? record.pg_thinking_profile : '');
                 setPgFeatureModalVisible(true);
@@ -3930,7 +4054,7 @@ function formatOptionLabelsDisplay(
           columns={pgModelColumns}
           rowKey="id"
           size="small"
-          scroll={{ x: name === 'playground_2026' ? 1280 : 1000 }}
+          scroll={{ x: name === 'playground_2026' ? 1580 : 1000 }}
           pagination={listPagination({
             current: pgPage,
             pageSize: pgPageSize,
@@ -4609,6 +4733,7 @@ function formatOptionLabelsDisplay(
             const fromType = pgModelTypes.find((t) => t.id === model.type_id)?.default_features;
             const kind = featureKindFromTypeName(model.type_name);
             let options = parseFeatureAttrList(fromType?.length ? fromType : model.type_default_features);
+            if (kind === 'image') options = imageFeatureOptions(options);
             if (kind === 'chat') {
               for (const attr of CHAT_UNDERSTAND_ATTRS) {
                 if (!options.includes(attr)) options = [...options, attr];
@@ -6283,8 +6408,8 @@ function formatOptionLabelsDisplay(
     if (mpStatusFilter === 'enabled' && !m.mp_enabled) return false;
     if (mpStatusFilter === 'disabled' && m.mp_enabled) return false;
     // 模型状态筛选（模型管理中的启用/禁用状态）
-    if (mpModelActiveFilter === 'active' && m.is_active !== 1) return false;
-    if (mpModelActiveFilter === 'inactive' && m.is_active === 1) return false;
+    if (mpModelActiveFilter === 'active' && Number(m.is_active) !== 1) return false;
+    if (mpModelActiveFilter === 'inactive' && Number(m.is_active) === 1) return false;
     return true;
   });
 
@@ -6293,18 +6418,22 @@ function formatOptionLabelsDisplay(
     const targetIds = filteredMpModels.map(m => m.id);
     if (targetIds.length === 0) return;
     const prevModels = mpModels;
-    const filteredIds = new Set(targetIds);
-    setMpModels(prev => prev.map(m => filteredIds.has(m.id) ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
+    const prevPgModels = pgModels;
+    const filteredIds = new Set(targetIds.map(id => String(id)));
+    setMpModels(prev => prev.map(m => filteredIds.has(String(m.id)) ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
+    setPgModels(prev => prev.map(m => filteredIds.has(String(m.id)) ? { ...m, mp_enabled: enabled, mp_level_ids: [] } : m));
     try {
       await request.post(`/plugins/${name}/marketplace-models/batch-toggle`, {
         ids: targetIds,
         enabled,
       });
+      invalidateCoalesce('pg2026:public-config-and-user-configs');
       message.success(enabled ? '已批量开启广场展示' : '已批量关闭广场展示');
     } catch (e) {
       console.error(e);
       message.error('批量切换广场展示状态失败');
       setMpModels(prevModels);
+      setPgModels(prevPgModels);
     }
   };
 
@@ -6390,7 +6519,7 @@ function formatOptionLabelsDisplay(
       width: 100,
       render: (t: string) => t ? (
         <Tag style={{ borderRadius: 4, background: _isLight ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.04)', border: _isLight ? '1px solid rgba(0,0,0,0.08)' : '1px solid rgba(255,255,255,0.08)', color: _isLight ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.6)' }}>
-          {t.includes('画质增强') || t.includes('图像增强') || t.includes('视频增强') ? <ThunderboltOutlined style={{ marginRight: 4 }} /> : t.includes('视频') ? <VideoCameraOutlined style={{ marginRight: 4 }} /> : t.includes('图片') ? <PictureOutlined style={{ marginRight: 4 }} /> : null}
+          {t.includes('封装') ? <ThunderboltOutlined style={{ marginRight: 4 }} /> : t.includes('视频') ? <VideoCameraOutlined style={{ marginRight: 4 }} /> : t.includes('图片') ? <PictureOutlined style={{ marginRight: 4 }} /> : null}
           {t}
         </Tag>
       ) : <Text type="secondary">-</Text>
@@ -6400,29 +6529,15 @@ function formatOptionLabelsDisplay(
       key: 'model_status',
       width: 80,
       render: (_: any, record: any) => (
-        record.is_active === 1
+        Number(record.is_active) === 1
           ? <Tag color="success" style={{ borderRadius: 4, margin: 0 }}>启用</Tag>
           : <Tooltip title="模型在模型管理中被禁用，不会出现在模型广场"><Tag color="error" style={{ borderRadius: 4, margin: 0 }}>禁用</Tag></Tooltip>
       )
     },
     {
-      title: '广场展示',
-      key: 'mp_enabled',
-      width: 100,
-      render: (_: any, record: any) => (
-        <Tooltip title={record.is_active !== 1 ? '模型已被禁用，即使开启也不会在广场中显示' : ''}>
-          <Switch
-            checked={record.mp_enabled}
-            onChange={(val) => handleMpToggle(record.id, val)}
-            style={record.is_active !== 1 ? { opacity: 0.5 } : {}}
-          />
-        </Tooltip>
-      )
-    },
-    {
       title: (
-        <Tooltip title="广场展示开启时选择不可查看的用户等级（默认全部可查看）；关闭时选择可查看的用户等级（默认全部不可查看）。切换展示开关会清空已选等级。">
-          <span>用户等级</span>
+        <Tooltip title="开关开启时选择不可查看的用户等级，含未登录游客（默认全部可查看，勾选游客后即使基本配置允许免登录也看不到该模型）；开关关闭时选择可查看的用户等级（默认全部不可查看）。切换展示开关会清空已选等级。">
+          <span>模型广场展示</span>
         </Tooltip>
       ),
       key: 'mp_level_ids',
@@ -6432,6 +6547,8 @@ function formatOptionLabelsDisplay(
           record={record}
           levels={levels}
           _isLight={_isLight}
+          showInactiveWarning
+          onToggle={handleMpToggle}
           onChange={handleMpLevelIdsChange}
         />
       )
@@ -6444,14 +6561,13 @@ function formatOptionLabelsDisplay(
       ),
       key: 'mp_sort_order',
       width: 120,
-      sorter: (a: any, b: any) => (a.mp_sort_order || 0) - (b.mp_sort_order || 0),
+      sorter: (a: any, b: any) => (Number(a.mp_sort_order) || 0) - (Number(b.mp_sort_order) || 0),
       render: (_: any, record: any) => (
         <InputNumber
           size="small"
           min={0}
-          max={9999}
-          value={record.mp_sort_order || 0}
-          onChange={(val) => handleMpSortChange(record.id, val ?? 0)}
+          value={Number(record.mp_sort_order) || 0}
+          onChange={(val) => handleMpSortChange(record.id, Number(val) || 0)}
           style={{ width: 80 }}
         />
       )
@@ -6502,12 +6618,12 @@ function formatOptionLabelsDisplay(
           </div>
 
           {/* 模型状态提示 */}
-          {mpModels.some(m => m.is_active !== 1 && m.mp_enabled) && (
+          {mpModels.some(m => Number(m.is_active) !== 1 && m.mp_enabled) && (
             <Alert
               type="warning"
               showIcon
               style={{ marginBottom: 16, borderRadius: 8 }}
-              message={`有 ${mpModels.filter(m => m.is_active !== 1 && m.mp_enabled).length} 个模型已开启广场展示但在模型管理中处于禁用状态，这些模型不会在模型广场中显示。`}
+              message={`有 ${mpModels.filter(m => Number(m.is_active) !== 1 && m.mp_enabled).length} 个模型已开启广场展示但在模型管理中处于禁用状态，这些模型不会在模型广场中显示。`}
             />
           )}
           <div style={{
@@ -6536,7 +6652,7 @@ function formatOptionLabelsDisplay(
                 : '模型默认不展示，需手动逐个开启。'}
             </Text>
             <Text style={{ color: _isLight ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.35)', fontSize: 12, marginLeft: 'auto' }}>
-              已展示 {enabledCount} / {mpModels.length}（启用 {mpModels.filter(m => m.is_active === 1).length} 个）
+              已展示 {enabledCount} / {mpModels.length}（启用 {mpModels.filter(m => Number(m.is_active) === 1).length} 个）
             </Text>
           </div>
 
@@ -6700,6 +6816,7 @@ function formatOptionLabelsDisplay(
       <Tabs
         activeKey={activeTabKey}
         onChange={handleTabChange}
+        onTabClick={handleTabClick}
         tabBarStyle={{ marginBottom: name === 'playground_2026' && activeTabKey === 'playground_schemes' ? 4 : 12 }}
         items={
           currentDyn
@@ -6766,6 +6883,7 @@ function formatOptionLabelsDisplay(
                 { key: 'playground_video_edit', label: pg2026T('admin_video_workbench', '视频编辑'), children: <PluginModule><PlaygroundVideoEditConfigTab isLight={_isLight} /></PluginModule> },
                 { key: 'playground_skill_config', label: pg2026T('admin_tab_skill', 'Skill 配置'), children: <PluginModule><PlaygroundSkillConfigTab /></PluginModule> },
                 { key: 'playground_prompt_optimize', label: pg2026T('admin_tab_prompt_optimize', 'AI 优化提示词'), children: <PluginModule><PlaygroundPromptOptimizeConfigTab isLight={_isLight} /></PluginModule> },
+                { key: 'playground_error_mappings', label: pg2026T('admin_tab_error_mappings', '异常映射'), children: <PluginModule><PlaygroundErrorMappingConfigTab isLight={_isLight} /></PluginModule> },
               ]
             : plugin.name === 'playground'
               ? [
@@ -6797,9 +6915,16 @@ function formatOptionLabelsDisplay(
                         : plugin.name === 'site_portal_pro'
                           ? [
                             { key: 'portal_manager', label: '门户管理', children: <PluginModule><PortalManagerPro /></PluginModule> },
+                            {
+                              key: 'article_manager',
+                              label: '栏目文章',
+                              children: activeTabKey === 'article_manager' ? (
+                                <PluginModule>
+                                  <PortalArticleManagerPro key={articleTabResetKey} />
+                                </PluginModule>
+                              ) : null,
+                            },
                             { key: 'docs_manager', label: 'DOCS文档', children: <PluginModule><PortalDocsManager /></PluginModule> },
-                            { key: 'about_manager', label: '关于我们', children: <PluginModule><PortalAboutManagerPro /></PluginModule> },
-                            { key: 'contact_manager', label: '联系我们', children: <PluginModule><PortalContactManagerPro /></PluginModule> },
                             { key: 'style_selection', label: '风格选择', children: <PluginModule><PortalStyleSelectionPro /></PluginModule> },
                             { key: 'basic', label: '基本配置', children: basicTab },
                             { key: 'storage', label: '门户存储配置', children: storageTab },

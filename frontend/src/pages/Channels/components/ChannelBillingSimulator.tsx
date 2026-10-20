@@ -410,8 +410,8 @@ export const ChannelBillingSimulator: React.FC<ChannelBillingSimulatorProps> = (
           break;
         }
         case 'discount':
-          formula = `${t('channels.simulator.formula_discount', '有效折扣率')} = ${(trace.value ?? 1).toFixed(2)}x`;
-          description = t('channels.simulator.desc_discount', '根据用户等级与专属折扣策略裁决得出最终生效折扣');
+          formula = trace.formula || `${t('channels.simulator.formula_discount', '有效折扣率')} = ${(trace.value ?? 1).toFixed(2)}x`;
+          description = trace.description || t('channels.simulator.desc_discount', '在用户等级已勾选的折扣项中匹配最低值（最大优惠）');
           break;
         case 'channel_rate_and_floor':
           formula = trace.status === 'warn'
@@ -425,7 +425,7 @@ export const ChannelBillingSimulator: React.FC<ChannelBillingSimulatorProps> = (
               });
           description = trace.status === 'warn'
             ? t('channels.simulator.desc_floor_clamped', '⚠️ 触及模型设置的保底限价，系统自动触发安全拦截兜底防倒贴')
-            : t('channels.simulator.desc_rate_normal', '倍率未触碰模型保底限价，按正常渠道倍率与身份折扣叠加计算');
+            : t('channels.simulator.desc_rate_normal', '匹配到的折扣倍率不低于模型保底限价，按该最低折扣倍率结算');
           break;
         case 'time_multiplier':
           formula = `${t('channels.simulator.formula_time', '时段倍率')} = ${(trace.value ?? 1).toFixed(2)}x`;
@@ -667,10 +667,15 @@ export const ChannelBillingSimulator: React.FC<ChannelBillingSimulatorProps> = (
                   allowClear
                   placeholder={t('channels.simulator.user_level_placeholder', '选择用户等级 (默认 1.0x)')}
                   onChange={executeSimulation}
-                  options={userLevels.map((lvl) => ({
-                    label: `${lvl.name} (折扣: ${lvl.discount}x)`,
-                    value: lvl.id,
-                  }))}
+                  options={userLevels.map((lvl) => {
+                    const v = lvl.discount_type ?? 0;
+                    const mask = v >= 16 ? (v & 15) : (v === 1 ? 6 : v === 2 ? 3 : 15);
+                    const hasLevelDisc = (mask & 1) !== 0;
+                    return {
+                      label: `${lvl.name} (${hasLevelDisc ? `折扣: ${lvl.discount}x` : '等级折扣未启用'})`,
+                      value: lvl.id,
+                    };
+                  })}
                 />
               </Form.Item>
 

@@ -12,6 +12,7 @@ export interface SvgEdits {
 }
 
 const BG_ATTR = 'data-tb-bg';
+const PLATE_ATTR = 'data-tb-plate';
 const SHAPES = new Set(['path', 'circle', 'ellipse', 'polygon', 'polyline', 'rect', 'line', 'text']);
 
 function parseSvg(source: string): SVGSVGElement | null {
@@ -42,35 +43,25 @@ function colorToken(value: string): string {
   return value.replace(/!important/gi, '').trim().replace(/^['"]|['"]$/g, '');
 }
 
-function luma(value: string): number | null {
+function isPaint(value: string): boolean {
   const s = colorToken(value).toLowerCase();
-  if (!s || s === 'none' || s.startsWith('url(')) return null;
-  if (s === 'currentcolor' || s === 'black') return 0;
-  if (s === 'white') return 255;
-  let hex = '';
-  if (/^#[0-9a-f]{3}$/.test(s)) hex = s.slice(1).split('').map((c) => c + c).join('');
-  else if (/^#[0-9a-f]{6}$/.test(s) || /^#[0-9a-f]{8}$/.test(s)) hex = s.slice(1, 7);
-  else {
-    const rgb = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-    if (!rgb) return null;
-    return 0.299 * Number(rgb[1]) + 0.587 * Number(rgb[2]) + 0.114 * Number(rgb[3]);
-  }
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  return 0.299 * r + 0.587 * g + 0.114 * b;
-}
-
-function isDarkColor(value: string): boolean {
-  const n = luma(value);
-  return n != null && n < 60;
+  if (!s || s === 'none' || s === 'transparent' || s.startsWith('url(') || s.startsWith('var(')) return false;
+  return true;
 }
 
 function recolorCss(css: string, color: string): string {
   return css.replace(/(fill|stroke|stop-color)\s*:\s*([^;}{]+)/gi, (all, prop: string, value: string) => {
-    if (!isDarkColor(value)) return all;
+    if (!isPaint(value)) return all;
     return `${prop}: ${color}`;
   });
+}
+
+function paintFill(node: Element, color: string) {
+  node.setAttribute('fill', color);
+  const style = node.getAttribute('style');
+  if (style && /fill\s*:/i.test(style)) {
+    node.setAttribute('style', style.replace(/fill\s*:\s*[^;}{]+/gi, `fill: ${color}`));
+  }
 }
 
 function ensureViewBox(el: SVGSVGElement, width: number, height: number) {
@@ -82,6 +73,51 @@ function ensureViewBox(el: SVGSVGElement, width: number, height: number) {
   return { x: 0, y: 0, w: width, h: height };
 }
 
+function markBackgroundPlates(el: SVGSVGElement, box: { x: number; y: number; w: number; h: number }) {
+  el.querySelectorAll(`[${PLATE_ATTR}]`).forEach((node) => node.removeAttribute(PLATE_ATTR));
+  const nodes = Array.from(el.querySelectorAll('*'));
+  const measured = measureShapes(el, nodes);
+  nodes.forEach((node, index) => {
+    if (node.getAttribute(BG_ATTR) != null) return;
+    const tag = node.tagName.toLowerCase();
+    if (!SHAPES.has(tag)) return;
+    const fill = node.getAttribute('fill');
+    const style = node.getAttribute('style') || '';
+    if (fill === 'none' || (!fill && !/fill\s*:/i.test(style))) return;
+    const bounds = measured[index];
+    const covers = bounds
+      ? bounds.w >= box.w * 0.88 && bounds.h >= box.h * 0.88
+      : tag === 'rect' && readLength(node.getAttribute('width'), 0) >= box.w * 0.88 && readLength(node.getAttribute('height'), 0) >= box.h * 0.88;
+    if (covers) node.setAttribute(PLATE_ATTR, '1');
+  });
+}
+
+function measureShapes(el: SVGSVGElement, nodes: Element[]): Array<{ w: number; h: number } | null> {
+  if (typeof document === 'undefined') return nodes.map(() => null);
+  const box = viewBoxSize(el);
+  const host = document.createElement('div');
+  host.style.cssText = `position:fixed;left:0;top:0;width:${box.width}px;height:${box.height}px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1`;
+  const clone = document.importNode(el, true) as SVGSVGElement;
+  clone.setAttribute('width', String(box.width));
+  clone.setAttribute('height', String(box.height));
+  host.appendChild(clone);
+  document.body.appendChild(host);
+  const clones = Array.from(clone.querySelectorAll('*'));
+  const measured = nodes.map((_node, index) => {
+    const target = clones[index] as SVGGraphicsElement | undefined;
+    if (!target || typeof target.getBBox !== 'function') return null;
+    try {
+      const b = target.getBBox();
+      if (b.width <= 0 || b.height <= 0) return null;
+      return { w: b.width, h: b.height };
+    } catch {
+      return null;
+    }
+  });
+  host.remove();
+  return measured;
+}
+
 function applyBackground(el: SVGSVGElement, color: string | null, width: number, height: number) {
   const existing = el.querySelector(`[${BG_ATTR}]`);
   if (!color) {
@@ -89,6 +125,7 @@ function applyBackground(el: SVGSVGElement, color: string | null, width: number,
     return;
   }
   const box = ensureViewBox(el, width, height);
+  el.querySelectorAll(`[${PLATE_ATTR}]`).forEach((node) => paintFill(node, color));
   const doc = el.ownerDocument;
   let rect = existing as SVGRectElement | null;
   if (!rect) {
@@ -103,21 +140,22 @@ function applyBackground(el: SVGSVGElement, color: string | null, width: number,
   rect.setAttribute('fill', color);
 }
 
-function recolorDark(el: SVGSVGElement, color: string) {
+function recolorIcon(el: SVGSVGElement, color: string) {
   el.querySelectorAll('style').forEach((node) => {
     node.textContent = recolorCss(node.textContent || '', color);
   });
   [el, ...Array.from(el.querySelectorAll('*'))].forEach((node) => {
-    if (node.getAttribute(BG_ATTR) != null) return;
+    if (node.getAttribute(BG_ATTR) != null || node.getAttribute(PLATE_ATTR) != null) return;
     for (const attr of ['fill', 'stroke', 'stop-color']) {
       const value = node.getAttribute(attr);
-      if (value && isDarkColor(value)) node.setAttribute(attr, color);
+      if (value && isPaint(value)) node.setAttribute(attr, color);
     }
     const style = node.getAttribute('style');
     if (style) node.setAttribute('style', recolorCss(style, color));
     const tag = node.tagName.toLowerCase();
     if (!SHAPES.has(tag)) return;
     const fill = node.getAttribute('fill');
+    if (fill === 'none') return;
     const hasFill = !!fill || /fill\s*:/i.test(node.getAttribute('style') || '') || node.hasAttribute('class');
     if (!hasFill) node.setAttribute('fill', color);
   });
@@ -142,8 +180,11 @@ export function applySvgEdits(source: string, edits: SvgEdits): string {
   const height = Math.round(edits.height);
   if (width > 0) el.setAttribute('width', String(width));
   if (height > 0) el.setAttribute('height', String(height));
-  applyBackground(el, edits.background, width > 0 ? width : 24, height > 0 ? height : 24);
-  if (edits.iconColor) recolorDark(el, edits.iconColor);
+  const box = ensureViewBox(el, width > 0 ? width : 24, height > 0 ? height : 24);
+  markBackgroundPlates(el, box);
+  applyBackground(el, edits.background, box.w, box.h);
+  if (edits.iconColor) recolorIcon(el, edits.iconColor);
+  el.querySelectorAll(`[${PLATE_ATTR}]`).forEach((node) => node.removeAttribute(PLATE_ATTR));
   return new XMLSerializer().serializeToString(el);
 }
 

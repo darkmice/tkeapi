@@ -43,10 +43,15 @@ Hệ thống đã đóng gói toàn diện các giao diện xử lý đa phươn
 | Alibaba Bailian | Nhúng Văn bản (Embeddings) | `/compatible-mode/v1/embeddings` | `POST` |
 | Alibaba Bailian | Sắp xếp lại Tài liệu (Rerank) | `/compatible-api/v1/reranks` | `POST` |
 | Alibaba Bailian | Sắp xếp lại Tài liệu (Native) | `/api/v1/services/rerank/text-rerank/text-rerank` | `POST` |
-| Kling AI | Văn bản sang Video (Kling) | `/v1/videos/text2video` | `POST` |
-| Kling AI | Hình ảnh sang Video (Kling) | `/v1/videos/image2video` | `POST` |
-| Kling AI | Tra cứu Trạng thái Nhiệm vụ (Video/Hình ảnh) | `/v1/videos/{endpoint}/{task_id}` | `GET` |
-| Google | Tạo Văn bản Gemini | `/v1beta/models/{model}:generateContent` | `POST` |
-| Google | Tạo Văn bản Luồng Gemini | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Kling AI | Văn bản sang Video (Native) | `/text-to-video/{model_id}` | `POST` |
+| Kling AI | Hình ảnh sang Video (Native) | `/image-to-video/{model_id}` | `POST` |
+| Kling AI | Omni Video (Native) | `/omni-video/{model_id}` | `POST` |
+| Kling AI | Tra cứu Trạng thái Nhiệm vụ (Native) | `/tasks` | `GET` |
+| Google | Tạo Nội dung Gemini | `/v1/models/{model}:generateContent` | `POST` |
+| Google | Tạo Nội dung Luồng Gemini | `/v1/models/{model}:streamGenerateContent` | `POST` |
+| Google | Tạo Nội dung Gemini (v1beta) | `/v1beta/models/{model}:generateContent` | `POST` |
+| Google | Tạo Nội dung Luồng Gemini (v1beta) | `/v1beta/models/{model}:streamGenerateContent` | `POST` |
+| Google | Tương tác Gemini Interactions | `/v1/interactions` | `POST` |
+| Google | Tương tác Gemini Interactions (v1beta) | `/v1beta/interactions` | `POST` |
 | Anthropic | Tin nhắn Gốc Claude | `/v1/messages` | `POST` |
 | MiniMax | Messages tương thích Anthropic | `/anthropic/v1/messages` | `POST` |

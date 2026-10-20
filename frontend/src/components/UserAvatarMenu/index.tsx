@@ -43,28 +43,35 @@ const UserAvatarMenu: React.FC<UserAvatarMenuProps> = ({ isUserEnd = true, agree
   }
 
   const showAgreement = (type: 'tos' | 'privacy') => {
-    const isEn = i18n.language && i18n.language.startsWith('en');
+    const isZh = Boolean(i18n.language && i18n.language.toLowerCase().startsWith('zh'));
+    const fallbackPath = type === 'tos'
+      ? (isZh ? '/legal/terms' : '/legal/terms?lang=en')
+      : (isZh ? '/legal/privacy' : '/legal/privacy?lang=en');
 
     if (!agreement) {
-      window.open(`/legal/${type === 'tos' ? 'terms' : 'privacy'}`, '_blank');
+      window.open(fallbackPath, '_blank');
       return;
     }
     
     if (type === 'tos') {
-      const mode = isEn ? agreement.tos_mode_en : agreement.tos_mode;
-      const link = isEn && agreement.tos_link_en ? agreement.tos_link_en : agreement.tos_link;
+      const mode = isZh ? agreement.tos_mode : agreement.tos_mode_en;
+      const rawLink = !isZh && agreement.tos_link_en ? agreement.tos_link_en : agreement.tos_link;
+      const link = String(rawLink || '').trim();
       if (mode === 'link' && link) {
-        window.open(link, '_blank');
+        const fullUrl = /^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`;
+        window.open(fullUrl, '_blank');
       } else {
-        window.open('/legal/terms', '_blank');
+        window.open(fallbackPath, '_blank');
       }
     } else {
-      const mode = isEn ? agreement.privacy_mode_en : agreement.privacy_mode;
-      const link = isEn && agreement.privacy_link_en ? agreement.privacy_link_en : agreement.privacy_link;
+      const mode = isZh ? agreement.privacy_mode : agreement.privacy_mode_en;
+      const rawLink = !isZh && agreement.privacy_link_en ? agreement.privacy_link_en : agreement.privacy_link;
+      const link = String(rawLink || '').trim();
       if (mode === 'link' && link) {
-        window.open(link, '_blank');
+        const fullUrl = /^https?:\/\//i.test(link) || link.startsWith('/') ? link : `https://${link}`;
+        window.open(fullUrl, '_blank');
       } else {
-        window.open('/legal/privacy', '_blank');
+        window.open(fallbackPath, '_blank');
       }
     }
   };
@@ -104,6 +111,7 @@ const UserAvatarMenu: React.FC<UserAvatarMenuProps> = ({ isUserEnd = true, agree
       <div style={{ marginTop: 8, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 16, width: '100%', padding: '0 8px' }}>
         <Avatar 
           size={56} 
+          src={user.avatar || undefined}
           style={{ backgroundColor: avatarAccent.background, color: avatarAccent.color, fontSize: 24, flexShrink: 0, cursor: 'pointer' }}
           onClick={() => { navigate('/profile'); }}
         >
@@ -227,7 +235,7 @@ const UserAvatarMenu: React.FC<UserAvatarMenuProps> = ({ isUserEnd = true, agree
               border: '2px solid transparent'
             }} 
           >
-            <Avatar size={34} style={{ backgroundColor: avatarAccent.background, color: avatarAccent.color, fontSize: 16 }}>
+            <Avatar size={34} src={user.avatar || undefined} style={{ backgroundColor: avatarAccent.background, color: avatarAccent.color, fontSize: 16 }}>
               {userInitial}
             </Avatar>
           </div>

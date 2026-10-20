@@ -50,25 +50,27 @@ fn main() {
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("git_commits.json");
 
-    // 优先尝试运行 git log (用于本地开发环境热更新与自动写缓存)
+    // 仅当当前项目根目录（../.git 或 .git）存在独立 Git 仓库时才运行 git log，避免子目录向上穿透读取父级商业版仓库
     let mut raw_log = None;
-    if let Ok(out) = Command::new("git")
-        .args([
-            "log",
-            "-10",
-            "--format=%H\x1F%h\x1F%an\x1F%cd\x1F%s",
-            "--date=format:%Y-%m-%d %H:%M:%S %z",
-        ])
-        .output()
-    {
-        if out.status.success() {
-            let content = String::from_utf8_lossy(&out.stdout).to_string();
-            if !content.trim().is_empty() {
-                raw_log = Some(content.clone());
-                // 自动更新本地的缓存文件，以便 Docker 编译时能直接拷贝进去使用
-                if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
-                    let git_log_path = Path::new(&manifest_dir).join("git_log.txt");
-                    let _ = fs::write(git_log_path, content);
+    if Path::new("../.git").exists() || Path::new(".git").exists() {
+        if let Ok(out) = Command::new("git")
+            .args([
+                "log",
+                "-10",
+                "--format=%H\x1F%h\x1F%an\x1F%cd\x1F%s",
+                "--date=format:%Y-%m-%d %H:%M:%S %z",
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let content = String::from_utf8_lossy(&out.stdout).to_string();
+                if !content.trim().is_empty() {
+                    raw_log = Some(content.clone());
+                    // 自动更新本地的缓存文件，以便 Docker 编译时能直接拷贝进去使用
+                    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+                        let git_log_path = Path::new(&manifest_dir).join("git_log.txt");
+                        let _ = fs::write(git_log_path, content);
+                    }
                 }
             }
         }
@@ -153,6 +155,7 @@ fn main() {
         ("src/models/redemption.rs", "plugin_redemptions_model"),
         ("src/api/plugins/finance", "plugin_finance"),
         ("src/api/plugins/team_marketing", "plugin_team_marketing"),
+        ("src/api/plugins/marketing_games", "plugin_marketing_games"),
         ("src/api/plugins/pay/payment", "plugin_payment"),
         ("src/api/plugins/pay", "plugin_pay"),
     ];
@@ -171,4 +174,3 @@ fn main() {
     // 注册商业宏 feature 值，保障开源版剥离 Cargo.toml feature 后仍可通过 rustc 1.80+ 审计
     println!("cargo:rustc-check-cfg=cfg(feature, values(\"commercial_plugins\", \"plugin_comfyui\", \"plugin_volcengine_enhance\", \"plugin_tencent_enhance\", \"plugin_data_sync\", \"plugin_content_security\"))");
 }
-

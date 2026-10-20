@@ -37,23 +37,36 @@ fn collect_kyc_list_statuses(
     flags
 }
 
+fn sync_user_remark(user: &mut User) {
+    let admin_trimmed = user.admin_remark.as_deref().unwrap_or("").trim();
+    if admin_trimmed.is_empty() {
+        let referral_trimmed = user.remark.as_deref().unwrap_or("").trim();
+        if !referral_trimmed.is_empty() {
+            let synced = referral_trimmed.to_string();
+            user.admin_remark = Some(synced.clone());
+            user.remark = Some(synced);
+        }
+    } else if user.remark.as_deref().unwrap_or("").trim() != admin_trimmed {
+        user.remark = Some(admin_trimmed.to_string());
+    }
+}
+
 async fn attach_kyc_flags(state: &AppState, users: &mut [User]) -> AppResult<()> {
     if users.is_empty() {
         return Ok(());
     }
-    let ids: Vec<String> = users.iter().map(|u| u.id.clone()).collect();
-    // 每用户每类型取最新提交（submitted_at / updated_at / id），覆盖待审/通过/驳回/过期
+    // 直接扫描体量极小的有效 KYC 表并在内存匹配，免除数万 UUID 数组的分配与参数传输
     let rows: Vec<(String, String, String)> = sqlx::query_as(&state.db.format_query(
         "SELECT DISTINCT ON (user_id, kyc_type) user_id, kyc_type, status \
          FROM user_kyc \
-         WHERE kyc_type IN ('personal', 'enterprise') AND status <> 'none' AND user_id = ANY(?) \
+         WHERE kyc_type IN ('personal', 'enterprise') AND status <> 'none' \
          ORDER BY user_id, kyc_type, COALESCE(submitted_at, updated_at) DESC, id DESC",
     ))
-    .bind(&ids)
     .fetch_all(&state.db.pool)
     .await?;
     let flags = collect_kyc_list_statuses(rows);
     for user in users.iter_mut() {
+        sync_user_remark(user);
         if let Some((personal, enterprise)) = flags.get(&user.id) {
             user.kyc_personal_status = personal.clone();
             user.kyc_enterprise_status = enterprise.clone();
@@ -83,9 +96,12 @@ pub async fn list_users(
         sqlx::query_as(&state.db.format_query(
             "SELECT u.*, ul.name as level_name, ul.id as level_id FROM users u \
              LEFT JOIN user_levels ul ON u.user_group = ul.group_key \
-             WHERE u.role = 'user' AND (u.username LIKE ? OR u.uid LIKE ? OR u.email LIKE ? OR u.nickname LIKE ?) \
+             WHERE u.role = 'user' AND (u.username LIKE ? OR u.uid LIKE ? OR u.email LIKE ? OR u.nickname LIKE ? OR COALESCE(u.mobile, '') LIKE ? OR COALESCE(u.wechat_id, '') LIKE ? OR COALESCE(u.wechat_name, '') LIKE ?) \
              ORDER BY u.created_at DESC LIMIT ?"
         ))
+        .bind(&like_pattern)
+        .bind(&like_pattern)
+        .bind(&like_pattern)
         .bind(&like_pattern)
         .bind(&like_pattern)
         .bind(&like_pattern)
@@ -118,7 +134,7 @@ pub async fn create_user(
     let operator_name = claims.username.clone();
     let register_ip = crate::api::auth::extract_client_ip(&headers, &addr);
     crate::api::auth::validate_username(&request.username, false)?;
-    let mut actual_email = request.email.clone();
+    let mut actual_email = crate::auth::contact::canonical_email(&request.email);
     if actual_email.is_empty() {
         use rand::Rng;
         let random_suffix: String = (0..8)
@@ -153,10 +169,25 @@ pub async fn create_user(
         .await
         .map_err(AppError::from)?;
 
-    let user_group = request
+    let default_user_group: String;
+    let user_group = match request
         .user_group
         .as_deref()
-        .unwrap_or(request.group.as_deref().unwrap_or("default"));
+        .or(request.group.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(g) => g,
+        None => {
+            default_user_group = sqlx::query_scalar(&state.db.format_query(
+                "SELECT group_key FROM user_levels WHERE is_default = 1 ORDER BY id ASC LIMIT 1",
+            ))
+            .fetch_optional(&state.db.pool)
+            .await?
+            .unwrap_or_else(|| "default".to_string());
+            &default_user_group
+        }
+    };
     let admin_group_id = request.admin_group_id;
     let mut referred_by = request.referred_by.clone().or(request.aff.clone());
 
@@ -195,9 +226,26 @@ pub async fn create_user(
 
     let balance = request.balance.unwrap_or(0.0);
     let gift_balance = request.gift_balance.unwrap_or(0.0);
+    let mut first_name = None;
+    let mut last_name = None;
+    let mut birth_ym = None;
+    crate::models::user::assign_profile_identity(
+        &mut first_name,
+        &mut last_name,
+        &mut birth_ym,
+        request.first_name,
+        request.last_name,
+        request.birth_ym,
+    )
+    .map_err(AppError::BadRequest)?;
     let pay_enabled = request.pay_enabled.unwrap_or(1);
     let settings = crate::api::settings::load_all_settings(&state).await?;
 
+    let actual_mobile = request
+        .mobile
+        .as_deref()
+        .map(crate::auth::contact::canonical_mobile_lenient)
+        .filter(|s| !s.is_empty());
     let mut tx = state.db.pool.begin().await?;
     crate::auth::contact::assert_email_slot_tx(
         &mut tx,
@@ -207,7 +255,7 @@ pub async fn create_user(
         crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_email),
     )
     .await?;
-    if let Some(ref mobile) = request.mobile {
+    if let Some(ref mobile) = actual_mobile {
         crate::auth::contact::assert_mobile_slot_tx(
             &mut tx,
             &state.db,
@@ -217,16 +265,33 @@ pub async fn create_user(
         )
         .await?;
     }
+    let actual_wechat_id = request
+        .wechat_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+    if let Some(ref wechat_id) = actual_wechat_id {
+        crate::auth::contact::assert_wechat_slot_tx(
+            &mut tx,
+            &state.db,
+            wechat_id,
+            None,
+            crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_wechat),
+        )
+        .await?;
+    }
 
     sqlx::query(
-        &state.db.format_query(r#"INSERT INTO users (id, uid, username, email, mobile, password_hash, role, user_group, admin_group_id, balance, gift_balance, pay_enabled, is_active, referred_by, referral_history, register_ip)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)"#)
+        &state.db.format_query(r#"INSERT INTO users (id, uid, username, email, mobile, wechat_id, password_hash, role, user_group, admin_group_id, balance, gift_balance, pay_enabled, is_active, referred_by, referral_history, register_ip, first_name, last_name, birth_ym)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)"#)
     )
     .bind(&user_id)
     .bind(&uid)
     .bind(&request.username)
     .bind(&actual_email)
-    .bind(&request.mobile)
+    .bind(&actual_mobile)
+    .bind(&actual_wechat_id)
     .bind(&password_hash)
     .bind(role)
     .bind(user_group)
@@ -237,6 +302,9 @@ pub async fn create_user(
     .bind(&referred_by)
     .bind(&referral_history)
     .bind(&register_ip)
+    .bind(&first_name)
+    .bind(&last_name)
+    .bind(&birth_ym)
     .execute(&mut *tx)
     .await?;
 
@@ -282,7 +350,7 @@ pub async fn get_user(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<User>> {
-    let user: User = sqlx::query_as(&state.db.format_query(
+    let mut user: User = sqlx::query_as(&state.db.format_query(
         "SELECT u.*, ul.name as level_name FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ? OR u.uid = ?"
     ))
     .bind(&id)
@@ -290,6 +358,7 @@ pub async fn get_user(
     .fetch_optional(&state.db.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    sync_user_remark(&mut user);
 
     Ok(Json(user))
 }
@@ -311,6 +380,7 @@ pub async fn update_user(
     .fetch_optional(&state.db.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    sync_user_remark(&mut user);
 
     let was_super_admin = crate::admin_permission::is_super_admin(&user.role, user.admin_group_id);
     let old_balance = user.balance;
@@ -342,25 +412,30 @@ pub async fn update_user(
         crate::admin_permission::users_write_perm(&user.role),
     )?;
 
+    let old_email = user.email.clone();
+    let old_mobile = user.mobile.clone();
+    let old_wechat_id = user.wechat_id.clone();
     if let Some(username) = request.username.filter(|u| u != &user.username) {
         crate::api::auth::validate_username(&username, false)?;
         user.username = username;
     }
     if let Some(email) = request.email {
-        if email != user.email {
-            let settings = crate::api::settings::load_all_settings(&state).await?;
-            crate::auth::contact::assert_email_slot(
-                &state,
-                &email,
-                Some(&user.id),
-                crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_email),
-            )
-            .await?;
+        let email = crate::auth::contact::canonical_email(&email);
+        if email.is_empty() || !crate::auth::contact::is_real_email(&email) {
+            if crate::auth::contact::is_real_email(&user.email) {
+                user.email = format!("u_{}@tokensbyte.local", &user.uid);
+            }
+        } else {
+            user.email = email;
         }
-        user.email = email;
     }
+    let mut password_changed = false;
     if let Some(password) = request.password {
-        user.password_hash = auth::hash_password(&password)?;
+        let trimmed = password.trim();
+        if !trimmed.is_empty() {
+            user.password_hash = auth::hash_password(trimmed)?;
+            password_changed = true;
+        }
     }
     if let Some(ref nickname) = request.nickname {
         if nickname.chars().count() > 24 {
@@ -370,22 +445,35 @@ pub async fn update_user(
         }
         user.nickname = Some(nickname.clone());
     }
+    crate::models::user::assign_profile_identity(
+        &mut user.first_name,
+        &mut user.last_name,
+        &mut user.birth_ym,
+        request.first_name,
+        request.last_name,
+        request.birth_ym,
+    )
+    .map_err(AppError::BadRequest)?;
     if let Some(mobile) = request.mobile {
-        let current = user.mobile.clone().unwrap_or_default();
-        if !mobile.is_empty() && mobile != current {
-            let settings = crate::api::settings::load_all_settings(&state).await?;
-            crate::auth::contact::assert_mobile_slot(
-                &state,
-                &mobile,
-                Some(&user.id),
-                crate::auth::contact::normalize_limit(settings.registration.max_accounts_per_mobile),
-            )
-            .await?;
+        let mobile = crate::auth::contact::canonical_mobile_lenient(&mobile);
+        if mobile.is_empty() {
+            user.mobile = None;
+        } else {
+            user.mobile = Some(mobile);
         }
-        user.mobile = Some(mobile);
     }
     if let Some(wechat_id) = request.wechat_id {
-        user.wechat_id = Some(wechat_id);
+        let wechat_id = wechat_id.trim().to_string();
+        let current = user.wechat_id.clone().unwrap_or_default();
+        if wechat_id.is_empty() {
+            user.wechat_id = None;
+            user.wechat_name = None;
+        } else {
+            if wechat_id != current {
+                user.wechat_name = None;
+            }
+            user.wechat_id = Some(wechat_id);
+        }
     }
     if let Some(balance) = request.balance {
         user.balance = balance;
@@ -403,7 +491,13 @@ pub async fn update_user(
         user.is_active = is_active;
     }
     if let Some(admin_remark) = request.admin_remark {
-        user.admin_remark = Some(admin_remark);
+        let trimmed = admin_remark.trim().to_string();
+        user.admin_remark = Some(trimmed.clone());
+        user.remark = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        };
     }
     if let Some(admin_group_opt) = request.admin_group_id {
         user.admin_group_id = admin_group_opt;
@@ -418,13 +512,28 @@ pub async fn update_user(
         )
         .await?;
     }
-    // 用户模型单独折扣（空字符串视为清空，存 NULL）
+    // 用户模型单独折扣（空字符串视为清空，存 NULL；非空时校验 JSON 与数值 > 0）
     if let Some(ref md) = request.model_discounts {
-        user.model_discounts = if md.is_empty() {
-            None
+        let trimmed = md.trim();
+        if trimmed.is_empty() || trimmed == "{}" {
+            user.model_discounts = None;
         } else {
-            Some(md.clone())
-        };
+            let map: HashMap<String, f64> = serde_json::from_str(trimmed).map_err(|_| {
+                AppError::BadRequest("用户模型专属折扣格式无效".to_string())
+            })?;
+            for (mid, val) in &map {
+                if mid.trim().is_empty() || !val.is_finite() || *val <= 0.0 || *val > 1000.0 {
+                    return Err(AppError::BadRequest(
+                        "用户模型专属折扣倍率必须大于 0 且不超过 1000".to_string(),
+                    ));
+                }
+            }
+            user.model_discounts = if map.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
     }
     if let Some(timezone) = request.timezone {
         user.timezone = Some(timezone);
@@ -488,12 +597,63 @@ pub async fn update_user(
         user.referred_by = new_ref;
     }
 
+    let email_changed = crate::auth::contact::is_real_email(&user.email)
+        && !user.email.eq_ignore_ascii_case(&old_email);
+    let mobile_changed = user
+        .mobile
+        .as_deref()
+        .is_some_and(|m| !m.is_empty() && Some(m) != old_mobile.as_deref());
+    let wechat_changed = user
+        .wechat_id
+        .as_deref()
+        .is_some_and(|w| !w.is_empty() && Some(w) != old_wechat_id.as_deref());
+    let reg_settings = if email_changed || mobile_changed || wechat_changed {
+        Some(crate::api::settings::load_all_settings(&state).await?.registration)
+    } else {
+        None
+    };
+
     let mut tx = state.db.pool.begin().await?;
+
+    if let Some(ref reg) = reg_settings {
+        if email_changed {
+            crate::auth::contact::assert_email_slot_tx(
+                &mut tx,
+                &state.db,
+                &user.email,
+                Some(&user.id),
+                crate::auth::contact::normalize_limit(reg.max_accounts_per_email),
+            )
+            .await?;
+        }
+        if let (true, Some(ref mobile)) = (mobile_changed, &user.mobile) {
+            crate::auth::contact::assert_mobile_slot_tx(
+                &mut tx,
+                &state.db,
+                mobile,
+                Some(&user.id),
+                crate::auth::contact::normalize_limit(reg.max_accounts_per_mobile),
+            )
+            .await?;
+        }
+        if let (true, Some(ref wechat_id)) = (wechat_changed, &user.wechat_id) {
+            crate::auth::contact::assert_wechat_slot_tx(
+                &mut tx,
+                &state.db,
+                wechat_id,
+                Some(&user.id),
+                crate::auth::contact::normalize_limit(reg.max_accounts_per_wechat),
+            )
+            .await?;
+        }
+    }
 
     sqlx::query(
         &state.db.format_query(r#"UPDATE users SET username = ?, email = ?, password_hash = ?, 
-           nickname = ?, mobile = ?, wechat_id = ?,
-           role = ?, admin_group_id = ?, balance = ?, gift_balance = ?, gift_used_quota = ?, user_group = ?, is_active = ?, admin_remark = ?, referred_by = ?, referral_history = ?, model_discounts = ?, timezone = ?, credit_limit = ?, pay_enabled = ?, updated_at = CURRENT_TIMESTAMP
+           nickname = ?, mobile = ?, wechat_id = ?, wechat_name = ?,
+           role = ?, admin_group_id = ?, balance = ?, gift_balance = ?, gift_used_quota = ?, user_group = ?, is_active = ?, admin_remark = ?, remark = ?, referred_by = ?, referral_history = ?, model_discounts = ?, timezone = ?, credit_limit = ?, pay_enabled = ?, first_name = ?, last_name = ?, birth_ym = ?,
+           password_changed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE password_changed_at END,
+           updated_at = CURRENT_TIMESTAMP
            WHERE id = ?"#)
     )
     .bind(&user.username)
@@ -502,6 +662,7 @@ pub async fn update_user(
     .bind(&user.nickname)
     .bind(&user.mobile)
     .bind(&user.wechat_id)
+    .bind(&user.wechat_name)
     .bind(&user.role)
     .bind(user.admin_group_id)
     .bind(user.balance)
@@ -510,12 +671,17 @@ pub async fn update_user(
     .bind(&user.user_group)
     .bind(user.is_active)
     .bind(&user.admin_remark)
+    .bind(&user.remark)
     .bind(&user.referred_by)
     .bind(&user.referral_history)
     .bind(&user.model_discounts)
     .bind(&user.timezone)
     .bind(user.credit_limit)
     .bind(user.pay_enabled)
+    .bind(&user.first_name)
+    .bind(&user.last_name)
+    .bind(&user.birth_ym)
+    .bind(password_changed)
     .bind(&user.id)
     .execute(&mut *tx)
     .await?;
@@ -619,6 +785,254 @@ pub async fn update_user(
     Ok(Json(user))
 }
 
+/// 管理员替换用户头像：写站点存储 `users/{uid}/avatar/`，成功后删除旧头像对象
+pub async fn upload_user_avatar(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    axum::extract::Extension(ctx): axum::extract::Extension<crate::admin_permission::AdminContext>,
+    multipart: axum::extract::Multipart,
+) -> AppResult<Json<serde_json::Value>> {
+    let (user_id, uid, role, old_avatar): (String, String, String, Option<String>) =
+        sqlx::query_as(
+            &state
+                .db
+                .format_query("SELECT id, uid, role, avatar FROM users WHERE id = ? OR uid = ?"),
+        )
+        .bind(&id)
+        .bind(&id)
+        .fetch_optional(&state.db.pool)
+        .await?
+        .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
+    crate::admin_permission::require_edit(&ctx, crate::admin_permission::users_write_perm(&role))?;
+
+    let avatar = store_user_avatar(&state, &user_id, &uid, old_avatar, multipart).await?;
+    Ok(Json(serde_json::json!({ "avatar": avatar })))
+}
+
+/// 写站点存储 `users/{uid}/avatar/` 并更新 `users.avatar`，成功后删除旧头像对象
+pub(crate) async fn store_user_avatar(
+    state: &Arc<AppState>,
+    user_id: &str,
+    uid: &str,
+    old_avatar: Option<String>,
+    mut multipart: axum::extract::Multipart,
+) -> AppResult<String> {
+    use crate::services::object_store::upload_ext;
+
+    let store = crate::relay::tos_persist::load_system_object_store(state)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "上传头像需要先在「站点设置 → 数据库/存储 → 存储设置」中配置对象存储".to_string(),
+            )
+        })?;
+
+    let mut file: Option<(Vec<u8>, String, String)> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| AppError::BadRequest("读取上传内容失败".to_string()))?
+    {
+        if field.name() == Some("file") {
+            let mime = field.content_type().unwrap_or("").to_string();
+            let name = field.file_name().unwrap_or("").to_string();
+            let data = field
+                .bytes()
+                .await
+                .map_err(|_| AppError::BadRequest("读取文件失败".to_string()))?;
+            file = Some((data.to_vec(), mime, name));
+        }
+    }
+    let (data, mime, name) =
+        file.ok_or_else(|| AppError::BadRequest("请选择要上传的头像图片".to_string()))?;
+    if !mime.starts_with("image/") {
+        return Err(AppError::BadRequest("头像只支持图片格式".to_string()));
+    }
+    if data.len() > AVATAR_MAX_BYTES {
+        return Err(AppError::BadRequest("头像图片不能超过 1MB".to_string()));
+    }
+    let ext = upload_ext(&name, "png");
+    save_user_avatar(state, &store, user_id, uid, old_avatar, data, &mime, &ext).await
+}
+
+const AVATAR_MAX_BYTES: usize = 1024 * 1024;
+
+#[allow(clippy::too_many_arguments)]
+async fn save_user_avatar(
+    state: &Arc<AppState>,
+    store: &crate::services::object_store::ObjectStore,
+    user_id: &str,
+    uid: &str,
+    old_avatar: Option<String>,
+    data: Vec<u8>,
+    mime: &str,
+    ext: &str,
+) -> AppResult<String> {
+    use crate::services::object_store::UserFolder;
+
+    let object_key = store.user_key(
+        uid,
+        UserFolder::Avatar,
+        &format!("avatar_{}.{}", chrono::Utc::now().timestamp_millis(), ext),
+    );
+    let avatar = store
+        .upload_file(&object_key, data, mime, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!("用户头像上传失败 {}: {}", object_key, e);
+            AppError::Internal("头像上传失败，请稍后重试".to_string())
+        })?;
+
+    sqlx::query(
+        &state.db.format_query(
+            "UPDATE users SET avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ),
+    )
+    .bind(&avatar)
+    .bind(user_id)
+    .execute(&state.db.pool)
+    .await?;
+
+    if let Some(old_key) = old_avatar
+        .filter(|u| !u.is_empty() && *u != avatar)
+        .and_then(|u| store.extract_object_key(&u))
+    {
+        if let Err(e) = store.delete_file(&old_key).await {
+            tracing::warn!("旧头像删除失败 {}: {}", old_key, e);
+        }
+    }
+    if let Err(e) = store
+        .prune_user_folder(uid, UserFolder::Avatar, Some(&object_key))
+        .await
+    {
+        tracing::warn!("用户 {} 旧头像目录清理失败: {}", uid, e);
+    }
+
+    Ok(avatar)
+}
+
+/// 三方登录/绑定带回的头像：用户还没有头像时后台导入，不阻塞登录跳转
+pub(crate) fn spawn_oauth_avatar_import(
+    state: &Arc<AppState>,
+    user_id: &str,
+    picture: Option<&str>,
+) {
+    let Some(url) = picture
+        .map(str::trim)
+        .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
+    else {
+        return;
+    };
+    let (state, user_id, url) = (state.clone(), user_id.to_string(), oauth_avatar_url(url));
+    tokio::spawn(async move {
+        if let Err(e) = import_oauth_avatar(&state, &user_id, &url).await {
+            tracing::warn!("用户 {} 三方头像导入失败 {}: {}", user_id, url, e);
+        }
+    });
+}
+
+/// 谷歌头像默认 `=s96-c`，按头像统一尺寸取 256
+fn oauth_avatar_url(url: &str) -> String {
+    match url.rsplit_once("=s") {
+        Some((base, size))
+            if url.contains("googleusercontent.com")
+                && size
+                    .strip_suffix("-c")
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())) =>
+        {
+            format!("{base}=s256-c")
+        }
+        _ => url.to_string(),
+    }
+}
+
+fn sniff_image(data: &[u8]) -> Option<(&'static str, &'static str)> {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some(("image/jpeg", "jpg"))
+    } else if data.starts_with(b"\x89PNG") {
+        Some(("image/png", "png"))
+    } else if data.starts_with(b"GIF8") {
+        Some(("image/gif", "gif"))
+    } else if data.len() > 12 && data.starts_with(b"RIFF") && &data[8..12] == b"WEBP" {
+        Some(("image/webp", "webp"))
+    } else {
+        None
+    }
+}
+
+async fn import_oauth_avatar(state: &Arc<AppState>, user_id: &str, url: &str) -> AppResult<()> {
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        &state
+            .db
+            .format_query("SELECT uid, avatar FROM users WHERE id = ?"),
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db.pool)
+    .await?;
+    let Some((uid, avatar)) = row else {
+        return Ok(());
+    };
+    if avatar.is_some_and(|a| !a.trim().is_empty()) {
+        return Ok(());
+    }
+
+    let Some(store) = crate::relay::tos_persist::load_system_object_store(state).await else {
+        sqlx::query(&state.db.format_query(
+            "UPDATE users SET avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND (avatar IS NULL OR avatar = '')",
+        ))
+        .bind(url)
+        .bind(user_id)
+        .execute(&state.db.pool)
+        .await?;
+        return Ok(());
+    };
+
+    let data = crate::services::http_client::download_bytes(&state.http_client, url)
+        .await
+        .map_err(AppError::Internal)?;
+    if data.len() > AVATAR_MAX_BYTES {
+        return Err(AppError::Internal("三方头像超过 1MB".to_string()));
+    }
+    let (mime, ext) =
+        sniff_image(&data).ok_or_else(|| AppError::Internal("三方头像不是图片".to_string()))?;
+    save_user_avatar(state, &store, user_id, &uid, None, data, mime, ext).await?;
+    Ok(())
+}
+
+/// 清空 `users.avatar`，并尽力删除站点存储里的旧头像对象
+pub(crate) async fn clear_user_avatar(
+    state: &Arc<AppState>,
+    user_id: &str,
+    uid: &str,
+    old_avatar: Option<String>,
+) -> AppResult<()> {
+    sqlx::query(&state.db.format_query(
+        "UPDATE users SET avatar = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    ))
+    .bind(user_id)
+    .execute(&state.db.pool)
+    .await?;
+
+    let Some(store) = crate::relay::tos_persist::load_system_object_store(state).await else {
+        return Ok(());
+    };
+    if let Some(old_key) = old_avatar
+        .filter(|u| !u.is_empty())
+        .and_then(|u| store.extract_object_key(&u))
+    {
+        if let Err(e) = store.delete_file(&old_key).await {
+            tracing::warn!("旧头像删除失败 {}: {}", old_key, e);
+        }
+    }
+    if let Err(e) = store
+        .prune_user_folder(uid, crate::services::object_store::UserFolder::Avatar, None)
+        .await
+    {
+        tracing::warn!("用户 {} 头像目录清理失败: {}", uid, e);
+    }
+    Ok(())
+}
+
 async fn spawn_object_deletes(
     state: &AppState,
     plugin: &str,
@@ -660,16 +1074,15 @@ pub async fn delete_user(
     axum::extract::Extension(claims): axum::extract::Extension<crate::auth::Claims>,
     axum::extract::Extension(ctx): axum::extract::Extension<crate::admin_permission::AdminContext>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let target: Option<(String, String, Option<i64>)> = sqlx::query_as(
-        &state
-            .db
-            .format_query("SELECT id, role, admin_group_id FROM users WHERE id = ? OR uid = ?"),
-    )
-    .bind(&id)
-    .bind(&id)
-    .fetch_optional(&state.db.pool)
-    .await?;
-    let (target_id, role, gid) =
+    let target: Option<(String, String, String, Option<i64>)> =
+        sqlx::query_as(&state.db.format_query(
+            "SELECT id, uid, role, admin_group_id FROM users WHERE id = ? OR uid = ?",
+        ))
+        .bind(&id)
+        .bind(&id)
+        .fetch_optional(&state.db.pool)
+        .await?;
+    let (target_id, target_uid, role, gid) =
         target.ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     // 防止管理员删除自己
@@ -810,6 +1223,23 @@ pub async fn delete_user(
                 futures::future::join_all(delete_tasks),
             )
             .await;
+        }
+    }
+
+    if let Some(store) = crate::relay::tos_persist::load_system_object_store(&state).await {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            store.prune_user_folder(
+                &target_uid,
+                crate::services::object_store::UserFolder::Avatar,
+                None,
+            ),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!("删除用户 {} 头像目录清理失败: {}", target_uid, e),
+            Err(_) => tracing::warn!("删除用户 {} 头像目录清理超时", target_uid),
         }
     }
 
@@ -1037,6 +1467,16 @@ pub async fn recharge_user(
             }
         }
     }
+    if is_system && request_amount < 0.0 {
+        crate::services::affiliate::note_system_spend(
+            &state.db,
+            &mut tx,
+            &user.id,
+            -request_amount,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    }
     if is_system && request_amount < 0.0 && request.apply_commission.unwrap_or(false) {
         let system_order_no = crate::api::plugins::finance::generate_system_order_no();
         match crate::services::affiliate::clawback_admin_commission(
@@ -1054,9 +1494,8 @@ pub async fn recharge_user(
             Ok(cut) => {
                 commission_from_wallet = cut.from_commission;
                 commission_from_system = cut.from_system;
-                commission_applied = crate::money::round_money(
-                    -(cut.from_commission + cut.from_system),
-                );
+                commission_applied =
+                    crate::money::round_money(-(cut.from_commission + cut.from_system));
             }
             Err(e) => {
                 tracing::warn!(
@@ -1146,8 +1585,8 @@ pub async fn preview_commission_adjust(
         crate::admin_permission::users_write_perm(&user.role),
     )?;
 
-    let row: Option<(String, String, f64, f64, f64, String)> = sqlx::query_as(&state.db.format_query(
-        "SELECT inv.username, inv.uid, inv.commission_balance, inv.balance, ul.commission_ratio, COALESCE(NULLIF(ul.commission_basis, ''), 'consumption') \
+    let row: Option<(String, String, f64, f64, f64, String, i64)> = sqlx::query_as(&state.db.format_query(
+        "SELECT inv.username, inv.uid, inv.commission_balance, inv.balance, ul.commission_ratio, COALESCE(NULLIF(ul.commission_basis, ''), 'consumption'), COALESCE(ul.marketing_enabled, 0)::bigint \
          FROM users u \
          JOIN users inv ON (inv.id = u.referred_by OR inv.uid = u.referred_by) \
          JOIN user_levels ul ON ul.group_key = inv.user_group \
@@ -1159,7 +1598,9 @@ pub async fn preview_commission_adjust(
     .fetch_optional(&state.db.pool)
     .await?;
 
-    let Some((username, uid, commission_balance, system_balance, ratio, basis)) = row else {
+    let Some((username, uid, commission_balance, system_balance, ratio, basis, marketing_enabled)) =
+        row
+    else {
         return Ok(Json(CommissionPreviewResponse {
             eligible: false,
             direction: "none".to_string(),
@@ -1176,12 +1617,46 @@ pub async fn preview_commission_adjust(
             default_apply: false,
         }));
     };
-    let quote = crate::services::affiliate::quote_adjust(
-        query.amount,
-        ratio,
-        &basis,
-        commission_balance,
-    );
+    if query.amount < 0.0 {
+        let recorded = crate::services::affiliate::quote_recorded_clawback(
+            &state.db,
+            &user.id,
+            -query.amount,
+            &basis,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        return Ok(Json(CommissionPreviewResponse {
+            eligible: recorded.eligible,
+            direction: if recorded.eligible {
+                "clawback".to_string()
+            } else {
+                "none".to_string()
+            },
+            inviter_username: recorded.inviter_names,
+            inviter_uid: uid,
+            ratio,
+            basis: crate::services::affiliate::normalize_commission_basis(&basis).to_string(),
+            suggested: recorded.suggested,
+            inviter_commission_balance: recorded.commission_balance,
+            inviter_system_balance: recorded.system_balance,
+            from_commission: recorded.from_commission,
+            from_system: recorded.from_system,
+            actual: recorded.actual,
+            default_apply: recorded.default_apply,
+        }));
+    }
+    let mut quote =
+        crate::services::affiliate::quote_adjust(query.amount, ratio, &basis, commission_balance);
+    if marketing_enabled != 1 {
+        quote.eligible = false;
+        quote.direction = "none";
+        quote.suggested = 0.0;
+        quote.actual = 0.0;
+        quote.from_commission = 0.0;
+        quote.from_system = 0.0;
+        quote.default_apply = false;
+    }
     Ok(Json(CommissionPreviewResponse {
         eligible: quote.eligible,
         direction: quote.direction.to_string(),
@@ -1227,8 +1702,12 @@ pub struct CommissionLedgerResponse {
 }
 
 fn commission_ledger_label(source_key: &str, amount: f64) -> (&'static str, &'static str) {
-    if source_key.starts_with("adjustclaw:") {
+    if source_key.starts_with("adjustclaw:") || source_key.starts_with("claw:adjust:") {
         ("adjust", "余额调减扣回")
+    } else if source_key.starts_with("claw:") {
+        ("refund", "退款回冲")
+    } else if source_key.starts_with("daycons:") || source_key.starts_with("log:") {
+        ("consumption", "消费返佣")
     } else if source_key.starts_with("arkrefund:")
         || (amount < 0.0 && source_key.starts_with("ark:"))
     {
@@ -1237,8 +1716,6 @@ fn commission_ledger_label(source_key: &str, amount: f64) -> (&'static str, &'st
         ("video", "视频返佣")
     } else if source_key.starts_with("recharge:") {
         ("recharge", "充值返佣")
-    } else if source_key.starts_with("log:") {
-        ("consumption", "消费返佣")
     } else if amount < 0.0 {
         ("refund", "回冲")
     } else {
@@ -1270,18 +1747,22 @@ pub async fn list_user_commission_ledger(
     axum::extract::Extension(claims): axum::extract::Extension<crate::auth::Claims>,
 ) -> AppResult<Json<CommissionLedgerResponse>> {
     crate::admin_permission::load_admin_context(&state, &claims.sub).await?;
-    let user_id: String = sqlx::query_scalar(&state.db.format_query(
-        "SELECT id FROM users WHERE id = ? OR uid = ? LIMIT 1",
-    ))
+    let user_id: String = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT id FROM users WHERE id = ? OR uid = ? LIMIT 1"),
+    )
     .bind(&id)
     .bind(&id)
     .fetch_optional(&state.db.pool)
     .await?
     .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let commission_balance: f64 = sqlx::query_scalar(&state.db.format_query(
-        "SELECT commission_balance FROM users WHERE id = ?",
-    ))
+    let commission_balance: f64 = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT commission_balance FROM users WHERE id = ?"),
+    )
     .bind(&user_id)
     .fetch_one(&state.db.pool)
     .await?;
@@ -1293,7 +1774,14 @@ pub async fn list_user_commission_ledger(
 
     let mut comm_where = " WHERE c.user_id = ?".to_string();
     let mut comm_binds = vec![user_id.clone()];
-    append_ledger_range(&mut comm_where, &mut comm_binds, "c.created_at", start, end, tz);
+    append_ledger_range(
+        &mut comm_where,
+        &mut comm_binds,
+        "c.created_at",
+        start,
+        end,
+        tz,
+    );
 
     let sum_sql = state.db.format_query(&format!(
         "SELECT COALESCE(SUM(CASE WHEN c.amount > 0 THEN c.amount ELSE 0 END), 0)::float8, \
@@ -1308,7 +1796,7 @@ pub async fn list_user_commission_ledger(
 
     #[derive(sqlx::FromRow)]
     struct CommissionRow {
-        id: i32,
+        id: i64,
         amount: f64,
         ratio: f64,
         source_key: Option<String>,
@@ -1330,8 +1818,7 @@ pub async fn list_user_commission_ledger(
     }
     let commission_rows = list_q.fetch_all(&state.db.pool).await?;
 
-    let mut xfer_where =
-        " WHERE rr.user_id = ? AND rr.recharge_type = 'transfer'".to_string();
+    let mut xfer_where = " WHERE rr.user_id = ? AND rr.recharge_type = 'transfer'".to_string();
     let mut xfer_binds = vec![user_id.clone()];
     append_ledger_range(
         &mut xfer_where,
@@ -1418,7 +1905,7 @@ pub async fn impersonate_user(
     }
     crate::admin_permission::require_edit(&ctx, "users.list")?;
 
-    let user: User = sqlx::query_as(&state.db.format_query(
+    let mut user: User = sqlx::query_as(&state.db.format_query(
         "SELECT u.*, ul.name as level_name FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ? OR u.uid = ?"
     ))
     .bind(&id)
@@ -1445,6 +1932,7 @@ pub async fn impersonate_user(
         user.id
     );
 
+    crate::api::auth::sanitize_user_for_client(&mut user);
     let token = auth::create_token(
         &user.id,
         &user.username,
@@ -1549,7 +2037,7 @@ pub async fn query_consumption_stats_batch(
     if slices.has_history_days {
         let sql = format!(
             "SELECT user_id, \
-                COALESCE(SUM(GREATEST(total_cost - total_pre_deduct_gift, 0.0)), 0.0) as system_cost, \
+                COALESCE(SUM(GREATEST(total_cost - total_pre_deduct_gift - COALESCE(total_pre_deduct_voucher, 0.0), 0.0)), 0.0) as system_cost, \
                 COALESCE(SUM(total_pre_deduct_gift), 0.0) as gift_cost \
              FROM usage_daily_stats \
              WHERE user_id IN ({}) AND {} \
@@ -1574,7 +2062,7 @@ pub async fn query_consumption_stats_batch(
     for r_slice in slices.realtime_slices() {
         let sql = format!(
             "SELECT user_id, \
-                COALESCE(SUM(GREATEST(cost - pre_deduct_gift, 0.0)), 0.0) as system_cost, \
+                COALESCE(SUM(GREATEST(cost - pre_deduct_gift - COALESCE(pre_deduct_voucher, 0.0), 0.0)), 0.0) as system_cost, \
                 COALESCE(SUM(pre_deduct_gift), 0.0) as gift_cost \
              FROM logs \
              WHERE user_id IN ({}) AND {} \
@@ -1622,7 +2110,7 @@ pub struct ContactBindQuery {
 pub struct PutContactBindRequest {
     pub kind: String,
     pub value: String,
-    pub max_accounts: i32,
+    pub max_accounts: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1630,20 +2118,18 @@ pub struct ContactBindResponse {
     pub kind: String,
     pub value: String,
     pub bound_count: i64,
-    pub limit: i32,
-    pub default_limit: i32,
+    pub limit: i64,
+    pub default_limit: i64,
     pub is_override: bool,
 }
 
 fn normalize_admin_contact(kind: &str, value: &str) -> AppResult<String> {
-    let value = value.trim().to_string();
+    let value = crate::auth::contact::canonical_contact_value(kind, value);
     if value.is_empty() {
         return Err(AppError::BadRequest("联系方式不能为空".to_string()));
     }
     if kind == "email" && !crate::auth::contact::is_real_email(&value) {
-        return Err(AppError::BadRequest(
-            "占位邮箱不能设置绑定上限".to_string(),
-        ));
+        return Err(AppError::BadRequest("占位邮箱不能设置绑定上限".to_string()));
     }
     Ok(value)
 }
@@ -1656,15 +2142,17 @@ async fn load_contact_bind(
     let kind = crate::auth::contact::parse_contact_kind(kind)?;
     let value = normalize_admin_contact(kind, value)?;
     let settings = crate::api::settings::load_all_settings(state).await?;
-    let default_limit = crate::auth::contact::normalize_limit(if kind == "email" {
-        settings.registration.max_accounts_per_email
-    } else {
-        settings.registration.max_accounts_per_mobile
+    let default_limit = crate::auth::contact::normalize_limit(match kind {
+        "email" => settings.registration.max_accounts_per_email,
+        "wechat" => settings.registration.max_accounts_per_wechat,
+        _ => settings.registration.max_accounts_per_mobile,
     });
-    let occ = if kind == "email" {
-        crate::auth::contact::email_occupancy(state, &value, None, default_limit).await?
-    } else {
-        crate::auth::contact::mobile_occupancy(state, &value, None, default_limit).await?
+    let occ = match kind {
+        "email" => crate::auth::contact::email_occupancy(state, &value, None, default_limit).await?,
+        "wechat" => {
+            crate::auth::contact::wechat_occupancy(state, &value, None, default_limit).await?
+        }
+        _ => crate::auth::contact::mobile_occupancy(state, &value, None, default_limit).await?,
     };
     let is_override = crate::auth::contact::fetch_override_limit(state, kind, &value)
         .await?
@@ -1683,7 +2171,9 @@ pub async fn get_contact_bind(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(query): axum::extract::Query<ContactBindQuery>,
 ) -> AppResult<Json<ContactBindResponse>> {
-    Ok(Json(load_contact_bind(&state, &query.kind, &query.value).await?))
+    Ok(Json(
+        load_contact_bind(&state, &query.kind, &query.value).await?,
+    ))
 }
 
 pub async fn put_contact_bind(
@@ -1719,15 +2209,51 @@ pub async fn delete_contact_bind(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_kyc_list_statuses, commission_ledger_label};
+    use super::{
+        collect_kyc_list_statuses, commission_ledger_label, oauth_avatar_url, sniff_image,
+    };
+
+    #[test]
+    fn oauth_avatar_url_upsizes_google_only() {
+        assert_eq!(
+            oauth_avatar_url("https://lh3.googleusercontent.com/a/ABC=s96-c"),
+            "https://lh3.googleusercontent.com/a/ABC=s256-c"
+        );
+        let wx = "https://thirdwx.qlogo.cn/mmopen/vi_32/xyz/132";
+        assert_eq!(oauth_avatar_url(wx), wx);
+        let other = "https://example.com/a=sbig-c";
+        assert_eq!(oauth_avatar_url(other), other);
+    }
+
+    #[test]
+    fn sniff_image_detects_common_formats() {
+        assert_eq!(
+            sniff_image(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some(("image/jpeg", "jpg"))
+        );
+        assert_eq!(
+            sniff_image(b"\x89PNG\r\n\x1a\n"),
+            Some(("image/png", "png"))
+        );
+        assert_eq!(
+            sniff_image(b"RIFF\0\0\0\0WEBPVP8 "),
+            Some(("image/webp", "webp"))
+        );
+        assert_eq!(sniff_image(b"<html>"), None);
+    }
 
     #[test]
     fn commission_ledger_label_splits_adjust_and_sources() {
-        assert_eq!(
-            commission_ledger_label("adjustclaw:9", -5.0).0,
-            "adjust"
-        );
+        assert_eq!(commission_ledger_label("adjustclaw:9", -5.0).0, "adjust");
         assert_eq!(commission_ledger_label("log:3", 1.2).0, "consumption");
+        assert_eq!(
+            commission_ledger_label("daycons:inv:u1:2026-10-05", 1.2).0,
+            "consumption"
+        );
+        assert_eq!(
+            commission_ledger_label("daycons:u1:2026-10-03", -1.0).0,
+            "consumption"
+        );
         assert_eq!(commission_ledger_label("recharge:4", 2.0).0, "recharge");
         assert_eq!(commission_ledger_label("ark:8", 1.0).0, "video");
         assert_eq!(commission_ledger_label("arkrefund:8", -1.0).0, "refund");

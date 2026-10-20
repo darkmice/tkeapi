@@ -62,6 +62,30 @@ pub fn settlement_delta(cost: f64, pre_deducted: f64) -> (f64, f64) {
     (settled, apply)
 }
 
+/// 卡券优先承担后，钱包只结算剩余部分。
+/// 返回 `(wallet_settled, wallet_pre, wallet_apply)`。
+#[inline]
+pub fn wallet_leg(
+    settled: f64,
+    pre_deducted: f64,
+    voucher_final: f64,
+    voucher_held: f64,
+) -> (f64, f64, f64) {
+    let wallet_settled = round_money((round_money(settled) - round_money(voucher_final)).max(0.0));
+    let wallet_pre = round_money((round_money(pre_deducted) - round_money(voucher_held)).max(0.0));
+    let (_, apply) = settlement_delta(wallet_settled, wallet_pre);
+    (wallet_settled, wallet_pre, apply)
+}
+
+/// 整笔预扣退回时，钱包应退的 `(balance, gift)`。卡券部分由持仓表归还，不能退进余额。
+#[inline]
+pub fn wallet_refund_parts(pre_deducted: f64, pre_deduct_gift: f64, voucher: f64) -> (f64, f64) {
+    let wallet = round_money((round_money(pre_deducted) - round_money(voucher)).max(0.0));
+    let gift_refund = round_money(round_money(pre_deduct_gift).min(wallet).max(0.0));
+    let balance_refund = round_money(wallet - gift_refund);
+    (balance_refund, gift_refund)
+}
+
 /// 一笔已完成结算里，邀请返佣可计入的系统钱包消费。
 /// 赠送钱包消费返回 0 侧差额，冻结阶段返回 0。`gift_balance_before_extra` 只在补扣（apply > 0）时使用。
 #[inline]
@@ -107,7 +131,9 @@ pub async fn format_settlement_note(
     let unit = match unit_opt {
         Some(u) => u,
         None => {
-            fallback_unit = crate::api::settings::get_currency_settings(state).await.currency_unit;
+            fallback_unit = crate::api::settings::get_currency_settings(state)
+                .await
+                .currency_unit;
             &fallback_unit
         }
     };
@@ -169,5 +195,16 @@ mod tests {
             paid_consumption_for_commission(12.0, 10.0, 4.0, 1.0, false),
             7.0
         );
+    }
+
+    #[test]
+    fn wallet_leg_leaves_voucher_off_the_balance() {
+        use super::{wallet_leg, wallet_refund_parts};
+        assert_eq!(wallet_leg(0.5, 1.0, 0.4, 0.4), (0.1, 0.6, -0.5));
+        assert_eq!(wallet_leg(0.1, 1.0, 0.1, 0.4), (0.0, 0.6, -0.6));
+        assert_eq!(wallet_leg(1.2, 1.0, 0.4, 0.4), (0.8, 0.6, 0.2));
+        assert_eq!(wallet_leg(1.2, 1.0, 0.0, 0.0), (1.2, 1.0, 0.2));
+        assert_eq!(wallet_refund_parts(1.0, 0.2, 0.4), (0.4, 0.2));
+        assert_eq!(wallet_refund_parts(1.0, 0.2, 0.0), (0.8, 0.2));
     }
 }

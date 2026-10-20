@@ -50,6 +50,16 @@ impl AllinpayClient {
 
     fn api_base(&self, kind: &str) -> String {
         let base = self.settings.api_url.trim_end_matches('/');
+
+        // 防御 SSRF 和主动查询被劫持：强制 API 必须指向通联官方域名
+        if !base.contains(".allinpay.com") && !base.contains(".allinpay.cn") {
+            tracing::warn!(
+                "[通联支付] 发现非法 API_URL 配置: {}，强制回退至官方网关",
+                base
+            );
+            return "https://vsp.allinpay.com/apiweb".to_string();
+        }
+
         if base.contains("syb-test.allinpay.com") {
             base.to_string()
         } else if kind == "h5" {
@@ -287,6 +297,23 @@ impl AllinpayClient {
 
         let url = format!("{}/tranx/query", self.api_base("query"));
         let body = self.post_form(&url, &params).await?;
+
+        // 解析成 Map 以便验签
+        let resp_map: BTreeMap<String, String> = serde_json::from_str(&body)
+            .map_err(|e| anyhow!("解析通联查询返回 Map 失败: {}, body={}", e, body))?;
+
+        // 验证签名（如果 retcode 是 SUCCESS 则必须验签）
+        if let Some(retcode) = resp_map.get("retcode") {
+            if retcode == "SUCCESS" {
+                let sign = resp_map
+                    .get("sign")
+                    .ok_or_else(|| anyhow!("通联主动查询返回缺少 sign"))?;
+                if !self.verify_signature(&resp_map, sign)? {
+                    return Err(anyhow!("通联主动查询响应验签失败，可能遭遇中间人攻击"));
+                }
+            }
+        }
+
         serde_json::from_str(&body)
             .map_err(|e| anyhow!("解析通联查询返回失败: {}, body={}", e, body))
     }

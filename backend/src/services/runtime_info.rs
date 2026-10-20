@@ -57,7 +57,8 @@ fn instance_id(name: &str) -> String {
     format!("{:x}", digest)[..12].to_string()
 }
 
-fn disk_usage_percent() -> f64 {
+/// 覆盖当前工作目录的磁盘：占用百分比与总容量（字节）。
+fn disk_snapshot() -> (f64, u64) {
     let disks = Disks::new_with_refreshed_list();
     let cwd = std::env::current_dir().ok();
     // (mount_len, available, total) — 优先覆盖 cwd 的最长挂载点
@@ -91,15 +92,15 @@ fn disk_usage_percent() -> f64 {
             .max_by_key(|d| d.total_space())
         {
             Some(d) => (d.available_space(), d.total_space()),
-            None => return 0.0,
+            None => return (0.0, 0),
         },
     };
 
     if total == 0 {
-        return 0.0;
+        return (0.0, 0);
     }
     let used = total.saturating_sub(avail) as f64;
-    (used / total as f64) * 100.0
+    ((used / total as f64) * 100.0, total)
 }
 
 fn round1(v: f64) -> f64 {
@@ -123,6 +124,7 @@ pub fn collect(version: &str) -> Value {
     sys.refresh_memory();
 
     let cpu = round1(f64::from(sys.global_cpu_usage()));
+    let cpu_cores = sys.cpus().len().max(sys.physical_core_count().unwrap_or(0));
     let mem_total = sys.total_memory();
     let mem_used = sys.used_memory();
     let memory = if mem_total > 0 {
@@ -130,7 +132,8 @@ pub fn collect(version: &str) -> Value {
     } else {
         0.0
     };
-    let disk = round1(disk_usage_percent());
+    let (disk, disk_total) = disk_snapshot();
+    let disk = round1(disk);
 
     let platform = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
     let role = std::env::var("NODE_ROLE")
@@ -144,8 +147,11 @@ pub fn collect(version: &str) -> Value {
         "status": "online",
         "role": role,
         "cpu_percent": cpu,
+        "cpu_cores": cpu_cores,
         "memory_percent": memory,
+        "memory_total_bytes": mem_total,
         "disk_percent": disk,
+        "disk_total_bytes": disk_total,
         "version": version,
         "platform": platform,
         "started_at": started_at().format("%Y-%m-%d %H:%M:%S (UTC)").to_string(),
@@ -161,8 +167,11 @@ pub fn fallback(version: &str) -> Value {
         "status": "online",
         "role": std::env::var("NODE_ROLE").unwrap_or_else(|_| "master".to_string()),
         "cpu_percent": 0.0,
+        "cpu_cores": 0,
         "memory_percent": 0.0,
+        "memory_total_bytes": 0,
         "disk_percent": 0.0,
+        "disk_total_bytes": 0,
         "version": version,
         "platform": format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
         "started_at": started_at().format("%Y-%m-%d %H:%M:%S (UTC)").to_string(),

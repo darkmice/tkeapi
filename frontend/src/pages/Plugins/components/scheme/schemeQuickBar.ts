@@ -96,11 +96,7 @@ export function formatParamOptionLabel(param: SchemeParam, val: any): string {
 
   // 3. 数量
   if (isCountParam(param)) {
-    const sheetsUnit = i18n.t('playground_2026:unit_sheets', '张');
-    if (/张/.test(str)) {
-      return isSimplified ? str : str.replace('张', sheetsUnit);
-    }
-    if (/^\d+$/.test(str)) return `${str}${sheetsUnit}`;
+    return formatChoiceLabel(param, val);
   }
 
   // 4. 中文选项反向匹配 (非简体中文)

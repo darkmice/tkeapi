@@ -27,7 +27,7 @@ pub(crate) fn plugin_config_model_id(
     None
 }
 
-pub(crate) fn json_sort_order(config_value: &str) -> i32 {
+pub(crate) fn json_sort_order(config_value: &str) -> i64 {
     serde_json::from_str::<serde_json::Value>(config_value)
         .ok()
         .and_then(|v| v.get("sort_order").cloned())
@@ -37,11 +37,10 @@ pub(crate) fn json_sort_order(config_value: &str) -> i32 {
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
         .unwrap_or(0)
-        .clamp(i32::MIN as i64, i32::MAX as i64) as i32
 }
 
 /// 模型列表已有页面排序时保持不变；为 0 时取各插件配置中的最大权重，避免已有展示顺序被抹平。
-pub(crate) fn backfill_sort(model_sort: i32, plugin_sorts: &[i32]) -> i32 {
+pub(crate) fn backfill_sort(model_sort: i64, plugin_sorts: &[i64]) -> i64 {
     if model_sort != 0 {
         return model_sort;
     }
@@ -51,7 +50,7 @@ pub(crate) fn backfill_sort(model_sort: i32, plugin_sorts: &[i32]) -> i32 {
 pub(crate) async fn backfill_models_sort_order_from_plugin_configs(
     pool: &PgPool,
 ) -> anyhow::Result<u64> {
-    let models: Vec<(i64, String, i32)> =
+    let models: Vec<(i64, String, i64)> =
         sqlx::query_as("SELECT id, COALESCE(mid, ''), sort_order FROM models")
             .fetch_all(pool)
             .await?;
@@ -60,10 +59,7 @@ pub(crate) async fn backfill_models_sort_order_from_plugin_configs(
         .filter(|(_, mid, _)| !mid.is_empty())
         .map(|(id, mid, _)| (mid.clone(), *id))
         .collect();
-    let current: HashMap<i64, i32> = models
-        .iter()
-        .map(|(id, _, sort)| (*id, *sort))
-        .collect();
+    let current: HashMap<i64, i64> = models.iter().map(|(id, _, sort)| (*id, *sort)).collect();
 
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT config_key, config_value FROM plugin_configs \
@@ -72,7 +68,7 @@ pub(crate) async fn backfill_models_sort_order_from_plugin_configs(
     .fetch_all(pool)
     .await?;
 
-    let mut plugin_max: HashMap<i64, i32> = HashMap::new();
+    let mut plugin_max: HashMap<i64, i64> = HashMap::new();
     for (key, val) in rows {
         let Some(id) = plugin_config_model_id(&key, &mid_to_id) else {
             continue;
@@ -91,11 +87,14 @@ pub(crate) async fn backfill_models_sort_order_from_plugin_configs(
         if next == model_sort {
             continue;
         }
-        sqlx::query("UPDATE models SET sort_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2")
-            .bind(next)
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let next_i32 = next.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        sqlx::query(
+            "UPDATE models SET sort_order = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        )
+        .bind(next_i32)
+        .bind(id)
+        .execute(pool)
+        .await?;
         updated += 1;
     }
     Ok(updated)

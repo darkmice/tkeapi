@@ -14,6 +14,8 @@ use crate::{
 };
 use axum::{
     extract::{Extension, State},
+    http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -35,10 +37,26 @@ pub fn admin_router() -> Router<Arc<AppState>> {
 pub fn portal_pages_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(page_home))
-        .route("/models", get(page_models))
-        .route("/model/{mid}", get(page_model_detail))
         .route("/contact", get(page_contact))
         .route("/about", get(page_about))
+        .fallback(page_fallback)
+}
+
+async fn page_fallback(
+    State(state): State<Arc<AppState>>,
+    uri: axum::http::Uri,
+) -> Result<axum::response::Response, AppError> {
+    let path = uri.path().trim_end_matches('/');
+    if path.is_empty() {
+        return Ok(page_home(State(state)).await?.into_response());
+    }
+    if path == "/about" {
+        return Ok(page_about(State(state)).await?.into_response());
+    }
+    if path == "/contact" {
+        return Ok(page_contact(State(state)).await?.into_response());
+    }
+    Ok((StatusCode::NOT_FOUND, axum::response::Html(String::new())).into_response())
 }
 
 // ─── 公开页面渲染 ───
@@ -166,18 +184,6 @@ async fn page_home(
     ))
 }
 
-async fn page_models(
-    State(state): State<Arc<AppState>>,
-) -> Result<axum::response::Html<String>, AppError> {
-    render_public_page(&state, "models", None).await
-}
-
-async fn page_model_detail(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(mid): axum::extract::Path<String>,
-) -> Result<axum::response::Html<String>, AppError> {
-    render_public_page(&state, "model_detail", Some(mid)).await
-}
 async fn page_contact(
     State(state): State<Arc<AppState>>,
 ) -> Result<axum::response::Html<String>, AppError> {
@@ -210,18 +216,15 @@ async fn load_configs(
     crate::api::plugins::load_plugin_configs_pub(state, "site_portal").await
 }
 
-const FIXED_NAV_SPECS: [(&str, &str, &str, i64); 5] = [
-    ("home", "站点首页|Home", "/home", 50),
+/// 经典科技风格实际页面：首页、系统模型广场、联系我们、关于我们。
+const SYSTEM_MARKETPLACE_PATH: &str = "/home/models";
+
+const FIXED_NAV_SPECS: [(&str, &str, &str, i64); 4] = [
+    ("home", "站点首页|Home", "/home", 40),
     (
         "marketplace",
         "模型广场|Model Marketplace",
-        "/home/models",
-        40,
-    ),
-    (
-        "integration",
-        "接入指南|Integration Guide",
-        "#integration",
+        SYSTEM_MARKETPLACE_PATH,
         30,
     ),
     ("contact", "联系我们|Contact Us", "/home/contact", 20),
@@ -270,8 +273,15 @@ fn marketplace_nav_path(nav: &serde_json::Value) -> String {
         .and_then(|item| item.get("path").and_then(|p| p.as_str()))
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("/home/models")
+        .unwrap_or(SYSTEM_MARKETPLACE_PATH)
         .to_string()
+}
+
+fn is_portal_models_path(path: &str) -> bool {
+    matches!(
+        path,
+        "#models" | "models" | "/portal/models" | "/portal/models/" | "/home/models/"
+    )
 }
 
 fn is_fixed_nav_key(key: &str) -> bool {
@@ -290,10 +300,50 @@ fn rewrite_packaged_default_nav(nav: &mut serde_json::Value) {
         return;
     }
     let packaged = keys == ["contact", "about", "models", "integration", "marketplace"]
-        || keys == ["features", "carousel", "models", "integration", "marketplace"]
-        || keys == ["marketplace", "integration", "contact", "about"];
+        || keys
+            == [
+                "features",
+                "carousel",
+                "models",
+                "integration",
+                "marketplace",
+            ]
+        || keys == ["marketplace", "integration", "contact", "about"]
+        || keys == ["home", "marketplace", "integration", "contact", "about"];
     if packaged {
         nav["items"] = json!(default_portal_nav_items());
+    }
+}
+
+/// 去掉经典科技页上不存在的锚点栏目，模型入口一律指向系统模型广场。
+fn align_nav_with_classic_pages(nav: &mut serde_json::Value) {
+    let Some(items) = nav.get_mut("items").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    items.retain(|item| {
+        let key = item.get("key").and_then(|k| k.as_str()).unwrap_or("");
+        let path = item.get("path").and_then(|p| p.as_str()).unwrap_or("");
+        let dead_anchor = path.is_empty() || path.starts_with('#');
+        !(matches!(key, "integration" | "features" | "carousel") && dead_anchor)
+            && !(key == "models" && path.starts_with('#'))
+    });
+    let has_marketplace = items
+        .iter()
+        .any(|item| item.get("key").and_then(|k| k.as_str()) == Some("marketplace"));
+    if has_marketplace {
+        items.retain(|item| item.get("key").and_then(|k| k.as_str()) != Some("models"));
+    }
+    for item in items.iter_mut() {
+        let key = item.get("key").and_then(|k| k.as_str()).unwrap_or("").to_string();
+        let path = item.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+        if key == "marketplace" && (path.is_empty() || is_portal_models_path(&path)) {
+            item["path"] = json!(SYSTEM_MARKETPLACE_PATH);
+        }
+        if key == "models" && (is_portal_models_path(&path) || path == SYSTEM_MARKETPLACE_PATH) {
+            item["key"] = json!("marketplace");
+            item["path"] = json!(SYSTEM_MARKETPLACE_PATH);
+            item["is_fixed"] = json!(true);
+        }
     }
 }
 
@@ -400,10 +450,10 @@ fn default_portal_footer_config() -> serde_json::Value {
         "description": "Tkeapi 是一个开源的 AI 大模型 API 中转平台系统，通过一个统一端点聚合全球前沿大模型通道，提供极速路由、高可用容灾与极低成本的模型中转与分发能力。|Tkeapi is an open-source AI model API relay platform system. It aggregates global frontier LLMs through one unified endpoint, providing high-availability routing and low-cost model distribution.",
         "links_title": "产品与服务|Products & Services",
         "links": [
-            {"label": "技术优势|Technical Advantages", "path": "#features", "enabled": true},
-            {"label": "支持模型|Supported Models", "path": "#models", "enabled": true},
-            {"label": "核心功能|Core Features", "path": "#carousel", "enabled": true},
-            {"label": "开发者指南|Developer Guide", "path": "#integration", "enabled": true}
+            {"label": "站点首页|Home", "path": "/home", "enabled": true},
+            {"label": "模型广场|Model Marketplace", "path": "/home/models", "enabled": true},
+            {"label": "联系我们|Contact Us", "path": "/home/contact", "enabled": true},
+            {"label": "关于我们|About Us", "path": "/home/about", "enabled": true}
         ],
         "news_title": "开发者资讯|Developer News",
         "news_description": "订阅每周通讯，获取最新全球 AI 模型折扣、高可用路由升级和开发洞察。|Subscribe to our weekly newsletter for the latest global AI model discounts, high-availability route upgrades, and development insights.",
@@ -447,7 +497,7 @@ fn default_portal_home_config() -> serde_json::Value {
 
 fn default_portal_columns_config() -> serde_json::Value {
     json!({
-        "models": {"title": "模型数据", "path": "models", "enabled": true},
+        "models": {"title": "模型广场", "path": "/home/models", "enabled": true},
         "contact": {
             "title": "联系我们",
             "path": "contact",
@@ -517,7 +567,9 @@ fn merge_home_config_patch(home: &mut serde_json::Value, patch: &serde_json::Val
     }
 }
 
-fn stored_portal_home_config(configs: &std::collections::HashMap<String, String>) -> serde_json::Value {
+fn stored_portal_home_config(
+    configs: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
     let defaults = default_portal_home_config();
     let mut home = configs
         .get("home_config")
@@ -587,6 +639,17 @@ fn portal_columns_config(configs: &std::collections::HashMap<String, String>) ->
             }
         }
     }
+    if columns.pointer("/models/title").and_then(|v| v.as_str()) == Some("模型数据") {
+        columns["models"]["title"] = json!("模型广场");
+    }
+    if is_portal_models_path(
+        columns
+            .pointer("/models/path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    ) {
+        columns["models"]["path"] = json!(SYSTEM_MARKETPLACE_PATH);
+    }
     apply_contact_sorts(&mut columns);
     rewrite_whatstoken_brand(&mut columns);
     columns
@@ -647,6 +710,7 @@ fn portal_nav_config(configs: &std::collections::HashMap<String, String>) -> ser
     rewrite_whatstoken_brand(&mut nav);
     migrate_features_carousel_nav_to_contact_about(&mut nav);
     rewrite_packaged_default_nav(&mut nav);
+    align_nav_with_classic_pages(&mut nav);
     ensure_fixed_nav_items(&mut nav);
     if let Some(items) = nav.get_mut("items").and_then(|v| v.as_array_mut()) {
         sort_json_items_by_weight_desc(items);
@@ -674,7 +738,8 @@ fn migrate_features_carousel_nav_to_contact_about(nav: &mut serde_json::Value) {
         item.get("key").and_then(|k| k.as_str()) == Some("carousel")
             || item.get("path").and_then(|p| p.as_str()) == Some("#carousel")
     };
-    let contact_item = default_fixed_nav_item("contact", "联系我们|Contact Us", "/home/contact", 20);
+    let contact_item =
+        default_fixed_nav_item("contact", "联系我们|Contact Us", "/home/contact", 20);
     let about_item = default_fixed_nav_item("about", "关于我们|About Us", "/home/about", 10);
     let mut i = 0;
     while i < items.len() {
@@ -716,8 +781,54 @@ fn portal_footer_config(configs: &std::collections::HashMap<String, String>) -> 
         }
     }
     merge_portal_defaults(&mut footer, &defaults);
+    sanitize_footer_links(&mut footer);
     rewrite_whatstoken_brand(&mut footer);
     footer
+}
+
+fn footer_link_path(link: &serde_json::Value) -> &str {
+    link.get("path")
+        .or_else(|| link.get("url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+fn is_dead_footer_path(path: &str) -> bool {
+    matches!(
+        path,
+        "" | "#" | "#features" | "#models" | "#carousel" | "#integration"
+    ) || is_portal_models_path(path)
+}
+
+/// 旧底部默认是首页上不存在的锚点。整组死链换成与导航相同的四个页面；单条模型锚点改到系统模型广场。
+fn sanitize_footer_links(footer: &mut serde_json::Value) {
+    let defaults = default_portal_footer_config();
+    let Some(links) = footer.get_mut("links").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    let all_dead = !links.is_empty()
+        && links.iter().all(|link| is_dead_footer_path(footer_link_path(link)));
+    if all_dead {
+        if let Some(default_links) = defaults.get("links").and_then(|v| v.as_array()) {
+            *links = default_links.clone();
+        }
+        return;
+    }
+    for link in links.iter_mut() {
+        let path = footer_link_path(link).to_string();
+        if path == "#models" || is_portal_models_path(&path) {
+            if let Some(obj) = link.as_object_mut() {
+                obj.insert("path".to_string(), json!(SYSTEM_MARKETPLACE_PATH));
+                obj.remove("url");
+            }
+        }
+    }
+    links.retain(|link| !is_dead_footer_path(footer_link_path(link)));
+    if links.is_empty() {
+        if let Some(default_links) = defaults.get("links").and_then(|v| v.as_array()) {
+            *links = default_links.clone();
+        }
+    }
 }
 
 const HERO_SLOGANS: [&str; 3] = [
@@ -784,7 +895,10 @@ fn replace_http_urls(text: &str, replacement: &str) -> String {
             .char_indices()
             .find(|(_, c)| {
                 c.is_whitespace()
-                    || matches!(*c, ',' | '，' | ';' | '；' | '!' | '！' | '(' | ')' | '（' | '）')
+                    || matches!(
+                        *c,
+                        ',' | '，' | ';' | '；' | '!' | '！' | '(' | ')' | '（' | '）'
+                    )
             })
             .map(|(i, _)| i)
             .unwrap_or(url.len());
@@ -1141,40 +1255,6 @@ fn render_homepage_with_context(
     Ok(managed_homepage_html(configs))
 }
 
-async fn write_models_static_pages(
-    portal_dir: &str,
-    models_path: &str,
-    tera: &tera::Tera,
-    portal_data: &mut tera::Context,
-) -> Result<(), AppError> {
-    portal_data.insert("current_page", &"models");
-    let html = render_page(tera, "models", portal_data)?;
-    write_static_html(format!("{}/{}/index.html", portal_dir, models_path), &html).await?;
-
-    let models = portal_data.get("models").cloned().unwrap_or(json!([]));
-    if let Some(models_arr) = models.as_array() {
-        for m in models_arr {
-            if let Some(model_id) = m.get("model_id").and_then(|v| v.as_str()) {
-                let original_id = m.get("original_id").and_then(|v| v.as_str()).unwrap_or("");
-                let target_id = if !original_id.is_empty() {
-                    original_id
-                } else {
-                    model_id
-                };
-                let mut single_portal_data = portal_data.clone();
-                single_portal_data.insert("current_mid", &target_id);
-                let detail_html = render_page(tera, "model_detail", &single_portal_data)?;
-                write_static_html(
-                    format!("{}/model/{}/index.html", portal_dir, target_id),
-                    &detail_html,
-                )
-                .await?;
-            }
-        }
-    }
-    Ok(())
-}
-
 async fn upsert(state: &AppState, key: &str, value: &str) -> Result<(), sqlx::Error> {
     let result = sqlx::query(
         &state.db.format_query("UPDATE plugin_configs SET config_value = ?, updated_at = CURRENT_TIMESTAMP WHERE plugin_name = 'site_portal' AND config_key = ?")
@@ -1184,6 +1264,7 @@ async fn upsert(state: &AppState, key: &str, value: &str) -> Result<(), sqlx::Er
             &state.db.format_query("INSERT INTO plugin_configs (plugin_name, config_key, config_value) VALUES ('site_portal', ?, ?)")
         ).bind(key).bind(value).execute(&state.db.pool).await?;
     }
+    crate::api::plugins::invalidate_plugin_configs_cache("site_portal");
     Ok(())
 }
 
@@ -1359,16 +1440,25 @@ struct GenerateRequest {
     columns: Option<Vec<String>>,
 }
 
-fn column_paths(configs: &std::collections::HashMap<String, String>) -> (String, String, String) {
+/// FAI 艺术未配置站点图标时，用页头那枚菱形标作为默认 favicon。
+fn portal_favicon_href(style: &serde_json::Value, site_favicon: &str) -> String {
+    if style.get("current_style").and_then(|v| v.as_str()) != Some("fai_art") {
+        return String::new();
+    }
+    let custom = site_favicon.trim();
+    if !custom.is_empty() {
+        return custom.to_string();
+    }
+    let svg = include_str!("../../../templates/portal/styles/fai_art/assets/favicon.svg");
+    format!("data:image/svg+xml,{}", urlencoding::encode(svg))
+}
+
+fn column_paths(configs: &std::collections::HashMap<String, String>) -> (String, String) {
     let columns_cfg: serde_json::Value = configs
         .get("columns_config")
         .and_then(|v| serde_json::from_str(v).ok())
         .unwrap_or(json!({}));
     (
-        columns_cfg["models"]["path"]
-            .as_str()
-            .unwrap_or("models")
-            .to_string(),
         columns_cfg["contact"]["path"]
             .as_str()
             .unwrap_or("contact")
@@ -1444,7 +1534,7 @@ async fn generate_static(
     let configs = load_configs(&state).await?;
     let mut portal_data = build_portal_data(&state, &configs).await?;
     let portal_dir = state.config.portal_dir.clone();
-    let (models_path, contact_path, about_path) = column_paths(&configs);
+    let (contact_path, about_path) = column_paths(&configs);
     ensure_portal_assets(&portal_dir, &state.config.assets_dir).await;
 
     let mut tera = tera::Tera::default();
@@ -1469,15 +1559,6 @@ async fn generate_static(
         write_static_html(format!("{}/index.html", portal_dir), &html).await?;
         generated.push("首页");
         generated_paths.push(json!({ "label": "首页", "path": "/portal/" }));
-    }
-
-    if should_gen("models") {
-        write_models_static_pages(&portal_dir, &models_path, &tera, &mut portal_data).await?;
-        generated.push("SEO模型页");
-        generated_paths.push(json!({
-            "label": "SEO模型页",
-            "path": format!("/portal/{}/", models_path)
-        }));
     }
 
     if should_gen("contact") {
@@ -1579,6 +1660,7 @@ async fn build_portal_data(
         .get("style_config")
         .and_then(|v| serde_json::from_str(v).ok())
         .unwrap_or(json!({"current_style": "classic"}));
+    let favicon_href = portal_favicon_href(&style, &site_settings.favicon);
 
     #[derive(sqlx::FromRow, serde::Serialize, Clone)]
     struct SimpleModel {
@@ -1602,7 +1684,7 @@ async fn build_portal_data(
         #[sqlx(default)]
         global_discount: f64,
         #[sqlx(default)]
-        global_discount_enabled: i32,
+        global_discount_enabled: i64,
     }
     let is_mp_enabled: bool = sqlx::query_scalar::<_, i64>(
         &state
@@ -1692,7 +1774,11 @@ async fn build_portal_data(
             filtered_models.push(m);
         }
 
-        filtered_models.sort_by(|a, b| b.sort_order.cmp(&a.sort_order).then_with(|| b.id.cmp(&a.id)));
+        filtered_models.sort_by(|a, b| {
+            b.sort_order
+                .cmp(&a.sort_order)
+                .then_with(|| b.id.cmp(&a.id))
+        });
 
         let mut grouped_map: std::collections::HashMap<String, Vec<serde_json::Value>> =
             std::collections::HashMap::new();
@@ -1768,6 +1854,7 @@ async fn build_portal_data(
     ctx.insert("scripts", &scripts);
     ctx.insert("seo", &seo);
     ctx.insert("style", &style);
+    ctx.insert("favicon_href", &favicon_href);
     ctx.insert("models", &grouped_models);
     ctx.insert("currency", &currency);
     ctx.insert("year", &chrono::Utc::now().format("%Y").to_string());
@@ -1799,8 +1886,6 @@ const PORTAL_LOCALE_VI: &str =
 fn render_page(tera: &tera::Tera, page: &str, ctx: &tera::Context) -> Result<String, AppError> {
     let tpl = match page {
         "home" => "home.html",
-        "models" => "models.html",
-        "model_detail" => "model_detail.html",
         "contact" => "contact.html",
         "about" => "about.html",
         _ => return Err(AppError::BadRequest(format!("未知页面: {}", page))),
@@ -1837,14 +1922,6 @@ fn register_templates(tera: &mut tera::Tera) -> Result<(), AppError> {
             tera_child_source(include_str!("../../../templates/portal/home.html")),
         ),
         (
-            "models.html",
-            tera_child_source(include_str!("../../../templates/portal/models.html")),
-        ),
-        (
-            "model_detail.html",
-            tera_child_source(include_str!("../../../templates/portal/model_detail.html")),
-        ),
-        (
             "contact.html",
             tera_child_source(include_str!("../../../templates/portal/contact.html")),
         ),
@@ -1854,37 +1931,19 @@ fn register_templates(tera: &mut tera::Tera) -> Result<(), AppError> {
         ),
     ])
     // 管理端生成依赖此错误信息；勿用 Internal（对外会被吞成通用 500）
-    .map_err(|e| AppError::BadRequest(format!("门户模板注册失败: {e}")))
-}
-
-pub async fn auto_generate_portal_models_static(state: &AppState) -> Result<(), AppError> {
-    if !is_portal_enabled(state).await? {
-        return Ok(());
-    }
-
-    let configs = load_configs(state).await?;
-    ensure_portal_assets(&state.config.portal_dir, &state.config.assets_dir).await;
-    let mut portal_data = build_portal_data(state, &configs).await?;
-    let (models_path, _, _) = column_paths(&configs);
-
-    let mut tera = tera::Tera::default();
-    register_templates(&mut tera)?;
-    write_models_static_pages(
-        &state.config.portal_dir,
-        &models_path,
-        &tera,
-        &mut portal_data,
-    )
-    .await?;
-
-    Ok(())
+    .map_err(|e| {
+        let detail = std::error::Error::source(&e)
+            .map(|source| format!("{e}: {source}"))
+            .unwrap_or_else(|| e.to_string());
+        AppError::BadRequest(format!("门户模板注册失败: {detail}"))
+    })
 }
 
 async fn run_all_static_generation(state: &AppState) -> Result<(), AppError> {
     let configs = load_configs(state).await?;
     let mut portal_data = build_portal_data(state, &configs).await?;
     let portal_dir = state.config.portal_dir.clone();
-    let (models_path, contact_path, about_path) = column_paths(&configs);
+    let (contact_path, about_path) = column_paths(&configs);
     ensure_portal_assets(&portal_dir, &state.config.assets_dir).await;
 
     let mut tera = tera::Tera::default();
@@ -1892,8 +1951,6 @@ async fn run_all_static_generation(state: &AppState) -> Result<(), AppError> {
 
     let home_html = render_homepage_with_context(&configs, &tera, &mut portal_data)?;
     write_static_html(format!("{}/index.html", portal_dir), &home_html).await?;
-
-    write_models_static_pages(&portal_dir, &models_path, &tera, &mut portal_data).await?;
 
     portal_data.insert("current_page", &"contact");
     let html = render_page(&tera, "contact", &portal_data)?;

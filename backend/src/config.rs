@@ -63,10 +63,13 @@ impl AppConfig {
         // 确保素材发布目录存在
         let _ = std::fs::create_dir_all(&assets_dir);
 
-        // 1. JWT_SECRET：优先环境变量（排除空值和已知弱默认值），否则从文件加载或自动生成
+        // 1. JWT_SECRET：优先环境变量（排除示例模板值与小于16位的弱值），否则从文件加载或自动生成
         let jwt_secret = std::env::var("JWT_SECRET")
             .ok()
-            .filter(|s| !s.trim().is_empty() && s != "tokensbyte-change-me-in-production")
+            .filter(|s| {
+                let t = s.trim();
+                t.len() >= 16 && !t.contains("change-me")
+            })
             .unwrap_or_else(|| {
                 let secret_file = format!("{}/.jwt_secret", data_dir);
                 if let Ok(content) = std::fs::read_to_string(&secret_file) {

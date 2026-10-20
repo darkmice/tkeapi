@@ -38,6 +38,22 @@ Nếu bạn sử dụng SDK chính thức của Google hoặc muốn bỏ qua l�
 }
 ```
 
+### 3. Giao diện tương tác thống nhất Interactions (v1 / v1beta)
+* **Đường dẫn**: `/v1/interactions` (Tương thích `/v1beta/interactions`)
+* **Phương thức yêu cầu**: `POST`
+
+Giao diện tương tác thống nhất Interactions hoàn toàn mới của Google Gemini, hỗ trợ chỉ định trực tiếp `model` (hoặc `agent`) cùng với `input` (văn bản, đa phương thức hoặc tương tác nhiều lượt), đồng thời hỗ trợ `system_instruction`, `tools`, `response_format`, v.v.
+
+#### Ví dụ dữ liệu yêu cầu (Payload) cốt lõi
+```json
+{
+  "model": "gemini-2.5-flash",
+  "input": "Hãy giúp tôi lên lịch trình ngắm hoa anh đào 3 ngày tại Kyoto.",
+  "system_instruction": "Bạn là một chuyên gia lập kế hoạch du lịch chuyên nghiệp, thân thiện và hài hước.",
+  "stream": false
+}
+```
+
 #### Phương thức xác thực (Chọn 1 trong 3)
 * Header tiêu chuẩn: `Authorization: Bearer sk-your_token`
 * Header Google: `X-Goog-Api-Key: sk-your_token`

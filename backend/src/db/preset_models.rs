@@ -25,11 +25,11 @@ pub struct PresetModelDef {
     pub pre_deduction: f64,
     pub feature_attributes: &'static str,
     pub site_discount: f64,
-    pub site_discount_enabled: i32,
+    pub site_discount_enabled: i64,
     pub global_discount: f64,
-    pub global_discount_enabled: i32,
-    pub is_active: i32,
-    pub enable_log_content: i32,
+    pub global_discount_enabled: i64,
+    pub is_active: i64,
+    pub enable_log_content: i64,
     pub remark: &'static str,
     pub description: &'static str,
 }
@@ -366,11 +366,9 @@ pub async fn split_listed_and_library(pool: &PgPool) -> anyhow::Result<u32> {
     .await?
     .rows_affected() as u32;
 
-    sqlx::query(
-        "DELETE FROM models WHERE is_system = 1 AND mid IS NOT NULL AND mid <> ''",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("DELETE FROM models WHERE is_system = 1 AND mid IS NOT NULL AND mid <> ''")
+        .execute(pool)
+        .await?;
     sqlx::query("UPDATE models SET is_system = 0 WHERE is_system = 1")
         .execute(pool)
         .await?;
@@ -442,5 +440,5 @@ pub const LIBRARY_MODEL_COLUMNS: &str = "id, mid, name, model_id, original_id, m
     pre_deduction, is_active, forward_rule_ids, enable_log_content, \
     site_discount, site_discount_enabled, global_discount, global_discount_enabled, \
     discount_schedule, logo, remark, description, feature_attributes, is_system, \
-    NULL::text AS library_mid, 0 AS is_listed, sort_order, created_at, updated_at, \
+    NULL::text AS library_mid, 0::bigint AS is_listed, sort_order, created_at, updated_at, \
     NULL::text AS type_name";

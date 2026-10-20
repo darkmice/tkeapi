@@ -22,3 +22,8 @@ dist-ssr
 *.sln
 *.sw?
 *.pid
+
+# Generated legal static pages
+public/legal/
+
+.vite

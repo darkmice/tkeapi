@@ -61,7 +61,7 @@ fn cascade_required_plugin(cfg: &serde_json::Value) -> Option<&'static str> {
 }
 
 fn is_enhance_category(category: &str) -> bool {
-    matches!(category, "画质增强" | "视频增强" | "图像增强")
+    category == "封装"
 }
 
 /// 解析规则依赖的插件名；无依赖返回 `None`。
@@ -192,7 +192,7 @@ pub async fn update_rule(
     Path(id): Path<i64>,
     Json(mut req): Json<UpdateRuleRequest>,
 ) -> AppResult<Json<ForwardRule>> {
-    let existing: Option<i32> = sqlx::query_scalar(
+    let existing: Option<i64> = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM forward_rules WHERE id = ?"),
@@ -348,7 +348,7 @@ pub async fn delete_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let existing: Option<i32> = sqlx::query_scalar(
+    let existing: Option<i64> = sqlx::query_scalar(
         &state
             .db
             .format_query("SELECT is_system FROM forward_rules WHERE id = ?"),
@@ -399,33 +399,68 @@ mod tests {
     #[test]
     fn hides_volc_cascade_when_mediakit_off() {
         let cfg = r#"{"is_cascade":true,"target_type":"volcengine"}"#;
-        assert!(should_hide_plugin_gated_rule("自定义级联", "视频", cfg, &avail(false, true)));
-        assert!(!should_hide_plugin_gated_rule("自定义级联", "视频", cfg, &avail(true, false)));
+        assert!(should_hide_plugin_gated_rule(
+            "自定义级联",
+            "视频",
+            cfg,
+            &avail(false, true)
+        ));
+        assert!(!should_hide_plugin_gated_rule(
+            "自定义级联",
+            "视频",
+            cfg,
+            &avail(true, false)
+        ));
     }
 
     #[test]
     fn hides_tencent_cascade_when_plugin_off() {
         let cfg = r#"{"is_cascade":true,"cascade_engine":"tencent"}"#;
-        assert!(should_hide_plugin_gated_rule("腾讯级联", "视频", cfg, &avail(true, false)));
-        assert!(!should_hide_plugin_gated_rule("腾讯级联", "视频", cfg, &avail(false, true)));
+        assert!(should_hide_plugin_gated_rule(
+            "腾讯级联",
+            "视频",
+            cfg,
+            &avail(true, false)
+        ));
+        assert!(!should_hide_plugin_gated_rule(
+            "腾讯级联",
+            "视频",
+            cfg,
+            &avail(false, true)
+        ));
     }
 
     #[test]
     fn keeps_plain_rule_when_enhance_plugins_off() {
         let cfg = r#"{"target_type":"openai"}"#;
-        assert!(!should_hide_plugin_gated_rule("普通转发", "聊天", cfg, &avail(false, false)));
+        assert!(!should_hide_plugin_gated_rule(
+            "普通转发",
+            "聊天",
+            cfg,
+            &avail(false, false)
+        ));
     }
 
     #[test]
     fn hides_enhance_category_and_mediakit_rules_when_plugin_off() {
         let cfg = r#"{"target_type":"volcengine_media_enhance"}"#;
         assert!(should_hide_plugin_gated_rule(
-            "火山 MediaKit 视频画质增强 (标准/专业版)",
-            "视频",
+            "火山 MediaKit 视频画质增强",
+            "封装",
             cfg,
             &avail(false, true),
         ));
-        assert!(should_hide_plugin_gated_rule("自定义", "画质增强", "{}", &avail(false, true)));
-        assert!(!should_hide_plugin_gated_rule("自定义", "画质增强", "{}", &avail(true, false)));
+        assert!(should_hide_plugin_gated_rule(
+            "自定义",
+            "封装",
+            "{}",
+            &avail(false, true)
+        ));
+        assert!(!should_hide_plugin_gated_rule(
+            "自定义",
+            "封装",
+            "{}",
+            &avail(true, false)
+        ));
     }
 }

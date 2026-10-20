@@ -5,13 +5,16 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── 增加用户通知订阅偏好设置字段 ──
-    once_migration!(pool, done, "add_user_notification_preferences_v1",
+    once_migration!(
+        pool,
+        done,
+        "add_user_notification_preferences_v1",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences TEXT",
         "COMMENT ON COLUMN users.notification_preferences IS '用户的通知订阅偏好(JSON格式)'"
     );
@@ -35,7 +38,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 若先前误用 TIMESTAMPTZ，统一改为 TEXT 以匹配 sqlx String 映射
-    once_migration!(pool, done, "fix_channel_categories_timestamps_v1",
+    once_migration!(
+        pool,
+        done,
+        "fix_channel_categories_timestamps_v1",
         r#"DO $$
         BEGIN
           IF EXISTS (
@@ -67,7 +73,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "CREATE INDEX IF NOT EXISTS idx_redemption_logs_code_user ON redemption_logs (redemption_id, user_id)"
     );
 
-    once_migration!(pool, done, "redemptions_status_v1",
+    once_migration!(
+        pool,
+        done,
+        "redemptions_status_v1",
         "ALTER TABLE redemptions ADD COLUMN IF NOT EXISTS status INTEGER NOT NULL DEFAULT 1"
     );
 
@@ -109,7 +118,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     // ── 全库时间列 TEXT → TIMESTAMPTZ（timesystem UTC，提升 logs 等范围查询可走索引）──
     // 部署注意：logs 大表 ALTER TYPE 会持有 ACCESS EXCLUSIVE 并重写表，请安排维护窗口。
     // 周期键 last_reset_* / last_daily_reset 等仍为 TEXT（日历键，非时间戳）。
-    once_migration!(pool, done, "timestamptz_unify_v1",
+    once_migration!(
+        pool,
+        done,
+        "timestamptz_unify_v1",
         r#"CREATE OR REPLACE FUNCTION _tb_text_to_tstz(t TEXT) RETURNS TIMESTAMPTZ AS $fn$
         BEGIN
           IF t IS NULL OR btrim(t) = '' THEN
@@ -272,7 +284,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "DROP INDEX IF EXISTS idx_logs_date_created_at",
         "DROP FUNCTION IF EXISTS _tb_text_to_tstz(TEXT)"
     );
-
 
     Ok(())
 }

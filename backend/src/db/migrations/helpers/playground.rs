@@ -5,7 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-pub(crate) async fn seed_playground_2026_quick_bar(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow::Result<u64> {
+pub(crate) async fn seed_playground_2026_quick_bar(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> anyhow::Result<u64> {
     use crate::api::plugins::manager::quick_bar_seed::{
         seed_imagine_quick_bar_overrides, seed_imagine_quick_bar_schemes,
     };
@@ -60,10 +62,7 @@ pub(crate) async fn seed_playground_2026_quick_bar(pool: &sqlx::Pool<sqlx::Postg
         if !conf.get("param_overrides").is_some_and(|v| v.is_object()) {
             continue;
         }
-        let scheme_id = conf
-            .get("scheme_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let scheme_id = conf.get("scheme_id").and_then(|v| v.as_str()).unwrap_or("");
         let scheme_params = scheme_params_by_id
             .get(scheme_id)
             .cloned()
@@ -150,14 +149,14 @@ pub(crate) async fn remove_playground_2026_seedream_5_0_layer_decomposition(
         let Ok(mut conf) = serde_json::from_str::<serde_json::Value>(&val) else {
             continue;
         };
-        let scheme_id = conf
-            .get("scheme_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let scheme_id = conf.get("scheme_id").and_then(|v| v.as_str()).unwrap_or("");
         if scheme_id != "seedream_5_0" {
             continue;
         }
-        let Some(overrides) = conf.get_mut("param_overrides").and_then(|v| v.as_object_mut()) else {
+        let Some(overrides) = conf
+            .get_mut("param_overrides")
+            .and_then(|v| v.as_object_mut())
+        else {
             continue;
         };
         let mut model_changed = false;
@@ -221,7 +220,10 @@ pub(crate) async fn seed_playground_seedance2_slider(
                                 if p.get("key").and_then(|v| v.as_str()) == Some("duration") {
                                     if let Some(obj) = p.as_object_mut() {
                                         obj.insert("type".into(), serde_json::json!("slider"));
-                                        obj.insert("data_type".into(), serde_json::json!("integer"));
+                                        obj.insert(
+                                            "data_type".into(),
+                                            serde_json::json!("integer"),
+                                        );
                                         obj.insert("min".into(), serde_json::json!(4));
                                         obj.insert("max".into(), serde_json::json!(15));
                                         obj.insert("step".into(), serde_json::json!(1));
@@ -283,7 +285,8 @@ pub(crate) async fn strip_playground_seedance2_negative_prompt(
                             inputs.retain(|p| {
                                 let key = p.get("key").and_then(|v| v.as_str());
                                 let bind_key = p.get("bind_key").and_then(|v| v.as_str());
-                                key != Some("negative_prompt") && bind_key != Some("negative_prompt")
+                                key != Some("negative_prompt")
+                                    && bind_key != Some("negative_prompt")
                             });
                             if inputs.len() != len_before {
                                 changed = true;
@@ -387,10 +390,16 @@ fn push_feature_attr(raw: Option<&str>, plugin_keys: &[String], label: &str) -> 
         attrs = attributes_from_keys(plugin_keys);
     }
     if attrs.iter().any(|item| item == label) {
-        return (serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_string()), false);
+        return (
+            serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_string()),
+            false,
+        );
     }
     attrs.push(label.to_string());
-    (serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_string()), true)
+    (
+        serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_string()),
+        true,
+    )
 }
 
 fn plugin_feature_keys(cfg: &serde_json::Value) -> Vec<String> {
@@ -409,7 +418,8 @@ fn is_documented_mask_model(model_id: &str, alias: &str) -> bool {
     const IDS: &[&str] = &["gpt-image-2", "gpt-image-2-2026-04-21"];
     let id = model_id.trim().to_ascii_lowercase();
     let al = alias.trim().to_ascii_lowercase();
-    IDS.iter().any(|item| *item == id || (!al.is_empty() && *item == al))
+    IDS.iter()
+        .any(|item| *item == id || (!al.is_empty() && *item == al))
 }
 
 /// 创作中心2026：图片类型增加「蒙版」「坐标框」。模型号恰好是 gpt-image-2 的勾蒙版并开启；Seedream 5.0 Pro 勾坐标框。
@@ -435,11 +445,10 @@ async fn seed_playground_2026_mark_capabilities_inner(
     use crate::api::plugins::playground_2026::model_features::parse_attr_list;
 
     let mut updated = 0u64;
-    let type_rows: Vec<(i64, Option<String>)> = sqlx::query_as(
-        "SELECT id, default_features FROM model_types WHERE name = '图片'",
-    )
-    .fetch_all(pool)
-    .await?;
+    let type_rows: Vec<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, default_features FROM model_types WHERE name = '图片'")
+            .fetch_all(pool)
+            .await?;
     for (id, raw) in type_rows {
         let mut attrs = parse_attr_list(raw.as_deref());
         let mut changed = false;
@@ -461,8 +470,9 @@ async fn seed_playground_2026_mark_capabilities_inner(
         updated += 1;
     }
 
-    let models: Vec<(i64, String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT m.id, m.model_id, COALESCE(m.model_id_alias, ''), m.name, \
+    let models: Vec<(i64, String, String, String, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT m.id, m.model_id, COALESCE(m.model_id_alias, ''), m.name, \
                 m.feature_attributes, pc.config_value \
          FROM models m \
          JOIN model_types t ON t.id = m.type_id \
@@ -470,9 +480,9 @@ async fn seed_playground_2026_mark_capabilities_inner(
            ON pc.plugin_name = 'playground_2026' \
           AND pc.config_key = 'pg_model_id_' || m.id::text \
          WHERE t.name = '图片'",
-    )
-    .fetch_all(pool)
-    .await?;
+        )
+        .fetch_all(pool)
+        .await?;
 
     for (id, model_id, alias, name, attrs_raw, cfg_raw) in models {
         let cfg = cfg_raw
@@ -599,4 +609,3 @@ async fn restrict_playground_2026_mask_models_inner(
     }
     Ok(updated)
 }
-

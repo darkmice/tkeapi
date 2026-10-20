@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <g transform="translate(16 16) rotate(45)">
+    <mask id="fai-inset" maskContentUnits="userSpaceOnUse">
+      <rect x="-7.2" y="-7.2" width="14.4" height="14.4" rx="2.1" fill="#fff"/>
+      <rect x="-4.2" y="-4.2" width="14.4" height="14.4" rx="2.1" fill="#000"/>
+    </mask>
+    <rect x="-8" y="-8" width="16" height="16" rx="3" fill="none" stroke="#19191a" stroke-width="1.6"/>
+    <rect x="-8" y="-8" width="16" height="16" fill="#19191a" mask="url(#fai-inset)"/>
+  </g>
+</svg>

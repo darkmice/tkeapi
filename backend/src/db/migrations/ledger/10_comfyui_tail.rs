@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ComfyUI 接入：服务/工作流/任务表 + 系统增强插件种子（转发规则由插件运行时生成，不预置）
@@ -149,12 +149,18 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "DROP INDEX CONCURRENTLY IF EXISTS idx_logs_task_id"
     );
 
-    once_migration!(pool, done, "comfyui_jobs_debug_error_v1",
+    once_migration!(
+        pool,
+        done,
+        "comfyui_jobs_debug_error_v1",
         "ALTER TABLE comfyui_jobs ADD COLUMN IF NOT EXISTS debug_error TEXT",
         "COMMENT ON COLUMN comfyui_jobs.debug_error IS '节点失败调试信息，仅插件任务日志'"
     );
 
-    once_migration!(pool, done, "comfyui_scenes_v1",
+    once_migration!(
+        pool,
+        done,
+        "comfyui_scenes_v1",
         "ALTER TABLE comfyui_workflows ADD COLUMN IF NOT EXISTS scenes TEXT NOT NULL DEFAULT '[]'",
         "DROP INDEX IF EXISTS idx_comfyui_workflows_rule",
         "ALTER TABLE comfyui_workflows DROP COLUMN IF EXISTS forward_rule_id"
@@ -165,7 +171,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 菜单配置：将 /wallet 的 label_zh 从「资产中心」更新为「我的钱包」
-    once_migration!(pool, done, "update_menu_wallet_label_to_my_wallet_20260815",
+    once_migration!(
+        pool,
+        done,
+        "update_menu_wallet_label_to_my_wallet_20260815",
         "UPDATE settings SET value = replace(
             replace(value, '\"label_zh\":\"资产中心\"', '\"label_zh\":\"我的钱包\"'),
             '\"label_zh\": \"资产中心\"', '\"label_zh\": \"我的钱包\"'
@@ -226,7 +235,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 提示通知：增加弹窗通知开关 is_popup
-    once_migration!(pool, done, "announcements_add_is_popup_v1",
+    once_migration!(
+        pool,
+        done,
+        "announcements_add_is_popup_v1",
         "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS is_popup INTEGER NOT NULL DEFAULT 0"
     );
 
@@ -273,7 +285,8 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     if !done.contains("playground_2026_quick_bar_seed_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_quick_bar(pool).await {
+        match crate::db::migrations::helpers::playground::seed_playground_2026_quick_bar(pool).await
+        {
             Ok(n) => {
                 let _ = sqlx::query(
                     "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_quick_bar_seed_v1')",
@@ -284,14 +297,15 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 tracing::info!("创作中心2026快捷栏回填完成，更新 {} 条配置", n);
             }
             Err(e) => {
-                tracing::warn!(
-                    "playground_2026_quick_bar_seed_v1 失败，未标记完成以便重试: {e}"
-                );
+                tracing::warn!("playground_2026_quick_bar_seed_v1 失败，未标记完成以便重试: {e}");
             }
         }
     }
 
-    once_migration!(pool, done, "comfyui_request_queue_hold_v1",
+    once_migration!(
+        pool,
+        done,
+        "comfyui_request_queue_hold_v1",
         r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
            VALUES
              ('comfyui_bridge', 'queue_hold_all', '0', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
@@ -354,7 +368,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
          WHERE is_completed = 0 AND status_code NOT IN (0, 200)"
     );
 
-    once_migration!(pool, done, "comfyui_queue_node_timeout_v1",
+    once_migration!(
+        pool,
+        done,
+        "comfyui_queue_node_timeout_v1",
         r#"INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at)
            SELECT 'comfyui_bridge', 'queue_node_timeout_secs', config_value, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
              FROM plugin_configs
@@ -408,7 +425,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 创作中心2026：仅系统类型「图片」「视频」初始绑定；勿用 LIKE，避免误伤「视频增强」
-    once_migration!(pool, done, "pg2026_seed_model_feature_keys_v1",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_seed_model_feature_keys_v1",
         r#"WITH src AS (
              SELECT
                m.id,
@@ -456,7 +476,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 已跑过 v1 LIKE 回填的库：从「视频增强」模型去掉误加的文生视频
-    once_migration!(pool, done, "pg2026_strip_enhance_text_to_video_v1",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_strip_enhance_text_to_video_v1",
         r#"UPDATE plugin_configs pc
            SET config_value = jsonb_set(
                  pc.config_value::jsonb,
@@ -480,7 +503,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // v1 已标记完成，但后续「保存全部配置」把 feature_keys 写成空数组；只回填空/缺失，不覆盖已勾选
-    once_migration!(pool, done, "pg2026_seed_model_feature_keys_v2",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_seed_model_feature_keys_v2",
         r#"WITH src AS (
              SELECT
                m.id,
@@ -560,7 +586,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 聊天三协议原生透传：chat / responses / messages 入口即上游 ──
-    once_migration!(pool, done, "chat_path_passthrough_forward_rule_v1",
+    once_migration!(
+        pool,
+        done,
+        "chat_path_passthrough_forward_rule_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT '聊天三协议原生透传 (chat/responses/messages)', 'openai',
                '入口路径原样转发上游：/v1/chat/completions、/v1/responses、/v1/messages；body 仅替换 model；messages 默认 anthropic+x-api-key',
@@ -578,7 +607,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 创作中心2026：视频类型预制二级功能属性与用户端 AI 视频生成下拉对齐
-    once_migration!(pool, done, "pg2026_video_preset_feature_attrs_v1",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_video_preset_feature_attrs_v1",
         r#"UPDATE model_types
            SET default_features = '["文生视频","全能参考生视频","首尾帧生视频","编辑视频","延长视频"]',
                updated_at = CURRENT_TIMESTAMP
@@ -646,7 +678,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // 视频二级功能：图生视频（首帧）与首尾帧拆开，对齐文生 / 首帧 / 首尾帧 / 全能参考 / 编辑 / 延长
-    once_migration!(pool, done, "pg2026_video_preset_feature_attrs_v2",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_video_preset_feature_attrs_v2",
         r#"UPDATE model_types
            SET default_features = '["文生视频","图生视频（首帧）","首尾帧生视频","全能参考生视频","编辑视频","延长视频"]',
                updated_at = CURRENT_TIMESTAMP
@@ -689,7 +724,11 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     if !done.contains("playground_2026_layer_decomposition_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_2026_layer_decomposition(pool).await {
+        match crate::db::migrations::helpers::playground::seed_playground_2026_layer_decomposition(
+            pool,
+        )
+        .await
+        {
             Ok(n) => {
                 let _ = sqlx::query(
                     "INSERT INTO sys_migration_history (id) VALUES ('playground_2026_layer_decomposition_v1')",
@@ -697,7 +736,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 .execute(pool)
                 .await;
                 done.insert("playground_2026_layer_decomposition_v1".into());
-                tracing::info!("创作中心2026 Seedream 5.0 图层拆分回填完成，更新 {} 条配置", n);
+                tracing::info!(
+                    "创作中心2026 Seedream 5.0 图层拆分回填完成，更新 {} 条配置",
+                    n
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -708,13 +750,18 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     }
 
     // 提示通知：增加排序属性 sort_order
-    once_migration!(pool, done, "announcements_add_sort_order_v1",
+    once_migration!(
+        pool,
+        done,
+        "announcements_add_sort_order_v1",
         "ALTER TABLE announcements ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0",
         "COMMENT ON COLUMN announcements.sort_order IS '排序权重，数字越大越靠前'"
     );
 
     if !done.contains("playground_seedance2_default_resolution_480p_v1") {
-        match crate::db::migrations::helpers::playground::seed_playground_seedance2_slider(pool).await {
+        match crate::db::migrations::helpers::playground::seed_playground_seedance2_slider(pool)
+            .await
+        {
             Ok(n) => {
                 let _ = sqlx::query(
                     "INSERT INTO sys_migration_history (id) VALUES ('playground_seedance2_default_resolution_480p_v1')",
@@ -722,7 +769,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
                 .execute(pool)
                 .await;
                 done.insert("playground_seedance2_default_resolution_480p_v1".into());
-                tracing::info!("创作中心 Seedance 2.0 resolution 改为 480p 回填完成，更新 {} 条配置", n);
+                tracing::info!(
+                    "创作中心 Seedance 2.0 resolution 改为 480p 回填完成，更新 {} 条配置",
+                    n
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -732,14 +782,20 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         }
     }
 
-    once_migration!(pool, done, "drop_happyhorse_router_v1",
+    once_migration!(
+        pool,
+        done,
+        "drop_happyhorse_router_v1",
         "DELETE FROM plugins WHERE name = 'happyhorse_router'",
         "DELETE FROM plugin_configs WHERE plugin_name = 'happyhorse_router'",
         "DROP TABLE IF EXISTS happyhorse_logs",
         "DROP TABLE IF EXISTS happyhorse_configs"
     );
 
-    once_migration!(pool, done, "tencent_mps_tryon_forward_rule_v1",
+    once_migration!(
+        pool,
+        done,
+        "tencent_mps_tryon_forward_rule_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT '腾讯云 MPS AI 换装 (同步轮询)', 'tencent',
                '将标准图片生成请求转换为腾讯云媒体处理 ProcessImage AI 换装。有 InputInfo 则官方透传，否则 OpenAI（model/prompt/resolution/image 或 image_urls）转换。密钥格式：SecretId:SecretKey，渠道 URL：https://mps.tencentcloudapi.com',
@@ -750,7 +806,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
            WHERE rule_type IN ('tencent_vod', 'tencent_mps')"#
     );
 
-    once_migration!(pool, done, "tencent_mps_create_image_forward_rule_v1",
+    once_migration!(
+        pool,
+        done,
+        "tencent_mps_create_image_forward_rule_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT '腾讯云 MPS 场景生图 (同步轮询)', 'tencent',
                '将标准图片生成请求转换为腾讯云媒体处理 ProcessImage 场景生图（CreateImageConfig）。支持文生图与图生图（scene-image-gem-flash、scene-image-og-flash等8款模型档位），支持 resolution、aspect_ratio 及 additional_parameters。密钥格式：SecretId:SecretKey，渠道 URL：https://mps.tencentcloudapi.com',
@@ -760,7 +819,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── MiniMax Anthropic Messages：入口 /anthropic/v1/messages + OpenAI→Anthropic 改写 ──
-    once_migration!(pool, done, "minimax_anthropic_chat_forward_rule_v1",
+    once_migration!(
+        pool,
+        done,
+        "minimax_anthropic_chat_forward_rule_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT 'MiniMax 聊天 (Anthropic兼容)', 'minimax',
                'OpenAI 聊天转 Anthropic Messages 并转发 MiniMax /anthropic/v1/messages（x-api-key）；原生入口 path_passthrough 仅换 model',
@@ -774,7 +836,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 火山视频转素材 Portrait：官方入口 path_accept（上游仍 rewrite 到 seedance/infer）──
-    once_migration!(pool, done, "upstream_asset_relay_volc_official_entry_v1",
+    once_migration!(
+        pool,
+        done,
+        "upstream_asset_relay_volc_official_entry_v1",
         r#"UPDATE forward_rules
            SET config_json = (config_json::jsonb || '{"path_accept":["/api/v3/contents/generations/tasks"]}'::jsonb)::text,
                updated_at = CURRENT_TIMESTAMP
@@ -785,7 +850,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // channel_configs.yid：空值与重复改为 3u{id}（保留同组最小 id），再唯一索引
-    once_migration!(pool, done, "channel_configs_yid_unique_v1",
+    once_migration!(
+        pool,
+        done,
+        "channel_configs_yid_unique_v1",
         r#"UPDATE channel_configs
            SET yid = '3u' || id::text
            WHERE COALESCE(btrim(yid), '') = ''"#,
@@ -807,7 +875,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 数据同步：商业版镜像运营（渠道密钥/分组）──
-    once_migration!(pool, done, "data_sync_mirror_ops_v1",
+    once_migration!(
+        pool,
+        done,
+        "data_sync_mirror_ops_v1",
         "ALTER TABLE data_sync_keys ADD COLUMN IF NOT EXISTS mirror_ops INTEGER NOT NULL DEFAULT 0"
     );
     once_migration!(pool, done, "data_sync_mirror_ops_comment_v1",
@@ -834,7 +905,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     }
 
     // ── 清理预设模型默认写入的冗余备注 ──
-    once_migration!(pool, done, "clean_preset_models_default_remark_v1",
+    once_migration!(
+        pool,
+        done,
+        "clean_preset_models_default_remark_v1",
         "UPDATE models SET remark = '' WHERE remark = '系统预设模型，已绑定官方计费与转发规则'"
     );
 

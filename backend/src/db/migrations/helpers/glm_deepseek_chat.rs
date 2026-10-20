@@ -10,13 +10,14 @@
 //! 方案（注入/去掉通用聊天方案）→ 启用聊天模型 → 绑定方案 → 特性 + 输入协议 + 思考预设。
 
 use crate::api::plugins::manager::doubao_seed_evolving_seed::{
-    DOUBAO_SEED_EVOLVING_SCHEME_ID, seed_doubao_seed_evolving_scheme,
+    seed_doubao_seed_evolving_scheme, DOUBAO_SEED_EVOLVING_SCHEME_ID,
 };
 use crate::api::plugins::manager::glm_deepseek_chat_seed::{
-    DEEPSEEK_V4_PRO_SCHEME_ID, GLM_5_2_SCHEME_ID, QWEN_3_7_MAX_SCHEME_ID,
-    seed_glm_deepseek_chat_schemes,
+    seed_glm_deepseek_chat_schemes, DEEPSEEK_V4_PRO_SCHEME_ID, GLM_5_2_SCHEME_ID,
+    GLM_5_3_SCHEME_ID, QWEN_3_7_MAX_SCHEME_ID,
 };
-use serde_json::{Value, json};
+use crate::api::plugins::manager::gpt_6_astra_chat_seed::seed_gpt_6_astra_chat_scheme;
+use serde_json::{json, Value};
 
 const DROPPED_CHAT_SCHEME_IDS: [&str; 3] = ["chat_standard", "chat_creative", "chat_precise"];
 
@@ -36,6 +37,9 @@ fn scheme_for(name: &str, model_id: &str, type_name: &str) -> Option<&'static st
         return None;
     }
     let blob = compact_id(&format!("{name}{model_id}"));
+    if blob.contains("glm53") {
+        return Some(GLM_5_3_SCHEME_ID);
+    }
     if blob.contains("glm") {
         return Some(GLM_5_2_SCHEME_ID);
     }
@@ -122,20 +126,15 @@ async fn persist_pg_schemes(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow::Result
     if schemes.is_empty() {
         seed_doubao_seed_evolving_scheme(&mut schemes);
         seed_glm_deepseek_chat_schemes(&mut schemes);
+        seed_gpt_6_astra_chat_scheme(&mut schemes);
     } else {
         schemes.retain(|s| {
-            let is_system = s
-                .get("is_system")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !is_system {
-                return true;
-            }
             let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
             !DROPPED_CHAT_SCHEME_IDS.contains(&id)
         });
         seed_doubao_seed_evolving_scheme(&mut schemes);
         seed_glm_deepseek_chat_schemes(&mut schemes);
+        seed_gpt_6_astra_chat_scheme(&mut schemes);
     }
     let next = serde_json::to_string(&schemes)?;
     if next == raw {
@@ -384,6 +383,119 @@ async fn bind_chat_models_and_attrs(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow
                 updated += 1;
             }
         }
+    }
+    Ok(updated)
+}
+
+pub(crate) async fn drop_playground_2026_generic_chat_schemes(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> anyhow::Result<u64> {
+    let mut updated = persist_pg_schemes(pool).await?;
+    updated += clear_dropped_scheme_bindings(pool).await?;
+    updated += rebind_known_chat_schemes(pool).await?;
+    updated += rebind_glm53_off_glm52(pool).await?;
+    Ok(updated)
+}
+
+async fn rebind_known_chat_schemes(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow::Result<u64> {
+    let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT m.id, m.name, m.model_id, COALESCE(mt.name, '') \
+         FROM models m \
+         LEFT JOIN model_types mt ON mt.id = m.type_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut updated = 0u64;
+    for (id, name, model_id, type_name) in rows {
+        let Some(scheme_id) = scheme_for(&name, &model_id, &type_name) else {
+            continue;
+        };
+        let key = format!("pg_model_id_{id}");
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT config_value FROM plugin_configs \
+             WHERE plugin_name = 'playground_2026' AND config_key = $1",
+        )
+        .bind(&key)
+        .fetch_optional(pool)
+        .await?;
+        let Some(raw) = existing else {
+            continue;
+        };
+        let mut conf = match serde_json::from_str::<Value>(&raw) {
+            Ok(v) if v.is_object() => v,
+            _ => continue,
+        };
+        let current = conf.get("scheme_id").and_then(|v| v.as_str()).unwrap_or("");
+        if !current.is_empty() {
+            continue;
+        }
+        if let Some(obj) = conf.as_object_mut() {
+            obj.insert("scheme_id".into(), json!(scheme_id));
+        }
+        let next = serde_json::to_string(&conf)?;
+        sqlx::query(
+            "UPDATE plugin_configs SET config_value = $1, updated_at = CURRENT_TIMESTAMP \
+             WHERE plugin_name = 'playground_2026' AND config_key = $2",
+        )
+        .bind(&next)
+        .bind(&key)
+        .execute(pool)
+        .await?;
+        updated += 1;
+    }
+    Ok(updated)
+}
+
+async fn rebind_glm53_off_glm52(pool: &sqlx::Pool<sqlx::Postgres>) -> anyhow::Result<u64> {
+    let rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+        "SELECT m.id, m.name, m.model_id, COALESCE(mt.name, '') \
+         FROM models m \
+         LEFT JOIN model_types mt ON mt.id = m.type_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut updated = 0u64;
+    for (id, name, model_id, type_name) in rows {
+        if scheme_for(&name, &model_id, &type_name) != Some(GLM_5_3_SCHEME_ID) {
+            continue;
+        }
+        let key = format!("pg_model_id_{id}");
+        let existing: Option<String> = sqlx::query_scalar(
+            "SELECT config_value FROM plugin_configs \
+             WHERE plugin_name = 'playground_2026' AND config_key = $1",
+        )
+        .bind(&key)
+        .fetch_optional(pool)
+        .await?;
+        let mut conf = existing
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+            .filter(|v| v.is_object())
+            .unwrap_or_else(|| json!({"enabled": true, "scheme_id": null, "sort_order": 0}));
+        let scheme_id = conf.get("scheme_id").and_then(|v| v.as_str()).unwrap_or("");
+        let thinking = conf
+            .get("thinking_profile")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if scheme_id == GLM_5_3_SCHEME_ID && thinking == "glm53" {
+            continue;
+        }
+        if let Some(obj) = conf.as_object_mut() {
+            obj.insert("scheme_id".into(), json!(GLM_5_3_SCHEME_ID));
+            obj.insert("thinking_profile".into(), json!("glm53"));
+        }
+        let next = serde_json::to_string(&conf)?;
+        sqlx::query(
+            "INSERT INTO plugin_configs (plugin_name, config_key, config_value, created_at, updated_at) \
+             VALUES ('playground_2026', $1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+             ON CONFLICT (plugin_name, config_key) DO UPDATE \
+             SET config_value = EXCLUDED.config_value, updated_at = CURRENT_TIMESTAMP",
+        )
+        .bind(&key)
+        .bind(&next)
+        .execute(pool)
+        .await?;
+        updated += 1;
     }
     Ok(updated)
 }

@@ -6,7 +6,7 @@
  */
 
 import type { Plugin } from '../types';
-import { coalesceAsync, invalidateCoalesce } from './coalesceAsync';
+import { coalesceAsync, invalidateCoalesce, peekCoalesce } from './coalesceAsync';
 import request from './request';
 import { pluginAdminMenuTabKey } from './pluginAdminTabs';
 
@@ -36,6 +36,13 @@ export function subscribeAdminPluginsChange(cb: () => void): () => void {
   return () => {
     listeners.delete(cb);
   };
+}
+
+/** 同步读取已缓存的管理端插件列表；没有则返回 null */
+export function peekAdminPlugins(): Plugin[] | null {
+  const cached = peekCoalesce<AdminPluginsResponse>(CACHE_KEY);
+  if (!cached || !Array.isArray(cached.plugins)) return null;
+  return cached.plugins;
 }
 
 export function selectAdminSidebarPlugins(

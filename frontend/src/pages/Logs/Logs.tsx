@@ -309,6 +309,10 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
       const o = overrides as object | undefined;
       const targetPage = overrides?.page ?? page;
       const targetPageSize = overrides?.pageSize ?? pageSize;
+      if (targetPage !== page) {
+        skipNextEffectFetchRef.current = true;
+        setPage(targetPage);
+      }
       const isPaging = targetPage > 1;
 
       const params: Record<string, unknown> = {
@@ -607,7 +611,7 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
             <Text type="secondary" style={{ fontSize: 11 }}>{t('logs.input', '输入')}: {record.prompt_tokens}</Text>
             <Text type="secondary" style={{ fontSize: 11 }}>
               {t('logs.output', '输出')}: {record.completion_tokens}
-              {record.action_type === '视频' && (record.has_video === 1 ? ` ${t('logs.with_video_short', '含视')}` : ` ${t('logs.without_video_short', '无视')}`)}
+              {(record.action_type === '视频' || (record.action_type === '封装' && !record.endpoint?.includes('image'))) && (record.has_video === 1 ? ` ${t('logs.with_video_short', '含视')}` : ` ${t('logs.without_video_short', '无视')}`)}
             </Text>
             {isClaude ? (
               <>
@@ -994,14 +998,17 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
                 prefix={<Search size={16} />}
                 value={userFilter || ''}
                 onChange={e => setUserFilter(e.target.value || undefined)}
-                onPressEnter={() => fetchLogs()}
+                onPressEnter={() => fetchLogs({ page: 1 })}
                 style={{ width: screens.xs ? '100%' : 180, fontSize: 12, height: 32 }}
                 allowClear
               />
               <Select
                 placeholder={t('logs.search_user_group', '用户等级')}
                 value={userGroupFilter}
-                onChange={(v) => setUserGroupFilter(v ?? undefined)}
+                onChange={(v) => {
+                  setUserGroupFilter(v ?? undefined);
+                  setPage(1);
+                }}
                 options={userLevels.map((l: any) => ({ value: l.group_key, label: `${l.name} (${l.discount}x)` }))}
                 style={{ width: screens.xs ? '100%' : 130, fontSize: 12, height: 32 }}
                 popupMatchSelectWidth={false}
@@ -1023,7 +1030,7 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
             prefix={<Search size={16} />}
             value={searchKeyword}
             onChange={e => setSearchKeyword(e.target.value)}
-            onPressEnter={() => fetchLogs()}
+            onPressEnter={() => fetchLogs({ page: 1 })}
             style={{ width: screens.xs ? '100%' : 270, fontSize: 12, height: 32 }}
             allowClear
           />
@@ -1032,7 +1039,7 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
             prefix={<Search size={16} />}
             value={modelFilter}
             onChange={e => setModelFilter(e.target.value)}
-            onPressEnter={() => fetchLogs()}
+            onPressEnter={() => fetchLogs({ page: 1 })}
             style={{ width: screens.xs ? '100%' : 220, fontSize: 12, height: 32 }}
           />
           <Select
@@ -1053,7 +1060,7 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
             className="font-size-12"
           />
           <Space size={8} style={{ marginLeft: screens.xs ? 0 : 'auto' }}>
-            <Button type="primary" icon={<Search size={14} />} onClick={() => fetchLogs()} loading={loading} disabled={loading} style={{ height: 32, borderRadius: 6, fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{t('logs.query', '查询')}</Button>
+            <Button type="primary" icon={<Search size={14} />} onClick={() => fetchLogs({ page: 1 })} loading={loading} disabled={loading} style={{ height: 32, borderRadius: 6, fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{t('logs.query', '查询')}</Button>
             {user?.role === 'admin' && (
               <Tooltip title={t('logs.export_tooltip', '按当前筛选与列表顺序导出 CSV，可勾选字段（上限10万条）')}>
                 <Button icon={<Download size={14} />} loading={exporting} disabled={loading} onClick={openExportModal} style={{ height: 32, borderRadius: 6, fontSize: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{t('logs.export', '导出')}</Button>
@@ -1158,7 +1165,7 @@ const Logs: React.FC<{ routerEp?: string }> = ({ routerEp }) => {
                   <Space direction="vertical" size={0} align="end">
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       输入:{record.prompt_tokens} / 输出:{record.completion_tokens}
-                      {record.action_type === '视频' && (record.has_video === 1 ? ` ${t('logs.with_video_short', '含视')}` : ` ${t('logs.without_video_short', '无视')}`)}
+                      {(record.action_type === '视频' || (record.action_type === '封装' && !record.endpoint?.includes('image'))) && (record.has_video === 1 ? ` ${t('logs.with_video_short', '含视')}` : ` ${t('logs.without_video_short', '无视')}`)}
                     </Text>
                     {(() => {
                       const { cacheCreation: cc, cacheRead: cr } = billingUsageMetrics(record);

@@ -29,6 +29,23 @@ const loadPluginComponent = (path: string) => {
   return missingModule;
 };
 
+const silentMissingModule = () => null;
+
+const loadOptionalPluginComponent = (path: string) => {
+  const importFn = pluginComponents[`./pages/Plugins/${path}`];
+  if (importFn) {
+    return lazy(async () => {
+      try {
+        return (await (importFn as any)()) as { default: React.ComponentType<any> };
+      } catch (err) {
+        console.warn(`[plugins-registry] Failed to load optional plugin component (${path}):`, err);
+        return { default: silentMissingModule };
+      }
+    });
+  }
+  return silentMissingModule;
+};
+
 export const RelayAPI = loadPluginComponent('DocsApi/RelayAPI.tsx');
 export const PluginsList = loadPluginComponent('PluginsList.tsx');
 export const PluginConfig = loadPluginComponent('PluginConfig.tsx');
@@ -48,11 +65,11 @@ export const SiteIconsManager = loadPluginComponent('SiteIcons/SiteIconsManager.
 export const PortalManager = loadPluginComponent('SitePortal/PortalManager.tsx');
 export const PortalStyleSelection = loadPluginComponent('SitePortal/PortalStyleSelection.tsx');
 export const PortalManagerPro = loadPluginComponent('SitePortalPro/PortalManager.tsx');
+export const PortalArticleManagerPro = loadPluginComponent('SitePortalPro/PortalArticleManagerPro.tsx');
 export const PortalStyleSelectionPro = loadPluginComponent('SitePortalPro/PortalStyleSelection.tsx');
 export const PortalDocsViewer = loadPluginComponent('SitePortalPro/PortalDocsViewer.tsx');
+export const PortalBlogViewer = loadPluginComponent('SitePortalPro/PortalBlogViewer.tsx');
 export const PortalDocsManager = loadPluginComponent('SitePortalPro/PortalDocsManager.tsx');
-export const PortalAboutManagerPro = loadPluginComponent('SitePortalPro/PortalAboutManagerPro.tsx');
-export const PortalContactManagerPro = loadPluginComponent('SitePortalPro/PortalContactManagerPro.tsx');
 export const DocsManager = loadPluginComponent('DocsApi/DocsManager.tsx');
 export const HaLogs = loadPluginComponent('HighAvailability/HaLogs.tsx');
 
@@ -67,6 +84,7 @@ export const WorkflowCreateBootstrap2026 = loadPluginComponent(
 export const ModelMarketplace = loadPluginComponent('ModelMarketplace/ModelMarketplace.tsx');
 export const UserAssets = loadPluginComponent('UserAssets/UserAssets.tsx');
 export const AdvancedMarketing = loadPluginComponent('AdvancedMarketing/AdvancedMarketing.tsx');
+export const ReferralModelUsagePage = loadPluginComponent('AdvancedMarketing/ReferralModelUsagePage.tsx');
 export const PlaygroundSkillConfigTab = loadPluginComponent(
   'Playground_2026/components/PlaygroundSkillConfigTab.tsx',
 );
@@ -75,6 +93,9 @@ export const PlaygroundChatConfigTab = loadPluginComponent(
 );
 export const PlaygroundPromptOptimizeConfigTab = loadPluginComponent(
   'Playground_2026/components/PlaygroundPromptOptimizeConfigTab.tsx',
+);
+export const PlaygroundErrorMappingConfigTab = loadPluginComponent(
+  'Playground_2026/components/PlaygroundErrorMappingConfigTab.tsx',
 );
 export const PlaygroundImageEditConfigTab = loadPluginComponent(
   'Playground_2026/components/PlaygroundImageEditConfigTab.tsx',
@@ -88,3 +109,14 @@ export const PlaygroundDemoImageConfig = loadPluginComponent(
 export const PlaygroundUserNavConfig = loadPluginComponent(
   'Playground_2026/components/PlaygroundUserNavConfig.tsx',
 );
+export const MarketingGamePopupHost = loadOptionalPluginComponent(
+  'MarketingGames/MarketingGamePopupHost.tsx',
+);
+export const MarketingGameCampaignEdit = loadPluginComponent(
+  'MarketingGames/CampaignEdit.tsx',
+);
+export const PlanEdit = loadPluginComponent('MarketingMembership/PlanEdit.tsx');
+export const MarketingMembershipCampaignEdit = loadPluginComponent(
+  'MarketingMembership/CampaignEdit.tsx',
+);
+export const MyTickets = loadPluginComponent('SupportTickets/MyTickets.tsx');

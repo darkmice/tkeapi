@@ -20,6 +20,7 @@ import AdminLogin from './pages/AdminLogin/AdminLogin';
 import LegalPage from './pages/Legal/LegalPage';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard/Dashboard';
+import ModelDistribution30dPage from './pages/Dashboard/ModelDistribution30dPage';
 import Channels from './pages/Channels/Channels';
 import ModelChannelsDisplay from './pages/Channels/ModelChannelsDisplay';
 import ChannelTest from './pages/Channels/ChannelTest';
@@ -41,11 +42,13 @@ import TaskLogs from './pages/Logs/TaskLogs';
 import {
   RelayAPI,
   PortalDocsViewer,
+  PortalBlogViewer,
   PluginsList,
   PluginConfig,
   ArkUserDashboard,
   UserAssets,
   AdvancedMarketing,
+  ReferralModelUsagePage,
   ThemePromoLanding,
   Playground,
   PlaygroundHome,
@@ -53,17 +56,34 @@ import {
   PlaygroundHome2026,
   WorkflowCreateBootstrap2026,
   ModelMarketplace,
+  MarketingGamePopupHost,
+  MarketingGameCampaignEdit,
+  PlanEdit,
+  MarketingMembershipCampaignEdit,
+  MyTickets,
 } from './plugins-registry';
 import Redemptions from './pages/Redemptions/Redemptions';
+import RedemptionGenerate from './pages/Redemptions/RedemptionGenerate';
 import Profile from './pages/Profile/Profile';
 import NotificationSubscription from './pages/Profile/NotificationSubscription';
 import Invoices from './pages/Invoices/Invoices';
 import Wallet from './pages/Wallet/Wallet';
+import CreditsTiers from './pages/Credits/CreditsTiers';
+import CardsOffersPage from './pages/Credits/storefront/CardsOffersPage';
+import HSiteOffersPage from './pages/Credits/storefront/HSiteOffersPage';
+import ISiteOffersPage from './pages/Credits/storefront/ISiteOffersPage';
+import TkeOffersPage from './pages/Credits/storefront/TkeOffersPage';
+import TkeCouponOffersPage from './pages/Credits/storefront/TkeCouponOffersPage';
+import CampaignRouteRedirect from './pages/Credits/storefront/CampaignRouteRedirect';
+import CouponRecords from './pages/Credits/CouponRecords';
+import MyOrders from './pages/Credits/MyOrders';
+import OrderDetail from './pages/Credits/OrderDetail';
 import RechargeRecords from './pages/Finance/RechargeRecords';
 import GiftRecords from './pages/Finance/GiftRecords';
 import CommissionRecords from './pages/Finance/CommissionRecords';
 import FinanceDataAnalysis from './pages/Finance/FinanceDataAnalysis';
 import OrderDetails from './pages/Finance/OrderDetails';
+import PurchaseOrders from './pages/Finance/PurchaseOrders';
 import InvoiceAudit from './pages/Finance/InvoiceAudit';
 import Settings from './pages/admin/Settings';
 import PaymentSettings from './pages/admin/PaymentSettings';
@@ -186,7 +206,11 @@ const AdminSetupGate = ({ children }: { children: React.ReactNode }) => {
     return () => window.clearTimeout(timer);
   }, [awaitingSetup]);
 
-  if (bootState === 'loading') {
+  const { token: sessionToken, user: sessionUser } = useAuthStore();
+  // 已有会话时不挡全屏菊花。登录/注册会马上离开，若此处先转圈，跳到登录后页面时会再闪一次。
+  const skipBootSpinner = !awaitingSetup && !!(sessionToken && sessionUser);
+
+  if (bootState === 'loading' && !skipBootSpinner) {
     return (
       <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
         {awaitingSetup ? (
@@ -271,7 +295,7 @@ const PluginRoute = ({
         const plugins: any[] = response?.active_plugins || [];
         const matched = plugins.find((p: any) => p.name === pluginName);
         let ok = resolveAccess(matched);
-        if (ok && pluginName === 'asset_manager' && matched?.user_asset_menu_enabled !== true) {
+        if (ok && (pluginName === 'asset_manager' || pluginName === 'asset_manager_intl')) {
           ok = false;
         }
         setIsActive(ok);
@@ -344,8 +368,8 @@ const PluginRoute = ({
 
 /**
  * UserEndRoute – 用户端根路由守卫
- * 当站点门户（或增强版）已启用时，访问精确的 '/' 路径会跳转到后端渲染的门户首页。
- * 增强版优先：site_portal_pro → /home-pro；否则 site_portal → /home。
+ * 门户增强版的根路径由已发布的静态首页占用，这里不再把 '/' 跳到 /home-pro。
+ * 只开了站点门户（非增强版）时，精确的 '/' 仍跳到 /home。
  * 其他子路径（如 /tokens, /docs 等）仍需登录后才能访问。
  */
 const UserEndRoute = () => {
@@ -363,7 +387,7 @@ const UserEndRoute = () => {
         if (cancelled) return;
         const active: any[] = res?.active_plugins || [];
         if (active.some((p: any) => p.name === 'site_portal_pro')) {
-          setPortalHomePath('/home-pro');
+          setPortalHomePath(null);
         } else if (active.some((p: any) => p.name === 'site_portal')) {
           setPortalHomePath('/home');
         } else {
@@ -398,6 +422,13 @@ const InviteParamCapture: React.FC = () => {
   return null;
 };
 
+/** 旧门户文档地址 /home-pro/docs、/home-pro/guide 转到 /home-pro/devdocs，避免和站点 API 文档 /docs 挤在同一段路径上。 */
+const PortalGuideLegacyRedirect: React.FC = () => {
+  const { pathname, search, hash } = useLocation();
+  const next = pathname.replace(/^\/home-pro\/(?:docs|guide)(?=\/|$)/, '/home-pro/devdocs');
+  return <Navigate to={`${next}${search}${hash}`} replace />;
+};
+
 const App: React.FC = () => {
   const { fetchSettings } = useSettingsStore();
   const adminPath = localStorage.getItem('tokensbyte_admin_path') || 'admin1688';
@@ -420,6 +451,9 @@ const App: React.FC = () => {
   return (
     <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <InviteParamCapture />
+      <React.Suspense fallback={null}>
+        <MarketingGamePopupHost />
+      </React.Suspense>
       <React.Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}><Spin size="large" /></div>}>
         <AdminSetupGate>
         <Routes>
@@ -428,6 +462,94 @@ const App: React.FC = () => {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/legal/:type" element={<LegalPage />} />
+        <Route
+          path="/offers/cards/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <CardsOffersPage />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/offers/h-site/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <HSiteOffersPage />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/offers/i-site/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <ISiteOffersPage />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/offers/tke/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <TkeOffersPage />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/offers/tke-coupon/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <TkeCouponOffersPage />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/offers/:campaignId"
+          element={
+            <PrivateRoute>
+              <PluginRoute pluginName="marketing_membership">
+                <CampaignRouteRedirect />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/credits"
+          element={
+            <PrivateRoute userOnly>
+              <PluginRoute pluginName="marketing_membership">
+                <CreditsTiers />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/orders/checkout/:planId"
+          element={
+            <PrivateRoute userOnly>
+              <PluginRoute pluginName="marketing_membership">
+                <OrderDetail />
+              </PluginRoute>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/orders/:orderNo"
+          element={
+            <PrivateRoute userOnly>
+              <OrderDetail />
+            </PrivateRoute>
+          }
+        />
         <Route path="/promo/:slug" element={<ThemePromoLanding />} />
 
         <Route
@@ -555,9 +677,9 @@ const App: React.FC = () => {
           }
         />
 
-        {/* 高级门户文档：仅绑定 site_portal_pro，独立路径与库表 */}
+        {/* 高级门户文档：/home-pro/devdocs，与站点 API 文档 /docs 分开 */}
         <Route
-          path="/home-pro/docs"
+          path="/home-pro/devdocs"
           element={
             <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
               <PortalDocsViewer />
@@ -565,7 +687,7 @@ const App: React.FC = () => {
           }
         />
         <Route
-          path="/home-pro/docs/:id"
+          path="/home-pro/devdocs/:id"
           element={
             <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
               <PortalDocsViewer />
@@ -573,10 +695,72 @@ const App: React.FC = () => {
           }
         />
         <Route
-          path="/home-pro/docs/:category/:id"
+          path="/home-pro/devdocs/:category/:id"
           element={
             <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
               <PortalDocsViewer />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/devdocs"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalDocsViewer baseRoute="/devdocs" />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/devdocs/:id"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalDocsViewer baseRoute="/devdocs" />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/devdocs/:category/:id"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalDocsViewer baseRoute="/devdocs" />
+            </PluginRoute>
+          }
+        />
+        <Route path="/home-pro/docs" element={<PortalGuideLegacyRedirect />} />
+        <Route path="/home-pro/docs/*" element={<PortalGuideLegacyRedirect />} />
+        <Route path="/home-pro/guide" element={<PortalGuideLegacyRedirect />} />
+        <Route path="/home-pro/guide/*" element={<PortalGuideLegacyRedirect />} />
+
+        {/* 站点门户增强版：博客资讯 (Blog) */}
+        <Route
+          path="/home-pro/blog"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalBlogViewer />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/home-pro/blog/:id"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalBlogViewer />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/blog"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalBlogViewer baseRoute="/blog" />
+            </PluginRoute>
+          }
+        />
+        <Route
+          path="/blog/:id"
+          element={
+            <PluginRoute pluginName="site_portal_pro" allowGuest={true}>
+              <PortalBlogViewer baseRoute="/blog" />
             </PluginRoute>
           }
         />
@@ -589,6 +773,7 @@ const App: React.FC = () => {
           {/* index 由 UserEndRoute 处理：门户启用 → /home，否则 → /login */}
           <Route index element={<Dashboard />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="dashboard/model-distribution" element={<ModelDistribution30dPage />} />
           <Route path="tokens" element={<Tokens />} />
           <Route path="logs" element={<Logs />} />
           <Route path="logs/:logType" element={<Logs />} />
@@ -596,10 +781,14 @@ const App: React.FC = () => {
           <Route path="task-logs/:logType" element={<TaskLogs />} />
 
           <Route path="wallet" element={<Wallet />} />
+          <Route path="credits/records" element={<CouponRecords />} />
+          <Route path="orders" element={<MyOrders />} />
+          <Route path="tickets" element={<PluginRoute pluginName="support_tickets"><MyTickets /></PluginRoute>} />
           <Route path="affiliate" element={<Navigate to="/wallet?tab=referrals" replace />} />
           <Route path="assets" element={<PluginRoute pluginName="asset_manager"><UserAssets key="asset_manager" pluginNs="asset_manager" /></PluginRoute>} />
           <Route path="assets-intl" element={<PluginRoute pluginName="asset_manager_intl"><UserAssets key="asset_manager_intl" pluginNs="asset_manager_intl" /></PluginRoute>} />
           <Route path="advanced-marketing" element={<PluginRoute pluginName="team_marketing"><AdvancedMarketing /></PluginRoute>} />
+          <Route path="advanced-marketing/model-usage" element={<PluginRoute pluginName="team_marketing"><ReferralModelUsagePage /></PluginRoute>} />
 
           <Route path="ark-video-monitor" element={<PluginRoute pluginName="volcengine_ark_monitor"><ArkUserDashboard /></PluginRoute>} />
           <Route path="profile" element={<Profile />} />
@@ -619,6 +808,7 @@ const App: React.FC = () => {
             }
           >
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="dashboard/model-distribution" element={<ModelDistribution30dPage />} />
             <Route path="docs" element={<RelayAPI apiPrefix="/plugins/docs-api" />} />
             <Route path="docs/:id" element={<RelayAPI apiPrefix="/plugins/docs-api" />} />
             <Route path="docs/:category/:id" element={<RelayAPI apiPrefix="/plugins/docs-api" />} />
@@ -648,8 +838,12 @@ const App: React.FC = () => {
             <Route path="task-logs/:logType" element={<TaskLogs />} />
             <Route path="plugins" element={<PluginsList />} />
             <Route path="plugins/:name/config" element={<PluginConfig />} />
+            <Route path="plugins/marketing_membership/plans/:planId" element={<PlanEdit />} />
+            <Route path="plugins/marketing_membership/campaigns/:campaignId" element={<MarketingMembershipCampaignEdit />} />
+            <Route path="plugins/marketing_games/campaigns/:campaignId" element={<MarketingGameCampaignEdit />} />
 
             <Route path="redemptions" element={<Redemptions />} />
+            <Route path="redemptions/new" element={<RedemptionGenerate />} />
             <Route path="users" element={<Users />} />
             <Route path="users/analytics" element={<UserAnalytics />} />
             <Route path="users/:userId/invoices" element={<UserInvoices />} />
@@ -670,6 +864,7 @@ const App: React.FC = () => {
             <Route path="finance/gifts" element={<GiftRecords />} />
             <Route path="finance/commissions" element={<CommissionRecords />} />
             <Route path="finance/orders" element={<OrderDetails />} />
+            <Route path="finance/purchase-orders" element={<PurchaseOrders />} />
             <Route path="finance/invoices" element={<InvoiceAudit />} />
             <Route path="finance/analysis" element={<FinanceDataAnalysis />} />
             <Route path="settings" element={<Settings />} />

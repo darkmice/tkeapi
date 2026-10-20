@@ -5,9 +5,9 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── logs 冷归档表：热表瘦身；默认不自动归档（log_row_retention_days=0）──
@@ -178,7 +178,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "UPDATE model_providers SET name_en = CASE name WHEN '火山引擎' THEN 'Volcengine' WHEN '谷歌' THEN 'Google' WHEN '阿里云' THEN 'Alibaba Cloud' WHEN '腾讯云' THEN 'Tencent Cloud' WHEN '可灵 AI' THEN 'Kling AI' ELSE name_en END WHERE name_en = ''",
         "UPDATE model_types SET name_en = CASE name WHEN '视频' THEN 'Video' WHEN '图片' THEN 'Image' WHEN '音频' THEN 'Audio' WHEN '聊天' THEN 'Chat' WHEN '向量' THEN 'Embedding' WHEN '排序' THEN 'Rerank' WHEN '视频增强' THEN 'Video Enhancement' ELSE name_en END WHERE name_en = ''"
     );
-
 
     Ok(())
 }

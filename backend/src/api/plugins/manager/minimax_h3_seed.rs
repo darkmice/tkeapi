@@ -206,7 +206,9 @@ fn resolution_looks_like_h3(saved: &Value) -> bool {
         .get("params")
         .and_then(|v| v.as_array())
         .and_then(|params| {
-            params.iter().find(|p| p.get("key").and_then(|k| k.as_str()) == Some("resolution"))
+            params
+                .iter()
+                .find(|p| p.get("key").and_then(|k| k.as_str()) == Some("resolution"))
         })
         .and_then(|p| p.get("options").and_then(|v| v.as_array()))
         .is_some_and(|opts| opts.iter().any(|o| o.as_str() == Some("2K")))
@@ -234,13 +236,13 @@ fn bump_h3_duration_min(saved: &mut Value) {
 
 /// 若列表中尚无 MiniMax H3 方案则追加；已有则补齐口与 H3 时长下限
 pub fn seed_minimax_h3_scheme(schemes: &mut Vec<Value>) -> bool {
-    if let Some(pos) = schemes.iter().position(|s| {
-        s.get("id").and_then(|v| v.as_str()) == Some(MINIMAX_H3_SCHEME_ID)
-    }) {
+    if let Some(pos) = schemes
+        .iter()
+        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(MINIMAX_H3_SCHEME_ID))
+    {
         sanitize_minimax_h3_saved_io(&mut schemes[pos]);
         return true;
     }
     schemes.push(minimax_h3_scheme());
     true
 }
-

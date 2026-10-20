@@ -20,11 +20,13 @@ import {
   Zap, 
   MonitorPlay,
   Settings,
-  RefreshCw,
   Globe,
   Share2,
   ArrowLeftRight,
-  Video
+  Video,
+  LifeBuoy,
+  History,
+  Gamepad2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import request from '../../utils/request';
@@ -43,6 +45,7 @@ const langNames: Record<string, string> = {
   en: 'English',
   ja: '日本語',
   ko: '한국어',
+  vi: 'Tiếng Việt',
   fr: 'Français',
   de: 'Deutsch',
   es: 'Español',
@@ -66,6 +69,9 @@ const pluginIcons: Record<string, React.ReactNode> = {
   upstream_asset_relay: <Share2 className="w-3.5 h-3.5" />,
   comfyui_bridge: <Video className="w-3.5 h-3.5" />,
   data_sync: <ArrowLeftRight className="w-3.5 h-3.5" />,
+  support_tickets: <LifeBuoy className="w-3.5 h-3.5" />,
+  logs_archive: <History className="w-3.5 h-3.5" />,
+  marketing_games: <Gamepad2 className="w-3.5 h-3.5" />,
 };
 
 // 系统增强插件使用不同的图标/徽章颜色样式，适配 shadcn ui 风格
@@ -110,11 +116,20 @@ const PluginsList: React.FC = () => {
     fetchPlugins();
   }, []);
 
+  const sortPlugins = (list: Plugin[]): Plugin[] =>
+    [...list].sort((a, b) => {
+      const byEnabled = (b.is_enabled === 1 ? 1 : 0) - (a.is_enabled === 1 ? 1 : 0);
+      if (byEnabled !== 0) return byEnabled;
+      const byWeight = (b.admin_menu_sort ?? 0) - (a.admin_menu_sort ?? 0);
+      if (byWeight !== 0) return byWeight;
+      return (a.id ?? 0) - (b.id ?? 0);
+    });
+
   const fetchPlugins = async () => {
     try {
       setLoading(true);
       const res = await (request.get('/plugins', { skipErrorHandler: true } as any) as any);
-      if (res.plugins) setPlugins(res.plugins);
+      if (res.plugins) setPlugins(sortPlugins(res.plugins));
     } catch {
       setPlugins([]);
     } finally {
@@ -124,12 +139,15 @@ const PluginsList: React.FC = () => {
 
   const handleToggle = async (checked: boolean, plugin: Plugin, e: React.MouseEvent) => {
     e.stopPropagation();
+    const nextEnabled = checked ? 1 : 0;
     try {
-      await request.post(`/plugins/${plugin.name}/toggle`, { is_enabled: checked ? 1 : 0 });
+      await request.post(`/plugins/${plugin.name}/toggle`, { is_enabled: nextEnabled });
+      setPlugins((prev) =>
+        prev.map((p) => (p.name === plugin.name ? { ...p, is_enabled: nextEnabled } : p))
+      );
       invalidateActivePluginsCache();
       invalidateAdminPluginsCache();
       message.success(checked ? t('plugins_page.enabled') : t('plugins_page.disabled'));
-      fetchPlugins();
     } catch (error) {
       console.error(error);
     }
@@ -159,25 +177,27 @@ const PluginsList: React.FC = () => {
     const cat = plugin.category || 'user';
     const style = categoryStyles[cat] || categoryStyles.user;
     const allowed = plugin.allowed_levels || 'all';
+    const desc = t(`${plugin.name}:subtitle`, plugin.description || t('plugins_page.no_description'));
+    const locales = pluginLocales[plugin.name] ? Object.keys(pluginLocales[plugin.name]) : [];
 
     return (
       <div
         key={plugin.id}
         onClick={() => navigate(`/${adminPath}/plugins/${plugin.name}/config`)}
-        className={`group relative flex flex-col justify-between p-3 bg-card text-card-foreground rounded-lg border border-border cursor-pointer shadow-xs transition-all duration-200 hover:shadow-sm hover:bg-dashboard dark:hover:bg-muted ${style.cardBorder}`}
+        className={`group relative flex flex-col justify-between p-2.5 bg-card text-card-foreground rounded-lg border border-border cursor-pointer shadow-xs transition-all duration-200 hover:shadow-sm hover:bg-dashboard dark:hover:bg-muted ${style.cardBorder} ${!isEnabled ? 'opacity-75 hover:opacity-100' : ''}`}
       >
         <div>
           {/* 头部信息 */}
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
-              <div className={`w-[30px] h-[30px] rounded-md flex items-center justify-center shrink-0 ${style.iconContainer} transition-transform duration-255 group-hover:scale-105`}>
+              <div className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${style.iconContainer} transition-transform duration-200 group-hover:scale-105`}>
                 {pluginIcons[plugin.name] || <LayoutGrid className="w-3.5 h-3.5" />}
               </div>
-              <div className="min-w-0">
+              <div className="flex flex-col min-w-0">
                 <h3 className="font-semibold text-[11.5px] text-foreground leading-tight truncate">
                   {t(`plugin_titles.${plugin.name}`, plugin.title)}
                 </h3>
-                <span className="text-[9px] text-muted-foreground/80 font-mono block mt-0.5 truncate">
+                <span className="text-[9px] text-muted-foreground/70 font-mono leading-tight truncate">
                   {plugin.name}
                 </span>
               </div>
@@ -193,86 +213,70 @@ const PluginsList: React.FC = () => {
             </div>
           </div>
 
-          {/* 插件描述 */}
-          <p className="text-[10.5px] text-muted-foreground line-clamp-2 mt-1.5 leading-relaxed min-h-[30px]">
-            {t(`${plugin.name}:subtitle`, plugin.description || t('plugins_page.no_description'))}
+          {/* 插件简介（单行紧凑展示，悬停查看完整内容） */}
+          <p
+            title={desc}
+            className="text-[10px] text-muted-foreground line-clamp-1 mt-1 leading-snug"
+          >
+            {desc}
           </p>
         </div>
 
         {/* 底部信息 & 配置按钮 */}
-        <div className="mt-2.5 pt-2 border-t border-border flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 min-w-0">
-              <span className="text-[9.5px] text-muted-foreground shrink-0">{t('plugins_page.open_to')}</span>
-              <div className="flex items-center gap-1 overflow-hidden truncate">
-                {allowed === 'all' ? (
-                  <span className={`px-1 py-0.5 text-[8.5px] font-medium rounded ${style.badge}`}>
-                    {(cat === 'system' || cat === 'system_builtin') ? t('plugins_page.all_admins') : t('plugins_page.all_levels')}
+        <div className="mt-2 pt-1.5 border-t border-border/70 flex items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+            <span className="text-[9px] text-muted-foreground shrink-0">{t('plugins_page.open_to')}</span>
+            <div className="flex items-center gap-1 overflow-hidden truncate">
+              {allowed === 'all' ? (
+                <span className={`px-1 py-0.5 text-[8.5px] font-medium rounded shrink-0 ${style.badge}`}>
+                  {(cat === 'system' || cat === 'system_builtin') ? t('plugins_page.all_admins') : t('plugins_page.all_levels')}
+                </span>
+              ) : (
+                allowed.split(',').slice(0, 2).map(lv => (
+                  <span 
+                    key={lv} 
+                    className="px-1 py-0.5 text-[8.5px] font-medium bg-muted text-muted-foreground border border-border rounded truncate"
+                  >
+                    {lv}
                   </span>
-                ) : (
-                  allowed.split(',').slice(0, 2).map(lv => (
-                    <span 
-                      key={lv} 
-                      className="px-1 py-0.5 text-[8.5px] font-medium bg-muted text-muted-foreground border border-border rounded truncate"
-                    >
-                      {lv}
-                    </span>
-                  ))
-                )}
-              </div>
+                ))
+              )}
             </div>
-
-            {/* 配置按钮 */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(`/${adminPath}/plugins/${plugin.name}/config`);
-              }}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border text-[9.5px] font-medium text-muted-foreground hover:text-foreground bg-muted/30 hover:bg-muted transition-colors cursor-pointer"
-            >
-              <Settings className="w-2.5 h-2.5" />
-              {t('plugins_page.configure')}
-            </button>
+            {locales.length > 0 && (
+              <span
+                title={`${t('plugins_page.languages')} ${locales.map(lng => langNames[lng] || lng).join(' / ')}`}
+                className="inline-flex items-center gap-0.5 px-1 py-0.5 text-[8px] font-medium bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100/50 dark:border-emerald-900/20 rounded shrink-0"
+              >
+                <Globe className="w-2.5 h-2.5" />
+                {locales.length}
+              </span>
+            )}
           </div>
 
-          {/* 支持语言 */}
-          {pluginLocales[plugin.name] && (
-            <div className="flex items-center gap-1 pt-1 border-t border-dashed border-border/80">
-              <Globe className="w-2.5 h-2.5 text-muted-foreground/80 shrink-0" />
-              <span className="text-[9.5px] text-muted-foreground shrink-0">{t('plugins_page.languages')}</span>
-              <div className="flex flex-wrap gap-1">
-                {Object.keys(pluginLocales[plugin.name]).map(lng => (
-                  <span 
-                    key={lng} 
-                    className="px-1 py-0.5 text-[8px] font-medium bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100/50 dark:border-emerald-900/20 rounded"
-                  >
-                    {langNames[lng] || lng}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* 配置按钮 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/${adminPath}/plugins/${plugin.name}/config`);
+            }}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border text-[9px] font-medium text-muted-foreground hover:text-foreground bg-muted/30 hover:bg-muted transition-colors cursor-pointer shrink-0"
+          >
+            <Settings className="w-2.5 h-2.5" />
+            {t('plugins_page.configure')}
+          </button>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="space-y-3.5 -mt-3">
+    <div className="space-y-3">
       {/* 页头 */}
-      <div className="flex items-center justify-between pb-2 mb-3 border-b border-border">
+      <div className="flex items-center justify-between pb-2 mb-2 border-b border-border">
         <div className="flex flex-col gap-0.5">
           <div className="text-[13px] font-bold text-foreground leading-tight">{t('menu.plugins')}</div>
           <div className="text-[10.5px] text-muted-foreground leading-normal">{t('plugins_page.subtitle')}</div>
         </div>
-        <button 
-          onClick={fetchPlugins} 
-          disabled={loading}
-          className="flex items-center gap-1 h-[26px] px-2.5 rounded text-[10px] font-medium border border-border bg-card hover:bg-accent text-foreground transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
-        >
-          <RefreshCw className={`w-2.5 h-2.5 ${loading ? 'animate-spin' : ''}`} />
-          {t('plugins_page.refresh')}
-        </button>
       </div>
 
       {loading && plugins.length === 0 ? (
@@ -291,13 +295,13 @@ const PluginsList: React.FC = () => {
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
           {categoryOrder
             .filter((cat) => groupedPlugins[cat]?.length)
             .map((cat) => {
               const label = categoryLabels[cat] || categoryLabels.user;
               return (
-                <div key={cat} className="space-y-2.5">
+                <div key={cat} className="space-y-2">
                   <div className="flex items-center">
                     <div className={`flex items-center text-[11px] font-semibold uppercase tracking-wider ${
                       cat === 'system' 
@@ -314,7 +318,7 @@ const PluginsList: React.FC = () => {
                     </div>
                     <div className="ml-2.5 flex-1 h-[1px] bg-border" />
                   </div>
-                  <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+                  <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
                     {groupedPlugins[cat].map(renderPluginCard)}
                   </div>
                 </div>

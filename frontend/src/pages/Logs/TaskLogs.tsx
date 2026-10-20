@@ -74,8 +74,15 @@ interface TaskLog {
 }
 
 // ── 工具函数：从记录中获取任务类型（直接读取后端返回的 action_type） ──────────────────────────
-const getTaskType = (r: TaskLog, t?: (key: string, def: string) => string) => {
-  const tr = t || ((_k: string, def: string) => def || _k);
+const getTaskType = (r: TaskLog, t?: any) => {
+  const tr = (k: string, def?: string) => {
+    if (!t) return def || k;
+    try {
+      return t(k, def) || t(k, { defaultValue: def }) || def || k;
+    } catch {
+      return def || k;
+    }
+  };
   const actionType = r.action_type || '';
   if (actionType === '聊天' || actionType === 'chat') {
     return { label: tr('logs.type_chat', '聊天'), color: 'blue', icon: <MessageSquare size={14} /> };
@@ -86,11 +93,8 @@ const getTaskType = (r: TaskLog, t?: (key: string, def: string) => string) => {
   if (actionType === '视频' || actionType === 'video') {
     return { label: tr('logs.type_video', '视频'), color: 'orange', icon: <Video size={14} /> };
   }
-  if (actionType === '视频增强' || actionType === 'video_enhancement') {
-    return { label: tr('logs.type_video_enhancement', '视频增强'), color: 'volcano', icon: <Video size={14} /> };
-  }
-  if (actionType === '图像增强' || actionType === '画质增强' || actionType === 'image_enhancement') {
-    return { label: tr('logs.type_image_enhancement', '图像增强'), color: 'purple', icon: <ImageIcon size={14} /> };
+  if (actionType === '封装' || actionType === 'encapsulation') {
+    return { label: tr('logs.type_encapsulation', '封装'), color: 'volcano', icon: <Video size={14} /> };
   }
   if (actionType === '音频' || actionType === 'audio') {
     return { label: tr('logs.type_audio', '音频'), color: 'green', icon: <Mic size={14} /> };
@@ -279,12 +283,17 @@ const TaskLogs: React.FC = () => {
 
     setPreviewRecord(currentRecord);
     setPreviewUrls(urls);
-    setPreviewType((record.action_type === '图片' || record.action_type === '图像增强') ? '图片' : '视频');
+    setPreviewType(record.action_type === '图片' || record.endpoint?.includes('image') ? '图片' : '视频');
     setPreviewOpen(true);
   };
 
   const fetchLogs = useCallback(async (current = 1, size = pageSize) => {
     const signal = queryGuardRef.current.begin();
+    if (current !== page || size !== pageSize) {
+      skipNextEffectFetchRef.current = true;
+      setPage(current);
+      setPageSize(size);
+    }
     setLoading(true);
     try {
       const v = form.getFieldsValue();
@@ -316,11 +325,6 @@ const TaskLogs: React.FC = () => {
       if (res.allow_details !== undefined) {
         setAllowDetails(res.allow_details);
       }
-      if (current !== page || size !== pageSize) {
-        skipNextEffectFetchRef.current = true;
-      }
-      setPage(current);
-      setPageSize(size);
     } catch (e) {
       if (isRequestAborted(e)) return;
       console.error(e);
@@ -330,7 +334,7 @@ const TaskLogs: React.FC = () => {
         setLoading(false);
       }
     }
-  }, [form, actionTypeFilter, subTypeFilter, statusFilter, t, page, pageSize, resetDetailCache]);
+  }, [form, actionTypeFilter, subTypeFilter, statusFilter, t, page, pageSize, setPage, setPageSize, resetDetailCache]);
 
 
   const handleSyncTask = async (log_id: string) => {
@@ -675,7 +679,7 @@ const TaskLogs: React.FC = () => {
           statusTag = <Tag color="success">{t('task_logs.success', '成功')}</Tag>;
         }
 
-        const canPreview = (r.action_type === '图片' || r.action_type === '视频' || r.action_type === '视频增强' || r.action_type === '图像增强') && status === 'succeeded';
+        const canPreview = (r.action_type === '图片' || r.action_type === '视频' || r.action_type === '封装') && status === 'succeeded';
 
         return (
           <Space>
@@ -742,6 +746,7 @@ const TaskLogs: React.FC = () => {
                   allowClear
                   showSearch
                   optionFilterProp="label"
+                  onChange={() => fetchLogs(1, pageSize)}
                   style={{ width: 130, fontSize: 12, height: 32 }}
                   popupMatchSelectWidth={false}
                   options={userLevels.map((l: any) => ({ value: l.group_key, label: `${l.name} (${l.discount}x)` }))}
@@ -817,7 +822,7 @@ const TaskLogs: React.FC = () => {
           ) : (
             <Space>
               <Tag color="success">{t('task_logs.success', '成功')}</Tag>
-              {(record.action_type === '图片' || record.action_type === '视频' || record.action_type === '视频增强' || record.action_type === '图像增强') && (
+              {(record.action_type === '图片' || record.action_type === '视频' || record.action_type === '封装') && (
                 <Button type="link" size="small" style={{ padding: 0 }} onClick={(e) => { e.stopPropagation(); handlePreview(record); }}>
                   {t('task_logs.preview', '预览')}
                 </Button>

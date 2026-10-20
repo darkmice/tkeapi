@@ -5,13 +5,16 @@
  * @license        MIT (https://www.tkeapi.com/)
  */
 
-use std::collections::HashSet;
-use sqlx::PgPool;
 use crate::db::migrations::once_migration;
+use sqlx::PgPool;
+use std::collections::HashSet;
 
 pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()> {
     // ── 数据同步插件：跨站拉取模型目录与计费规则 ──
-    once_migration!(pool, done, "init_data_sync_plugin_v1",
+    once_migration!(
+        pool,
+        done,
+        "init_data_sync_plugin_v1",
         r#"INSERT INTO plugins (name, title, description, is_enabled, category, allowed_levels, created_at, updated_at)
            VALUES (
              'data_sync',
@@ -68,20 +71,29 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 上游渠道配置启用/禁用状态 ──
-    once_migration!(pool, done, "channel_configs_status_v1",
+    once_migration!(
+        pool,
+        done,
+        "channel_configs_status_v1",
         "ALTER TABLE channel_configs ADD COLUMN IF NOT EXISTS status INTEGER NOT NULL DEFAULT 1",
         "COMMENT ON COLUMN channel_configs.status IS '1=启用, 0=禁用'"
     );
 
     // ── 补全预置 MiniMax 图片生成转发规则 ──
-    once_migration!(pool, done, "minimax_image_forward_rule_v1",
+    once_migration!(
+        pool,
+        done,
+        "minimax_image_forward_rule_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT 'MiniMax 图片生成', 'minimax', 'MiniMax 文生图/图生图原生通道（/v1/image_generation），兼容 OpenAI 参数并透传官方字段（aspect_ratio/subject_reference/prompt_optimizer 等）', '{"target_type":"minimax_image","path_rewrite":{"old":"/v1/images/generations","new":"/v1/image_generation"},"auth_type":"bearer"}', '图片', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')
         WHERE NOT EXISTS (SELECT 1 FROM forward_rules WHERE name = 'MiniMax 图片生成')"#
     );
 
     // ── MiniMax 规则 rule_type 统一为 minimax（target_type 仍为 minimax_image / minimax_video）──
-    once_migration!(pool, done, "minimax_forward_rule_unify_v1",
+    once_migration!(
+        pool,
+        done,
+        "minimax_forward_rule_unify_v1",
         r#"UPDATE forward_rules
         SET rule_type = 'minimax'
         WHERE rule_type IN ('minimax_image', 'minimax_video')"#
@@ -101,7 +113,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 兑换日志按 user_id 索引：活动参与次数统计 / 防刷查询 ──
-    once_migration!(pool, done, "redemption_logs_user_id_idx_v1",
+    once_migration!(
+        pool,
+        done,
+        "redemption_logs_user_id_idx_v1",
         "CREATE INDEX IF NOT EXISTS idx_redemption_logs_user_id ON redemption_logs (user_id)"
     );
 
@@ -173,7 +188,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 可灵 3.0 推荐转发规则（kling_video，与旧 kling 解耦；文/图一条 + Omni 一条）──
-    once_migration!(pool, done, "kling_video_v3_forward_rules_v1",
+    once_migration!(
+        pool,
+        done,
+        "kling_video_v3_forward_rules_v1",
         r#"INSERT INTO forward_rules (name, rule_type, description, config_json, category, is_system, eid)
         SELECT * FROM (VALUES
             ('可灵视频 3.0（文/图·推荐）', 'kling_video', '可灵官方 3.0 文生/图生推荐通道：URL 为 /text-to-video/${model}，body 含 contents 时自动改写为 /image-to-video/${model}；统一轮询 /tasks；渠道密钥填官方 API Key（Authorization: Bearer，无需 JWT）', '{"target_type":"kling_video","path_rewrite":{"old":"/v1/video/generations","new":"/text-to-video/${model}"},"auth_type":"bearer","poll_path":"/tasks?task_ids=${task_id}"}', '视频', 1, '1' || lpad((floor(random() * 10000)::int)::text, 4, '0')),
@@ -193,7 +211,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 火山 MediaKit：插件日志关联表（log_id = logs.id，列表不再全表扫 model）──
-    once_migration!(pool, done, "volcengine_enhance_logs_link_v1",
+    once_migration!(
+        pool,
+        done,
+        "volcengine_enhance_logs_link_v1",
         r#"CREATE TABLE IF NOT EXISTS volcengine_enhance_logs (
             log_id BIGINT PRIMARY KEY
         )"#,
@@ -247,7 +268,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     );
 
     // ── 用户实名认证 KYC ──
-    once_migration!(pool, done, "user_kyc_v1",
+    once_migration!(
+        pool,
+        done,
+        "user_kyc_v1",
         r#"CREATE TABLE IF NOT EXISTS user_kyc (
             id BIGSERIAL PRIMARY KEY,
             user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -353,7 +377,10 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
     // ── 创作中心2026：资源库表对齐代码（旧 canvas assets → project_assets；outputs → assets）──
     // 背景：统一存储后 API 读写 playground_2026_assets(media_type/source_type/…)，
     // 但存量库仍可能是「项目素材」形态的 assets + 独立 outputs，导致 list /assets 报 media_type 不存在。
-    once_migration!(pool, done, "pg2026_assets_library_from_outputs_v1",
+    once_migration!(
+        pool,
+        done,
+        "pg2026_assets_library_from_outputs_v1",
         r#"DO $mig$
         DECLARE
           assets_has_media BOOLEAN;
@@ -539,7 +566,6 @@ pub async fn run(pool: &PgPool, done: &mut HashSet<String>) -> anyhow::Result<()
         "COMMENT ON TABLE playground_2026_user_prefs IS '创作中心2026用户偏好（收藏模型、画布编辑器等）'",
         "COMMENT ON COLUMN playground_2026_user_prefs.prefs IS 'JSON：favorite_mids、flow_editor 等'"
     );
-
 
     Ok(())
 }

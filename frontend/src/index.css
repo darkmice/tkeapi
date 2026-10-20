@@ -1051,7 +1051,8 @@ tr.ant-table-measure-row .ant-table-cell {
 }
 
 /*
- * 控制台通知弹窗：iOS & shadcn 高级质感面板与平滑遮罩（无背景虚化）
+ * 控制台通知弹窗：与右上角头像 Popover 同款毛玻璃（.custom-premium-popover）
+ * blur 打在 .ant-modal 面板根上（与缩放动画同一层），内层保持透明。
  */
 .custom-premium-announcement-modal-root .ant-modal-mask {
   background: rgba(0, 0, 0, 0.28) !important;
@@ -1114,22 +1115,17 @@ tr.ant-table-measure-row .ant-table-cell {
   top: -20vh !important;
   padding: 0 !important;
   border-radius: 20px !important;
-  background: rgba(255, 255, 255, 0.88) !important;
-  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
-  backdrop-filter: blur(28px) saturate(190%) !important;
+  background: rgba(255, 255, 255, 0.28) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+  backdrop-filter: blur(28px) saturate(200%) !important;
   border: 1px solid rgba(0, 0, 0, 0.08) !important;
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.8),
-    0 24px 50px -12px rgba(0, 0, 0, 0.16),
-    0 4px 12px rgba(0, 0, 0, 0.05) !important;
+    inset 0 1px 1px rgba(255, 255, 255, 0.55),
+    0 24px 48px rgba(0, 0, 0, 0.12) !important;
   overflow: hidden !important;
   filter: none !important;
   /* 覆盖 antd 按点击坐标写入的 inline origin，避免从侧栏点击时往左侧缩放 */
   transform-origin: 50% 50% !important;
-  -webkit-backface-visibility: hidden !important;
-  backface-visibility: hidden !important;
-  will-change: transform, opacity !important;
-  transform: translate3d(0, 0, 0) !important;
 }
 
 @media (max-height: 800px) {
@@ -1145,12 +1141,11 @@ tr.ant-table-measure-row .ant-table-cell {
 }
 
 [data-theme='dark'] .custom-premium-announcement-modal-root .ant-modal {
-  background: rgba(24, 24, 28, 0.88) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  background: rgba(30, 30, 32, 0.28) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
   box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.12),
-    0 28px 60px -12px rgba(0, 0, 0, 0.7),
-    0 4px 16px rgba(0, 0, 0, 0.4) !important;
+    inset 0 1px 1px rgba(255, 255, 255, 0.08),
+    0 24px 48px rgba(0, 0, 0, 0.55) !important;
 }
 
 .custom-premium-announcement-modal-root .custom-premium-announcement-modal-shell,

@@ -37,16 +37,28 @@ fn transform_anthropic_sse(data: &str, model: &str) -> Option<String> {
 fn transform_gemini_sse(data: &str, model: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(data).ok()?;
 
-    // 文字内容 chunk（candidates[0].content.parts[0].text）
+    // 文字/图片内容 chunk
     let text_chunk = v
-        .get("candidates")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("content"))
-        .and_then(|c| c.get("parts"))
-        .and_then(|p| p.get(0))
-        .and_then(|p| p.get("text"))
-        .and_then(|t| t.as_str())
-        .and_then(|text| serde_json::to_string(&create_openai_chunk(text, model)).ok());
+        .pointer("/candidates/0/content/parts")
+        .and_then(|p| p.as_array())
+        .and_then(|parts| {
+            for part in parts {
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()).filter(|s| !s.is_empty()) {
+                    return Some(text.to_string());
+                } else if let Some(inline) = part.get("inlineData").or_else(|| part.get("inline_data")) {
+                    if let Some(data) = inline.get("data").and_then(|d| d.as_str()).filter(|s| !s.is_empty()) {
+                        let mime = inline
+                            .get("mimeType")
+                            .or_else(|| inline.get("mime_type"))
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("image/png");
+                        return Some(format!("\n\n![image](data:{};base64,{})\n\n", mime, data));
+                    }
+                }
+            }
+            None
+        })
+        .and_then(|content| serde_json::to_string(&create_openai_chunk(&content, model)).ok());
 
     // usage chunk（usageMetadata → OpenAI usage，含 reasoning / cached）
     let usage_chunk = v.get("usageMetadata").and_then(|meta| {

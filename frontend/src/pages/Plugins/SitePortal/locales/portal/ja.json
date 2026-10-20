@@ -59,6 +59,7 @@
   "about_stat_developers": "世界のアクティブ開発者",
   "about_stat_providers": "モデルプロバイダー",
   "about_stat_models": "統合された最先端モデル",
+  "about_press_title": "統合された大規模モデルのAPI体験、AI接続の負担をゼロに",
   "about_press_title_prefix": "統合された大規模モデルのAPI体験、",
   "about_press_title_suffix": " AI接続の負担をゼロに",
   "about_press_desc": "開発者が異なるAIモデルを接続、比較、呼び出すための好ましい集約ゲートウェイになることを目指しています。一度接続するだけで、何百もの最先端モデルにフルアクセス可能。",

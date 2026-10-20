@@ -39,17 +39,95 @@ async fn ensure_ha_channel_rule(
     }
 }
 
+fn validate_channel_upstream(
+    provider_type: &str,
+    preset_id: Option<i64>,
+    config: &serde_json::Value,
+) -> AppResult<()> {
+    let has_preset = preset_id.is_some_and(|id| id > 0);
+    let valid = match provider_type {
+        "high_availability_group" => config
+            .get("sub_channels")
+            .and_then(|v| v.as_array())
+            .map_or(false, |a| !a.is_empty()),
+        "volcengine" => {
+            config
+                .get("volcengine_enhance_credential_id")
+                .is_some_and(|v| {
+                    v.as_str().is_some_and(|s| !s.trim().is_empty())
+                        || v.as_i64().is_some_and(|id| id > 0)
+                })
+                || has_preset
+        }
+        "comfyui" => {
+            config
+                .get("comfyui_server_ids")
+                .and_then(|v| v.as_array())
+                .map_or(false, |a| !a.is_empty())
+                || config
+                    .get("comfyui_server_id")
+                    .and_then(|v| v.as_i64())
+                    .is_some_and(|id| id > 0)
+                || has_preset
+        }
+        _ => has_preset,
+    };
+    if !valid {
+        return Err(AppError::BadRequest("请选择上游渠道".to_string()));
+    }
+    Ok(())
+}
+
+async fn hydrate_channel_preset_schedule(state: &AppState, ch: &mut Channel) {
+    if ch.provider_type == "high_availability_group" {
+        return;
+    }
+    let Some(pid) = ch.preset_id else {
+        return;
+    };
+    if let Ok(configs_map) = crate::relay::router::get_cached_channel_configs(&state.db).await {
+        if let Some(preset) = configs_map.get(&pid) {
+            let resolved = ch.resolve_upstream_config(preset);
+            ch.rate = resolved.rate;
+            ch.priority = resolved.priority;
+            ch.weight = resolved.weight;
+        }
+    }
+}
+
 pub async fn list_channels(
     State(state): State<Arc<AppState>>,
     claims: Option<axum::Extension<crate::auth::Claims>>,
 ) -> AppResult<Json<ChannelListResponse>> {
     let is_admin = claims.as_ref().map_or(false, |c| c.0.role == "admin");
 
-    let channels: Vec<Channel> = sqlx::query_as(&state.db.format_query(
+    let mut channels: Vec<Channel> = sqlx::query_as(&state.db.format_query(
         "SELECT * FROM channels ORDER BY status DESC, sort_order DESC, priority DESC, id DESC",
     ))
     .fetch_all(&state.db.pool)
     .await?;
+
+    if let Ok(configs_map) = crate::relay::router::get_cached_channel_configs(&state.db).await {
+        for ch in &mut channels {
+            if ch.provider_type != "high_availability_group" {
+                if let Some(pid) = ch.preset_id {
+                    if let Some(preset) = configs_map.get(&pid) {
+                        let resolved = ch.resolve_upstream_config(preset);
+                        ch.rate = resolved.rate;
+                        ch.priority = resolved.priority;
+                        ch.weight = resolved.weight;
+                    }
+                }
+            }
+        }
+        channels.sort_by(|a, b| {
+            b.status
+                .cmp(&a.status)
+                .then_with(|| b.sort_order.cmp(&a.sort_order))
+                .then_with(|| b.priority.cmp(&a.priority))
+                .then_with(|| b.id.cmp(&a.id))
+        });
+    }
 
     let safe_channels: Vec<ChannelSafe> = channels
         .into_iter()
@@ -67,10 +145,15 @@ pub async fn create_channel(
     State(state): State<Arc<AppState>>,
     Json(request): Json<CreateChannelRequest>,
 ) -> AppResult<Json<ChannelSafe>> {
+    if request.name.trim().is_empty() {
+        return Err(AppError::BadRequest("渠道名称不能为空".to_string()));
+    }
+    let config_val = request.config.clone().unwrap_or_else(|| serde_json::json!({}));
+    validate_channel_upstream(&request.provider_type, request.preset_id, &config_val)?;
+
     let models_json = serde_json::to_string(&request.models).unwrap_or_else(|_| "[]".to_string());
     let mapping_json = serde_json::to_string(&request.model_mapping.unwrap_or_default())
         .unwrap_or_else(|_| "{}".to_string());
-    let config_val = request.config.unwrap_or_else(|| serde_json::json!({}));
     ensure_ha_channel_rule(&state, &request.provider_type, &config_val).await?;
     let config_json = serde_json::to_string(&config_val).unwrap_or_else(|_| "{}".to_string());
     let groups_json = serde_json::to_string(&request.user_groups.unwrap_or_default())
@@ -83,7 +166,7 @@ pub async fn create_channel(
     let mut group_aid_val = String::new();
     use rand::Rng;
     for _ in 0..10 {
-        let aid: u32 = rand::thread_rng().gen_range(1000..10000);
+        let aid: i64 = rand::thread_rng().gen_range(1000..10000);
         let aid_str = aid.to_string();
         let exists: i64 = sqlx::query_scalar(
             &state
@@ -99,7 +182,7 @@ pub async fn create_channel(
         }
     }
     if group_aid_val.is_empty() {
-        group_aid_val = rand::thread_rng().gen_range(1000..10000).to_string(); // fallback
+        group_aid_val = rand::thread_rng().gen_range(1000i64..10000).to_string(); // fallback
     }
 
     let sql = r#"INSERT INTO channels (name, provider_type, base_url, api_key, models, model_mapping, user_groups, exclude_user_groups, group_aid, preset_id, category_id, sort_order, priority, weight, status, max_rps, quota_limit, quota_used, daily_quota_limit, weekly_quota_limit, monthly_quota_limit, config, rate)
@@ -131,12 +214,15 @@ pub async fn create_channel(
         .fetch_one(&state.db.pool)
         .await?;
 
-    let channel: Channel =
+    let mut channel: Channel =
         sqlx::query_as(&state.db.format_query("SELECT * FROM channels WHERE id = ?"))
             .bind(id)
             .fetch_one(&state.db.pool)
             .await?;
 
+    hydrate_channel_preset_schedule(&state, &mut channel).await;
+
+    crate::relay::router::invalidate_channel_cache();
     crate::api::plugins::notify_marketplace_data_changed(&state).await;
 
     Ok(Json(ChannelSafe::from_with_role(channel, true)))
@@ -155,7 +241,11 @@ pub async fn update_channel(
             .await?;
 
     if let Some(name) = request.name {
-        channel.name = name;
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(AppError::BadRequest("渠道名称不能为空".to_string()));
+        }
+        channel.name = trimmed.to_string();
     }
     if let Some(provider_type) = request.provider_type {
         channel.provider_type = provider_type;
@@ -169,12 +259,84 @@ pub async fn update_channel(
             channel.api_key = api_key;
         }
     }
-    if let Some(models) = request.models {
-        channel.models = serde_json::to_string(&models).unwrap_or_else(|_| "[]".to_string());
+    let old_models = channel.get_models();
+    if let Some(ref models) = request.models {
+        channel.models = serde_json::to_string(models).unwrap_or_else(|_| "[]".to_string());
     }
     if let Some(mapping) = request.model_mapping {
         channel.model_mapping =
             serde_json::to_string(&mapping).unwrap_or_else(|_| "{}".to_string());
+    } else if let Some(ref new_models) = request.models {
+        // 局部解绑模型时（如通过列表气泡或模型渠道显示矩阵移除模型），自动清理已移除模型的孤儿别名与分辨率映射
+        let new_set: std::collections::HashSet<&str> =
+            new_models.iter().map(|s| s.as_str()).collect();
+        let removed_keys: Vec<String> = old_models
+            .into_iter()
+            .filter(|m| !new_set.contains(m.as_str()))
+            .collect();
+        if !removed_keys.is_empty() {
+            let mut drop_keys: std::collections::HashSet<String> =
+                removed_keys.iter().cloned().collect();
+            let placeholders = removed_keys
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT mid, model_id FROM models WHERE mid IN ({}) OR model_id IN ({})",
+                placeholders, placeholders
+            );
+            let formatted = state.db.format_query(&sql);
+            let mut query = sqlx::query_as::<_, (String, String)>(&formatted);
+            for k in &removed_keys {
+                query = query.bind(k);
+            }
+            for k in &removed_keys {
+                query = query.bind(k);
+            }
+            if let Ok(rows) = query.fetch_all(&state.db.pool).await {
+                for (mid, model_id) in rows {
+                    drop_keys.insert(mid);
+                    drop_keys.insert(model_id);
+                }
+            }
+            if let Ok(mut map) =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+                    &channel.model_mapping,
+                )
+            {
+                let before = map.len();
+                map.retain(|k, _| !drop_keys.contains(k));
+                if map.len() != before {
+                    channel.model_mapping =
+                        serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string());
+                }
+            }
+            if request.config.is_none() {
+                if let Ok(mut cfg_val) =
+                    serde_json::from_str::<serde_json::Value>(&channel.config)
+                {
+                    let mut cfg_changed = false;
+                    for field in ["ha_model_mapping", "res_model_mapping"] {
+                        if let Some(obj) = cfg_val.get_mut(field).and_then(|v| v.as_object_mut()) {
+                            let before = obj.len();
+                            obj.retain(|k, _| !drop_keys.contains(k));
+                            if obj.len() != before {
+                                cfg_changed = true;
+                            }
+                            if obj.is_empty() {
+                                cfg_val.as_object_mut().map(|o| o.remove(field));
+                                cfg_changed = true;
+                            }
+                        }
+                    }
+                    if cfg_changed {
+                        channel.config =
+                            serde_json::to_string(&cfg_val).unwrap_or_else(|_| "{}".to_string());
+                    }
+                }
+            }
+        }
     }
     if let Some(user_groups) = request.user_groups {
         channel.user_groups =
@@ -217,9 +379,9 @@ pub async fn update_channel(
     if let Some(monthly) = request.monthly_quota_limit {
         channel.monthly_quota_limit = monthly;
     }
-    if let Some(config) = request.config {
-        ensure_ha_channel_rule(&state, &channel.provider_type, &config).await?;
-        channel.config = serde_json::to_string(&config).unwrap_or_else(|_| "{}".to_string());
+    if let Some(ref config) = request.config {
+        ensure_ha_channel_rule(&state, &channel.provider_type, config).await?;
+        channel.config = serde_json::to_string(config).unwrap_or_else(|_| "{}".to_string());
     }
     if let Some(rate) = request.rate {
         channel.rate = rate;
@@ -232,11 +394,17 @@ pub async fn update_channel(
         channel.preset_id = preset_id;
     }
 
+    if request.preset_id.is_some() || request.config.is_some() {
+        let config_val: serde_json::Value =
+            serde_json::from_str(&channel.config).unwrap_or_default();
+        validate_channel_upstream(&channel.provider_type, channel.preset_id, &config_val)?;
+    }
+
     let mut group_aid_val = channel.group_aid.clone().unwrap_or_default();
     if group_aid_val.is_empty() {
         use rand::Rng;
         for _ in 0..10 {
-            let aid: u32 = rand::thread_rng().gen_range(1000..10000);
+            let aid: i64 = rand::thread_rng().gen_range(1000..10000);
             let aid_str = aid.to_string();
             let exists: i64 = sqlx::query_scalar(
                 &state
@@ -252,7 +420,7 @@ pub async fn update_channel(
             }
         }
         if group_aid_val.is_empty() {
-            group_aid_val = rand::thread_rng().gen_range(1000..10000).to_string();
+            group_aid_val = rand::thread_rng().gen_range(1000i64..10000).to_string();
             // fallback
         }
     }
@@ -352,6 +520,9 @@ pub async fn update_channel(
         );
     }
 
+    hydrate_channel_preset_schedule(&state, &mut channel).await;
+
+    crate::relay::router::invalidate_channel_cache();
     crate::api::plugins::notify_marketplace_data_changed(&state).await;
 
     Ok(Json(ChannelSafe::from_with_role(channel, true)))
@@ -366,9 +537,101 @@ pub async fn delete_channel(
         .execute(&state.db.pool)
         .await?;
 
+    crate::relay::channel_quota::clear_channel_quota_buffer(id);
+    crate::relay::router::invalidate_channel_cache();
     crate::api::plugins::notify_marketplace_data_changed(&state).await;
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+fn merge_custom_body(base: &mut serde_json::Value, custom: Option<&serde_json::Value>) {
+    if let Some(serde_json::Value::Object(custom_obj)) = custom {
+        if let Some(base_obj) = base.as_object_mut() {
+            for (k, v) in custom_obj {
+                base_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+fn build_default_test_body(
+    category: &str,
+    model: &str,
+    scenario: Option<&str>,
+    resolution: &str,
+    rule_is_stream: bool,
+    is_image_tool: bool,
+) -> serde_json::Value {
+    let is_image = category == "图片" || is_image_tool;
+    let is_video = category == "视频" || (category == "封装" && !is_image);
+
+    if is_image {
+        if scenario == Some("image_i2i") {
+            serde_json::json!({
+                "model": model,
+                "prompt": "A cute white cat wearing sunglasses",
+                "image": "https://dummyimage.com/1024x1024/333/fff.png",
+                "n": 1
+            })
+        } else {
+            serde_json::json!({
+                "model": model,
+                "prompt": "Draw a picture of a cute white cat. 请画一只可爱的白色小猫。",
+                "n": 1
+            })
+        }
+    } else if is_video {
+        let mut v_body = serde_json::json!({
+            "model": model,
+            "prompt": "A short video of a cute white cat walking",
+            "resolution": if resolution.is_empty() { "480p" } else { resolution },
+            "duration": 5
+        });
+        if scenario == Some("video_i2v") {
+            v_body["image_url"] =
+                serde_json::json!("https://dummyimage.com/1024x1024/333/fff.png");
+        }
+        v_body
+    } else if category == "音频" {
+        if model.to_lowercase().contains("whisper") || scenario == Some("stt") {
+            serde_json::json!({
+                "model": model,
+                "file": "https://dummyimage.com/test.mp3"
+            })
+        } else {
+            serde_json::json!({
+                "model": model,
+                "input": "你好，TokensByte 渠道拨测中。",
+                "voice": "alloy"
+            })
+        }
+    } else if category == "向量" {
+        serde_json::json!({
+            "model": model,
+            "input": "TokensByte embedding test prompt"
+        })
+    } else if category == "排序" {
+        serde_json::json!({
+            "model": model,
+            "query": "TokensByte test query",
+            "documents": ["TokensByte ranking doc 1", "TokensByte ranking doc 2"]
+        })
+    } else {
+        let st = rule_is_stream || scenario == Some("stream");
+        if scenario == Some("openai_responses") {
+            serde_json::json!({
+                "model": model,
+                "input": "hi",
+                "stream": st
+            })
+        } else {
+            serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": st
+            })
+        }
+    }
 }
 
 pub async fn test_channel(
@@ -383,8 +646,39 @@ pub async fn test_channel(
 
     let mut channel_config_id: Option<i64> = None;
 
-    if let Some(sub_id) = req.sub_channel_id {
-        if channel.provider_type == "high_availability_group" {
+    if channel.provider_type == "high_availability_group" {
+        let target_sub_id = if let Some(sub_id) = req.sub_channel_id {
+            Some(sub_id)
+        } else {
+            let cfg_val: serde_json::Value =
+                serde_json::from_str(&channel.config).unwrap_or_default();
+            let sub_ids: Vec<i64> = cfg_val
+                .get("sub_channels")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
+                .unwrap_or_default();
+            if let Ok(configs_map) = crate::relay::router::get_cached_channel_configs(&state.db).await
+            {
+                let mut candidates: Vec<(i64, usize, i64)> = sub_ids
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(pos, sid)| {
+                        let cfg = configs_map.get(sid)?;
+                        if cfg.status != 1 {
+                            return None;
+                        }
+                        let resolved = channel.resolve_upstream_config(cfg);
+                        Some((resolved.priority, pos, *sid))
+                    })
+                    .collect();
+                candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                candidates.first().map(|c| c.2).or_else(|| sub_ids.first().copied())
+            } else {
+                sub_ids.first().copied()
+            }
+        };
+
+        if let Some(sub_id) = target_sub_id {
             let sub_config: Option<crate::models::ChannelConfig> = sqlx::query_as(
                 &state
                     .db
@@ -419,6 +713,10 @@ pub async fn test_channel(
                     "指定的高可用子上游渠道不存在".into(),
                 ));
             }
+        } else {
+            return Err(crate::error::AppError::BadRequest(
+                "高可用渠道组未绑定任何可用子渠道".into(),
+            ));
         }
     }
 
@@ -452,6 +750,10 @@ pub async fn test_channel(
                     "绑定的上游预设额度已耗尽，测试请求被拦截".into(),
                 ));
             }
+        } else {
+            return Err(crate::error::AppError::NotFound(
+                "绑定的上游渠道配置不存在，测试请求被拦截".into(),
+            ));
         }
     }
 
@@ -483,8 +785,8 @@ pub async fn test_channel(
         crate::relay::proxy::find_active_model_exact(&state, &test_model, None, Some(&channel))
             .await;
 
-    // 计算映射后的上游模型 ID（渠道测试无分辨率上下文）
-    let (resolved_model, _) =
+    // 计算映射后的上游模型 ID（基础映射，进入循环后按 resolution 动态微调）
+    let (mut resolved_model, _) =
         crate::relay::router::resolve_model(&channel, &test_model, db_model.as_ref(), None);
 
     let start = std::time::Instant::now();
@@ -505,23 +807,9 @@ pub async fn test_channel(
         .as_ref()
         .and_then(|m| m.type_name.clone())
         .unwrap_or_else(|| "聊天".to_string());
-    let is_image_tool = {
-        #[cfg(feature = "plugin_volcengine_enhance")]
-        {
-            db_model.as_ref().is_some_and(|m| {
-                crate::api::plugins::is_image_tool_mid(&m.mid)
-                    || crate::api::plugins::is_image_tool_mid(&m.model_id)
-            })
-        }
-        #[cfg(not(feature = "plugin_volcengine_enhance"))]
-        {
-            false
-        }
-    };
+    let is_image_tool = db_model.as_ref().is_some_and(crate::api::plugins::is_plugin_image_tool);
     if is_image_tool {
         category = "图片".to_string();
-    } else if category == "画质增强" {
-        category = "视频增强".to_string();
     }
     let mut rule_is_stream = false;
     let mut db_forward_rule: Option<crate::models::ForwardRule> = None;
@@ -536,36 +824,44 @@ pub async fn test_channel(
         .fetch_optional(&state.db.pool)
         .await?;
         if let Some(r) = rule {
-            category = r.category.clone();
-            if is_image_tool {
-                category = "图片".to_string();
-            } else if category == "画质增强" {
-                category = "视频增强".to_string();
+            if !is_image_tool {
+                category = r.category.clone();
             }
             if r.name.contains("流式") || r.name.to_lowercase().contains("stream") {
                 rule_is_stream = true;
             }
-            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&r.config_json) {
-                // 统一通过 parse_forward_config 解析，与 resolve_forward_rule 逻辑完全一致
-                // 新增字段只需修改 parse_forward_config，此处无需变动
-                let category_path = crate::relay::proxy::category_endpoint(Some(&category));
-                let mid = db_model.as_ref().map(|m| m.mid.clone());
-                let mut res = crate::relay::forward::parse_forward_config(
-                    &config,
-                    &category_path,
-                    &category_path,
-                    &r.eid,
-                    mid,
-                );
-                #[cfg(feature = "plugin_volcengine_enhance")]
-                crate::api::plugins::apply_volc_enhance_path(&mut res, &resolved_model);
-                resolved = Some(res);
-            }
             db_forward_rule = Some(r);
         }
+    }
+
+    // 确定真实的测试入口路径（显式入参优先，其次按场景与类别推导，确保分类隔离与 path_rewrite 精准命中）
+    let entry_path = if let Some(ref ep) = req.entry_path.as_deref().filter(|s| !s.trim().is_empty()) {
+        ep.trim().to_string()
     } else {
-        // 如果没有指定 forward_rule_id，自动根据模型关联规则解析转发路径
-        let entry_path = crate::relay::proxy::category_endpoint(Some(&category));
+        match req.scenario.as_deref() {
+            Some("anthropic_messages") if category == "聊天" => "/v1/messages".to_string(),
+            Some("gemini_native") if category == "聊天" => "/v1beta/models/${model}:generateContent".to_string(),
+            Some("openai_responses") if category == "聊天" => "/v1/responses".to_string(),
+            _ => crate::relay::proxy::category_endpoint(Some(&category)).to_string(),
+        }
+    };
+
+    if let Some(ref r) = db_forward_rule {
+        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&r.config_json) {
+            // 统一通过 parse_forward_config 解析，传入真实的 entry_path 供 path_rewrite / path_passthrough 匹配
+            let category_path = crate::relay::proxy::category_endpoint(Some(&category));
+            let mid = db_model.as_ref().map(|m| m.mid.clone());
+            let res = crate::relay::forward::parse_forward_config(
+                &config,
+                &category_path,
+                &entry_path,
+                &r.eid,
+                mid,
+            );
+            resolved = Some(res);
+        }
+    } else {
+        // 如果没有指定 forward_rule_id，自动根据真实 entry_path 精准打分匹配
         resolved = crate::relay::forward::resolve_forward_rule(
             &state,
             &test_model,
@@ -585,16 +881,31 @@ pub async fn test_channel(
         )
     });
 
-    // ── 修正并校正 target_type ──
+    // ── 修正并校正 target_type 与 MediaKit 专向上游路径 ──
     crate::relay::forward::refine_target_type(&mut fwd, &channel.base_url);
     crate::relay::forward::apply_channel_provider(&mut fwd, &channel);
+    #[cfg(feature = "plugin_volcengine_enhance")]
+    crate::api::plugins::apply_volc_enhance_path(&mut fwd, &resolved_model);
 
-    let is_image = category == "图片" || category == "图像增强" || is_image_tool;
-    let is_video =
-        category == "视频" || category == "视频增强" || (category == "画质增强" && !is_image);
+    let is_image = category == "图片" || is_image_tool;
+    let is_video = category == "视频" || (category == "封装" && !is_image);
 
-    // 视频拨测：默认 480p + 5 秒；提交失败再升 720p 重试一次
-    let video_resolutions: &[&str] = if is_video { &["480p", "720p"] } else { &[""] };
+    // 视频拨测：默认 480p，若自定义入参已指定则单轮执行；失败时支持升 720p 重试
+    let video_resolutions: &[&str] = if is_video {
+        if let Some(ref custom) = req.custom_body {
+            if custom.get("resolution").is_some() {
+                &[""]
+            } else {
+                &["480p", "720p"]
+            }
+        } else if req.scenario.as_deref() == Some("video_720p") {
+            &["720p"]
+        } else {
+            &["480p", "720p"]
+        }
+    } else {
+        &[""]
+    };
 
     let mut openai_body = serde_json::Value::Null;
     let mut request_data = serde_json::Value::Null;
@@ -608,20 +919,33 @@ pub async fn test_channel(
     let mut comfy_ack: Option<crate::api::plugins::comfyui_bridge::ComfySubmitAck> = None;
 
     for (attempt_idx, resolution) in video_resolutions.iter().enumerate() {
-        // ── 构建测试请求体（入参使用映射后的上游模型 ID：resolved_model） ──
-        openai_body = if is_image {
-            serde_json::json!({"model": resolved_model, "prompt": "Draw a picture of a cute white cat. 请画一只可爱的白色小猫。", "n": 1})
-        } else if is_video {
-            serde_json::json!({
-                "model": resolved_model,
-                "prompt": "A short video of a cute white cat walking",
-                "resolution": *resolution,
-                "duration": 5
-            })
+        let cur_resolution = if is_video {
+            if resolution.is_empty() { "480p" } else { *resolution }
         } else {
-            let st = rule_is_stream || fwd.upstream_path.contains("stream");
-            serde_json::json!({"model": resolved_model, "messages": [{"role": "user", "content": "hi"}], "stream": st, "max_tokens": 5})
+            ""
         };
+
+        // 构造贴合场景的标准化基础请求体，并应用用户自定义微调参数
+        let mut cur_body = build_default_test_body(
+            &category,
+            &test_model,
+            req.scenario.as_deref(),
+            cur_resolution,
+            rule_is_stream,
+            is_image_tool,
+        );
+        merge_custom_body(&mut cur_body, req.custom_body.as_ref());
+
+        // 从当前实际请求体提取分辨率，精确执行渠道高级分分辨率别名映射
+        let (cur_resolved, _) = crate::relay::router::resolve_model_body(
+            &channel,
+            &test_model,
+            db_model.as_ref(),
+            Some(&cur_body),
+        );
+        cur_body["model"] = serde_json::json!(&cur_resolved);
+        resolved_model = cur_resolved;
+        openai_body = cur_body;
 
         request_data = crate::relay::forward::transform_request_body(
             &fwd,
@@ -639,13 +963,12 @@ pub async fn test_channel(
         if fwd.target_type == "comfyui" {
             #[cfg(feature = "plugin_comfyui")]
             {
-                let target =
-                    crate::api::plugins::comfyui_bridge::resolve_submit_target(
-                        &state,
-                        &openai_body,
-                        &channel,
-                    )
-                    .await?;
+                let target = crate::api::plugins::comfyui_bridge::resolve_submit_target(
+                    &state,
+                    &openai_body,
+                    &channel,
+                )
+                .await?;
                 request_json = serde_json::to_string(&openai_body).unwrap_or_default();
                 curl_cmd = format!(
                     "# 本地视频上游 workflow={} servers={:?}",
@@ -699,6 +1022,13 @@ pub async fn test_channel(
         }
 
         // ── 构建 URL ──
+        let raw_base = channel.base_url.trim();
+        if !raw_base.starts_with("http://") && !raw_base.starts_with("https://") {
+            return Err(crate::error::AppError::BadRequest(
+                "渠道 Base URL 格式无效（必须以 http:// 或 https:// 开头）".into(),
+            ));
+        }
+
         let endpoint = crate::relay::forward::build_upstream_url(
             &channel.base_url,
             &fwd,
@@ -735,15 +1065,60 @@ pub async fn test_channel(
         response_res = match builder.send().await {
             Ok(r) => {
                 let status = r.status();
+                let headers = r.headers().clone();
+                let is_stream_resp = headers
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.contains("text/event-stream"))
+                    .unwrap_or(false);
+
                 if status.is_success() {
                     let text = r.text().await.unwrap_or_default();
                     raw_response_text = text.clone();
-                    match serde_json::from_str::<serde_json::Value>(&text) {
-                        Ok(v) => Ok(v),
-                        Err(_) => Ok(serde_json::json!({
+                    if (is_stream_resp || text.contains("data: "))
+                        && text.lines().any(|l| l.trim().starts_with("data: "))
+                    {
+                        let mut accumulated_text = String::new();
+                        let mut sse_usage = None;
+                        for line in text.lines() {
+                            let line = line.trim();
+                            if let Some(chunk_json_str) = crate::relay::forward::transform_sse_line(
+                                &fwd.target_type,
+                                line,
+                                &resolved_model,
+                            ) {
+                                if let Ok(chunk_val) =
+                                    serde_json::from_str::<serde_json::Value>(&chunk_json_str)
+                                {
+                                    if let Some(delta) = chunk_val
+                                        .pointer("/choices/0/delta/content")
+                                        .and_then(|c| c.as_str())
+                                    {
+                                        accumulated_text.push_str(delta);
+                                    }
+                                    if let Some(u) = chunk_val.get("usage") {
+                                        sse_usage = Some(u.clone());
+                                    }
+                                }
+                            }
+                        }
+                        let mut resp_obj = serde_json::json!({
                             "status": "success",
-                            "raw": text.chars().take(500).collect::<String>()
-                        })),
+                            "stream": true,
+                            "text": accumulated_text,
+                        });
+                        if let Some(u) = sse_usage {
+                            resp_obj["usage"] = u;
+                        }
+                        Ok(resp_obj)
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(&text) {
+                            Ok(v) => Ok(v),
+                            Err(_) => Ok(serde_json::json!({
+                                "status": "success",
+                                "raw": text.chars().take(500).collect::<String>()
+                            })),
+                        }
                     }
                 } else {
                     let status_val = status.as_u16();
@@ -794,10 +1169,10 @@ pub async fn test_channel(
     };
 
     // ── 记录日志（字段与 relay 模块对齐，确保后续功能正常读取）──
-    let latency_ms = start.elapsed().as_millis() as i32;
-    let mut status_code = 200;
-    let mut p_tokens = 0;
-    let mut c_tokens = 0;
+    let latency_ms = start.elapsed().as_millis() as i64;
+    let mut status_code: i64 = 200;
+    let mut p_tokens: i64 = 0;
+    let mut c_tokens: i64 = 0;
     let mut err_msg: Option<String> = None;
 
     match &response_res {
@@ -806,17 +1181,18 @@ pub async fn test_channel(
                 status_code = v
                     .get("_upstream_status")
                     .and_then(|s| s.as_i64())
-                    .unwrap_or(502) as i32;
+                    .filter(|&s| s >= 400 && s < 600)
+                    .unwrap_or(502);
                 err_msg = Some(serde_json::to_string(&v["_upstream_error"]).unwrap_or_default());
             } else if let Some(usage) = v.get("usage") {
                 p_tokens = usage
                     .get("prompt_tokens")
                     .and_then(|t| t.as_i64())
-                    .unwrap_or(0) as i32;
+                    .unwrap_or(0);
                 c_tokens = usage
                     .get("completion_tokens")
                     .and_then(|t| t.as_i64())
-                    .unwrap_or(0) as i32;
+                    .unwrap_or(0);
             }
         }
         Err(e) => {
@@ -841,15 +1217,19 @@ pub async fn test_channel(
 
     // ── 预先计算渠道测试的计费明细依据（但不扣费） ──
     let preview_usage = crate::relay::usage_extractor::UsageTokens {
-        prompt: p_tokens,
-        completion: c_tokens,
+        prompt: p_tokens as i32,
+        completion: c_tokens as i32,
         ..Default::default()
     };
     let (_, calc_detail) = crate::relay::compute_cost(
         db_model.as_ref(),
         db_rule.as_ref(),
         &preview_usage,
-        1.0,
+        if channel.rate > 0.0 {
+            channel.rate
+        } else {
+            1.0
+        },
         &crate::relay::usage_extractor::ExtractedFeatures::default(),
     );
     let calc_detail = calc_detail.replace(
@@ -905,7 +1285,7 @@ pub async fn test_channel(
         .bind(status_code).bind(&ep).bind(&err_msg).bind(&masked_endpoint)
         .bind(&sanitized_req).bind(&sanitized_resp)
         .bind(&sanitized_upstream_req).bind(&insert_billing_detail).bind(&category).bind(&task_id)
-        .bind(billing_pid).bind(forward_eid).bind(channel_config_id.map(|cid| cid as i32))
+        .bind(billing_pid).bind(forward_eid).bind(channel_config_id)
         .bind(crate::relay::ha::channel_is_ha_flag(&channel))
         .fetch_optional(&state.db.pool).await.unwrap_or(None);
 
@@ -964,6 +1344,58 @@ pub async fn test_channel(
         }
     }
 
+    let matched_rule = serde_json::json!({
+        "eid": fwd.eid,
+        "target_type": fwd.target_type,
+        "upstream_path": fwd.upstream_path,
+        "auth_type": fwd.auth_type,
+        "is_cascade": fwd.is_cascade,
+        "cascade_engine": fwd.cascade_engine,
+        "asset_convert": fwd.asset_convert || fwd.upstream_asset_convert,
+        "fast_response": fwd.fast_response,
+    });
+
+    let cascade_preflight = if fwd.is_cascade {
+        let mut check_msg = format!("阶段二引擎: {}", fwd.cascade_engine);
+        let mut is_ready = true;
+        if fwd.cascade_engine == "tencent" {
+            #[cfg(feature = "plugin_tencent_enhance")]
+            {
+                if let Ok(cfg) = crate::api::plugins::tencent_enhance::load_ready_config(&state).await {
+                    check_msg.push_str(&format!(" (MPS 存储桶: {})", cfg.mps_cos_bucket));
+                } else {
+                    check_msg.push_str(" (警告: 腾讯云增强配置未就绪)");
+                    is_ready = false;
+                }
+            }
+            #[cfg(not(feature = "plugin_tencent_enhance"))]
+            {
+                check_msg.push_str(" (警告: 腾讯云增强特性未编译启用)");
+                is_ready = false;
+            }
+        } else {
+            #[cfg(feature = "plugin_volcengine_enhance")]
+            {
+                let volc_on = crate::api::plugins::is_plugin_enabled(&state, "volcengine_enhance").await;
+                if volc_on {
+                    check_msg.push_str(" (火山 MediaKit 插件已就绪)");
+                } else {
+                    check_msg.push_str(" (警告: 火山增强插件未启用)");
+                    is_ready = false;
+                }
+            }
+        }
+        Some(serde_json::json!({
+            "engine": fwd.cascade_engine,
+            "ready": is_ready,
+            "message": check_msg,
+            "crop_480p": fwd.crop_480p,
+            "crop_timing": fwd.crop_timing,
+        }))
+    } else {
+        None
+    };
+
     // ── 返回结果 ──
     match response_res {
         Ok(response_value) => {
@@ -972,16 +1404,21 @@ pub async fn test_channel(
                 let upstream_status = response_value
                     .get("_upstream_status")
                     .and_then(|s| s.as_i64())
-                    .unwrap_or(0);
+                    .filter(|&s| s > 0)
+                    .unwrap_or(502);
                 Ok(Json(serde_json::json!({
                     "success": false, "err_msg": format!("上游返回 HTTP {}", upstream_status),
                     "latency": latency_ms, "channel_id": id, "curl_command": curl_cmd,
                     "request_data": request_data, "response_data": response_value,
+                    "matched_rule": matched_rule, "cascade_preflight": cascade_preflight,
+                    "entry_path": entry_path, "scenario": req.scenario,
                 })))
             } else {
                 Ok(Json(serde_json::json!({
                     "success": true, "latency": latency_ms, "channel_id": id,
                     "curl_command": curl_cmd, "request_data": request_data, "response_data": response_value,
+                    "matched_rule": matched_rule, "cascade_preflight": cascade_preflight,
+                    "entry_path": entry_path, "scenario": req.scenario,
                 })))
             }
         }
@@ -991,6 +1428,8 @@ pub async fn test_channel(
                 "success": false, "err_msg": err_str.clone(), "latency": latency_ms,
                 "channel_id": id, "curl_command": curl_cmd, "request_data": request_data,
                 "response_data": { "error": err_str },
+                "matched_rule": matched_rule, "cascade_preflight": cascade_preflight,
+                "entry_path": entry_path, "scenario": req.scenario,
             })))
         }
     }
@@ -1117,7 +1556,7 @@ pub async fn reset_meltdown(
             .await?;
 
     let group_aid = channel.group_aid.clone().unwrap_or_default();
-    let mut cleared_count: u32 = 0;
+    let mut cleared_count: i64 = 0;
 
     // 1. 清除渠道自身的熔断记录
     if !group_aid.is_empty() {
@@ -1172,7 +1611,9 @@ pub async fn set_sub_meltdown(
             .await?;
 
     if channel.provider_type != "high_availability_group" {
-        return Err(AppError::BadRequest("仅高可用渠道组支持子渠道熔断操作".into()));
+        return Err(AppError::BadRequest(
+            "仅高可用渠道组支持子渠道熔断操作".into(),
+        ));
     }
 
     let config: serde_json::Value =
@@ -1189,9 +1630,8 @@ pub async fn set_sub_meltdown(
     let key = crate::relay::ha::ha_sub_channel_key(id, req.config_id);
     if req.melted {
         let bundle = crate::relay::relay_settings::get_cached_ha_rules(&state.db).await;
-        let rule = bundle.resolve_arc(
-            crate::relay::ha_rule::parse_rule_id(&channel.config).as_deref(),
-        );
+        let rule =
+            bundle.resolve_arc(crate::relay::ha_rule::parse_rule_id(&channel.config).as_deref());
         let secs = match rule.melt_secs(503) {
             0 => 300,
             n => n,
@@ -1244,6 +1684,8 @@ pub async fn reset_quota(
         return Err(crate::error::AppError::NotFound("渠道不存在".into()));
     }
 
+    crate::relay::channel_quota::clear_channel_quota_buffer(id);
+    crate::relay::router::invalidate_channel_cache();
     tracing::info!("[Channel Quota Reset] 管理员手动清零渠道 {} 的已用额度", id);
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -1258,3 +1700,44 @@ pub async fn simulate_channel_billing(
     Ok(Json(result))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::validate_channel_upstream;
+    use serde_json::json;
+
+    #[test]
+    fn validate_upstream_accepts_volcengine_string_credential_id() {
+        let cfg = json!({ "volcengine_enhance_credential_id": "k3j9a2x1l8z" });
+        assert!(validate_channel_upstream("volcengine", None, &cfg).is_ok());
+
+        let empty_cfg = json!({ "volcengine_enhance_credential_id": "   " });
+        assert!(validate_channel_upstream("volcengine", None, &empty_cfg).is_err());
+
+        assert!(validate_channel_upstream("volcengine", Some(5), &json!({})).is_ok());
+    }
+
+    #[test]
+    fn validate_upstream_checks_ha_comfyui_and_preset() {
+        assert!(validate_channel_upstream(
+            "high_availability_group",
+            None,
+            &json!({ "sub_channels": [1, 2] })
+        )
+        .is_ok());
+        assert!(validate_channel_upstream(
+            "high_availability_group",
+            None,
+            &json!({ "sub_channels": [] })
+        )
+        .is_err());
+
+        assert!(
+            validate_channel_upstream("comfyui", None, &json!({ "comfyui_server_ids": [1] }))
+                .is_ok()
+        );
+        assert!(validate_channel_upstream("comfyui", None, &json!({})).is_err());
+
+        assert!(validate_channel_upstream("custom", Some(1), &json!({})).is_ok());
+        assert!(validate_channel_upstream("custom", None, &json!({})).is_err());
+    }
+}

@@ -85,6 +85,8 @@ md-5 = "0.10"
 
 # Template engine (portal static HTML generation)
 tera = "1"
+# 门户文档静态页：Markdown 转 HTML，不执行脚本
+pulldown-cmark = "0.13"
 chrono-tz = "0.10.4"
 
 # 系统运行时指标（关于页：CPU/内存/磁盘/主机）
@@ -92,6 +94,7 @@ sysinfo = { version = "0.33", default-features = false, features = ["system", "d
 
 # 可选：仅 --features cross_compile（zigbuild）启用，避免交叉时找 Linux OpenSSL
 openssl = { version = "0.10", optional = true, features = ["vendored"] }
+x509-cert = "0.3.0"
 
 [build-dependencies]
 serde_json = "1"

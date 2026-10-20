@@ -19,7 +19,7 @@ use crate::{
 };
 use axum::{
     extract::{Extension, OriginalUri, Path, Query, State},
-    response::{IntoResponse, Response},
+    response::Response,
     Json,
 };
 use std::collections::HashMap;
@@ -43,438 +43,127 @@ pub async fn dashscope_multimodal_generation(
     let bytes = axum::body::to_bytes(body, 50 * 1024 * 1024)
         .await
         .map_err(|e| AppError::BadRequest(format!("Failed to read request body: {e}")))?;
-    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+    let is_chat = if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
         if let Some(model) = json["model"].as_str() {
-            let is_chat = proxy::find_active_model_exact(&state, model, None, None)
+            proxy::find_active_model_exact(&state, model, None, None)
                 .await
                 .and_then(|m| m.type_name)
-                .is_some_and(|t| t == "聊天");
-            if is_chat {
-                return super::chat::chat_completions(
-                    State(state),
-                    Extension(token),
-                    OriginalUri(uri),
-                    parts.headers,
-                    Json(json),
-                )
-                .await;
-            }
+                .is_some_and(|t| t == "聊天")
+        } else {
+            false
         }
+    } else {
+        false
+    };
+    let req = axum::http::Request::from_parts(parts, axum::body::Body::from(bytes));
+    if is_chat {
+        super::chat::chat_completions(State(state), Extension(token), OriginalUri(uri), req).await
+    } else {
+        super::image::image_generations(State(state), Extension(token), OriginalUri(uri), req).await
     }
-    super::image::image_generations(
-        State(state),
-        Extension(token),
-        OriginalUri(uri),
-        axum::http::Request::from_parts(parts, axum::body::Body::from(bytes)),
-    )
-    .await
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Google Gemini Native:
-//    POST /v1beta/models/{model}:generateContent
-//    POST /v1beta/models/{model}:streamGenerateContent
-//  路径聊天/生图共用；入口类别由模型名 / body 推断（默认聊天）。
+//  Google Gemini Native Relay:
+//    POST /v1/models/{model}:{action}
+//    POST /v1beta/models/{model}:{action}
+//  原生生图转入 image_generations，原生聊天转入 chat_completions；
+//  原始请求体挂载至 Extensions，日志 100% 保持客户端纯净输入（零污染）。
 // ═══════════════════════════════════════════════════════════════
 
-/// Gemini 原生入口类别：body 含 IMAGE/imageConfig，或模型名含 image → 图片；否则聊天。
-fn gemini_native_entry_category(model: &str, body: Option<&serde_json::Value>) -> &'static str {
-    if let Some(v) = body {
-        let has_image_modality = v
-            .pointer("/generationConfig/responseModalities")
-            .and_then(|m| m.as_array())
-            .is_some_and(|mods| {
-                mods.iter()
-                    .any(|m| m.as_str().is_some_and(|s| s.eq_ignore_ascii_case("IMAGE")))
-            });
-        if has_image_modality || v.pointer("/generationConfig/imageConfig").is_some() {
-            return "图片";
-        }
-    }
-    if model.to_ascii_lowercase().contains("image") {
-        return "图片";
-    }
-    "聊天"
+/// 精准判定 Gemini 原生请求是否携带图片生成参数（支持 Google 原生、Interactions 与 OpenAI 兼容生图参数）
+pub(crate) fn has_gemini_image_params(body: &serde_json::Value) -> bool {
+    body.pointer("/generationConfig/imageConfig").is_some()
+        || body.pointer("/generation_config/image_config").is_some()
+        || body
+            .pointer("/response_format/type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("image"))
+        || (body.get("prompt").is_some() && body.get("messages").is_none())
 }
 
-pub async fn gemini_proxy(
+async fn dispatch_gemini_relay(
+    state: Arc<AppState>,
+    token: ApiToken,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+    raw_content: String,
+    body_json: serde_json::Value,
+    model: &str,
+) -> AppResult<Response> {
+    // 优先按图片参数识别（支持 Google 原生、Interactions 与 OpenAI 参数）；无参数时按模型类型兜底
+    let is_image = has_gemini_image_params(&body_json)
+        || proxy::find_active_model_exact(&state, model, None, None)
+            .await
+            .and_then(|m| m.type_name)
+            .is_some_and(|t| t == "图片");
+
+    let (mut parts, _) = axum::http::Request::builder().body(()).unwrap().into_parts();
+    parts.headers = headers;
+    let mut req = axum::http::Request::from_parts(
+        parts,
+        axum::body::Body::from(serde_json::to_vec(&body_json).unwrap_or_default()),
+    );
+    req.extensions_mut()
+        .insert(super::RawRequestContent(raw_content));
+
+    if is_image {
+        super::image::image_generations(State(state), Extension(token), OriginalUri(uri), req).await
+    } else {
+        super::chat::chat_completions(State(state), Extension(token), OriginalUri(uri), req).await
+    }
+}
+
+pub async fn gemini_native_relay(
     State(state): State<Arc<AppState>>,
     Extension(token): Extension<ApiToken>,
     Path(model_action): Path<String>,
-    Query(query_params): Query<HashMap<String, String>>,
-    body: axum::body::Bytes,
+    OriginalUri(uri): OriginalUri,
+    headers: axum::http::HeaderMap,
+    body_bytes: axum::body::Bytes,
 ) -> AppResult<Response> {
-    let request_content_str = String::from_utf8_lossy(&body).to_string();
-    // 单次解析，类别推断 / stream 判定 / 计费特征共用
-    let body_json = serde_json::from_str::<serde_json::Value>(&request_content_str).ok();
-    // model_action = "gemini-2.0-flash:generateContent"
     let (model, action) = model_action
         .split_once(':')
         .ok_or_else(|| AppError::BadRequest("Invalid path: expected {model}:{action}".into()))?;
 
-    // access 前用入口推断；access 后日志/计费用 resolved_cat
-    let entry_cat = gemini_native_entry_category(model, body_json.as_ref());
-    let log_id = upstream_headers::resolve_request_log_id(Some(entry_cat));
-    let entry_ep = format!("/v1beta/models/{}:{}", model, action);
+    let raw_content = String::from_utf8_lossy(&body_bytes).to_string();
+    let mut body_json: serde_json::Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
-    // 1. Token 模型权限校验（渠道选择前快速拦截）
-    proxy::check_model_permission(&state, &token, model, &entry_ep, Some(entry_cat)).await?;
+    let is_stream = action.starts_with("streamGenerateContent");
+    // 内部注入 model 与 stream 供下游模型权限校验与转发规则路由（不污染日志）
+    body_json["model"] = serde_json::json!(model);
+    if is_stream {
+        body_json["stream"] = serde_json::json!(true);
+    }
 
-    let ctx = proxy::get_user_context(&state, &token.user_id).await?;
+    dispatch_gemini_relay(state, token, uri, headers, raw_content, body_json, model).await
+}
 
-    let mut ha = crate::relay::ha::HaAttempt::begin(&state, token.high_availability).await;
-    let mut billing_rule_cache = None;
-    let mut access_cache = None;
+pub async fn gemini_interactions_relay(
+    State(state): State<Arc<AppState>>,
+    Extension(token): Extension<ApiToken>,
+    OriginalUri(uri): OriginalUri,
+    headers: axum::http::HeaderMap,
+    body_bytes: axum::body::Bytes,
+) -> AppResult<Response> {
+    let raw_content = String::from_utf8_lossy(&body_bytes).to_string();
+    let mut body_json: serde_json::Value = serde_json::from_slice(&body_bytes)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {}", e)))?;
 
-    while ha.cont() {
-        let start_time = std::time::Instant::now();
-        // 2. 渠道选择
-        let mut ha_pool = None;
-        let channel = match proxy::select_channel_for_model(
-            &state,
-            &token,
-            model,
-            &ctx.user_group,
-            &ctx.level_id,
-            &entry_ep,
-            &ha.exclude_aids,
-            !ha.had_upstream,
-            Some(entry_cat),
-            &mut ha_pool,
-        )
-        .await
-        {
-            Ok(c) => {
-                ha.note_pool(ha_pool);
-                ha.on_channel(&c);
-                c
-            }
-            Err(e) => {
-                ha.note_pool(ha_pool);
-                ha.on_select_err(e);
-                break;
-            }
-        };
+    let model = body_json
+        .get("model")
+        .or_else(|| body_json.get("agent"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::BadRequest("Missing required parameter: model".into()))?
+        .to_string();
 
-        // 3. 预扣费检查（带 channel 精确匹配同名模型的预扣费金额，同时获取 Model 供下游复用）
-        let (pre_deduction, db_model, resolved_cat) = match proxy::check_access_with_model(
-            &state,
-            &token,
-            model,
-            &ctx,
-            Some(entry_cat),
-            &channel,
-            None,
-            &mut access_cache,
-        )
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                ha.on_access_err(e);
-                break;
-            }
-        };
+    if body_json.get("model").and_then(|v| v.as_str()).is_none() {
+        body_json["model"] = serde_json::json!(&model);
+    }
 
-        // 模型映射：仅图片类走分辨率档；聊天等跳过 body 解析
-        let (resolved_model, mapping_source) = if resolved_cat.contains("图片") {
-            super::router::resolve_model_body(&channel, model, db_model.as_ref(), body_json.as_ref())
-        } else {
-            super::router::resolve_model(&channel, model, db_model.as_ref(), None)
-        };
-
-        // Build upstream query: replace key with channel's real key, keep other params (e.g. alt=sse)
-        let mut qs = format!("key={}", channel.api_key);
-        for (k, v) in &query_params {
-            if k != "key" {
-                qs.push_str(&format!("&{}={}", k, v));
-            }
-        }
-        let url = format!(
-            "{}?{}",
-            join_url(
-                &channel.base_url,
-                &format!("/v1beta/models/{}:{}", resolved_model, action)
-            ),
-            qs
-        );
-        crate::relay_debug!(
-            "[Native] 模型={} URL={}",
-            model,
-            super::forward::mask_key_in_string(&url, &channel.api_key)
-        );
-
-        // endpoint 格式: 系统入口路径|上游实际路径（映射后模型名），与 image/chat 端点保持一致
-        let endpoint = format!(
-            "/v1beta/models/{}:{}|/v1beta/models/{}:{}",
-            model, action, resolved_model, action
-        );
-        let mut is_stream = if action.starts_with("streamGenerateContent") {
-            1
-        } else {
-            0
-        };
-        if body_json
-            .as_ref()
-            .and_then(|j| j.get("stream"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            is_stream = 1;
-        }
-
-        // 【一条日志原则】请求前预记录日志（HA 重试复用同一条）
-        if ha.pending_log_id.is_none() {
-            ha.set_pending(
-                proxy::record_pending_log(proxy::PendingLog {
-                    state: &state,
-                    user_id: &token.user_id,
-                    token_id: token.id,
-                    model: model,
-                    endpoint: &endpoint,
-                    is_stream: is_stream,
-                    request_content: Some(&request_content_str),
-                    upstream_url: Some(&url),
-                    channel: &channel,
-                    plugin_tag: None,
-                    category: Some(resolved_cat.as_str()),
-                    db_model: db_model.as_ref(),
-                    forward_eid: None,
-                    requested_log_id: Some(&log_id),
-                    task_id: None,
-                })
-                .await,
-            );
-        }
-
-        let bill_ctx = crate::relay::ha::HaBillCtx::new(&state, &token, model, &endpoint)
-            .category(resolved_cat.as_str())
-            .db(db_model.as_ref());
-
-        let mut db_rule = proxy::get_model_billing_rule(
-            &state,
-            model,
-            Some(&channel),
-            db_model.as_ref(),
-            &mut billing_rule_cache,
-        )
-        .await;
-
-        let pending_log_id = ha.pending_log_id;
-        let timeout_ctx = ha.timeout_ctx();
-        let fail_buf = ha.buf();
-
-        // 【连接保护】打上游 → 预扣 → 记账；拼响应体在 task 外
-        let result_rx = super::spawn_protected({
-            let state = state.clone();
-            let token = token.clone();
-            let channel = channel.clone();
-            let model = model.to_string();
-            let request_content_str = request_content_str.clone();
-            let ctx = ctx.clone();
-            let url = url.clone();
-            let endpoint = endpoint.clone();
-            let db_model = db_model.clone();
-            let resolved_cat = resolved_cat.clone();
-            let resolved_model = resolved_model.clone();
-            let body = body.clone();
-            let body_json = body_json.clone();
-            async move {
-                let native_builder = crate::services::http_client::with_timeout_if(
-                    state
-                        .http_client
-                        .post(&url)
-                        .header("Content-Type", "application/json")
-                        .body(body),
-                    is_stream == 0,
-                    timeout_ctx.resolve(),
-                );
-                let resp = match timeout_ctx.send(native_builder, is_stream == 1).await {
-                    Ok(r) => r,
-                    Err(err_msg) => {
-                        let bill = crate::relay::ha::FailBill::transport(
-                            start_time.elapsed().as_millis() as u32,
-                            err_msg.clone(),
-                            &request_content_str,
-                            request_content_str.clone(),
-                        )
-                        .content(None)
-                        .client(err_msg)
-                        .stream(is_stream);
-                        return Err(crate::relay::ha::HaAttempt::park(&fail_buf, bill, None));
-                    }
-                };
-
-                let status = resp.status().as_u16();
-                if !resp.status().is_success() {
-                    let upstream_hdrs = resp.headers().clone();
-                    let err = resp.text().await.unwrap_or_default();
-                    let bill = crate::relay::ha::FailBill::http(
-                        start_time.elapsed().as_millis() as u32,
-                        status,
-                        err,
-                        &request_content_str,
-                        request_content_str.clone(),
-                    )
-                    .content(None)
-                    .stream(is_stream);
-                    return Err(crate::relay::ha::HaAttempt::park(
-                        &fail_buf,
-                        bill,
-                        Some(upstream_hdrs),
-                    ));
-                }
-
-                if is_stream == 1 {
-                    let pre_deduct_gift = proxy::pre_deduct_or_intercept(
-                        &state,
-                        &token,
-                        &channel,
-                        &model,
-                        pre_deduction,
-                        &endpoint,
-                        start_time,
-                        is_stream,
-                        &request_content_str,
-                        &request_content_str,
-                        None,
-                        pending_log_id,
-                        db_model.as_ref(),
-                        Some(resolved_cat.as_str()),
-                    )
-                    .await?;
-                    return Ok(super::ProtectOut::Live(
-                        crate::relay::stream::handle_native_stream(
-                            state,
-                            token,
-                            channel,
-                            model,
-                            resp,
-                            ctx,
-                            request_content_str.clone(),
-                            start_time,
-                            endpoint.clone(),
-                            Some(request_content_str),
-                            pre_deduction,
-                            pre_deduct_gift,
-                            endpoint,
-                            None,
-                            pending_log_id,
-                            db_model,
-                            db_rule,
-                            resolved_cat,
-                        )
-                        .await
-                        .into_response(),
-                    ));
-                }
-
-                let headers = resp.headers().clone();
-                let body_str = resp.text().await.unwrap_or_default();
-                let usage = crate::relay::usage_extractor::parse_usage(&body_str);
-                let mut features = crate::relay::usage_extractor::features_from_values(
-                    body_json.as_ref(),
-                    None,
-                    Some(&body_str),
-                );
-                let pre_deduct_gift = proxy::pre_deduct_or_intercept(
-                    &state,
-                    &token,
-                    &channel,
-                    &model,
-                    pre_deduction,
-                    &endpoint,
-                    start_time,
-                    is_stream,
-                    &request_content_str,
-                    &request_content_str,
-                    None,
-                    pending_log_id,
-                    db_model.as_ref(),
-                    Some(resolved_cat.as_str()),
-                )
-                .await?;
-                let (cost, detail) = crate::relay::calculate_relay_cost(
-                    &state,
-                    db_model.as_ref(),
-                    db_rule.as_mut(),
-                    &channel,
-                    &ctx,
-                    &usage,
-                    &mut features,
-                    mapping_source.as_deref(),
-                    &model,
-                    &resolved_model,
-                )
-                .await;
-                crate::relay_debug!(
-                    "[Gemini] 模型={} 输入Tokens={} 输出Tokens={} 扣费={:.6}",
-                    model,
-                    usage.prompt,
-                    usage.completion,
-                    cost
-                );
-                let req = request_content_str;
-                proxy::record_and_bill_inner(proxy::BillRecord {
-                    ctx: crate::relay::ha::HaBillCtx::new(&state, &token, &model, &endpoint)
-                        .category(resolved_cat.as_str())
-                        .db(db_model.as_ref()),
-                    channel: &channel,
-                    log_id: pending_log_id,
-                    usage,
-                    cost,
-                    pre_deducted: pre_deduction,
-                    pre_deduct_gift,
-                    latency_ms: start_time.elapsed().as_millis() as u32,
-                    is_stream,
-                    status_code: 200,
-                    error_msg: None,
-                    request: Some(req.clone()),
-                    response: Some(body_str.clone()),
-                    upstream_req: Some(req),
-                    detail: Some(detail),
-                    features: Some(features),
-                    time_multiplier: db_rule.as_ref().map(|r| r.applied_multiplier),
-                    plugin_tag: None,
-                    upstream_request_id: upstream_headers::extract_upstream_request_id(&headers),
-                })
-                .await;
-                Ok(super::ProtectOut::Raw(super::UpstreamRaw::new(
-                    headers, body_str,
-                )))
-            }
-        });
-
-        match super::join_protected(&mut ha, result_rx, &bill_ctx, &channel, Some(&url)).await {
-            super::ProtectJoin::Ok(super::ProtectOut::Raw(raw)) => {
-                let ms = start_time.elapsed().as_millis() as u32;
-                ha.ok(&state, &channel, &url, ms).await;
-                return Ok(upstream_headers::with_request_id(
-                    upstream_headers::json_with_upstream_headers(
-                        &raw.headers,
-                        raw.body,
-                    ),
-                    &log_id,
-                ));
-            }
-            super::ProtectJoin::Ok(super::ProtectOut::Live(resp)) => {
-                let ms = start_time.elapsed().as_millis() as u32;
-                ha.ok(&state, &channel, &url, ms).await;
-                return Ok(upstream_headers::with_request_id(resp, &log_id));
-            }
-            super::ProtectJoin::Retry => {
-                ha.bump();
-                continue;
-            }
-            super::ProtectJoin::Stop => break,
-        }
-    } // end while
-
-    Err(ha
-        .finish(
-            &crate::relay::ha::HaBillCtx::new(&state, &token, model, &entry_ep).category(entry_cat),
-        )
-        .await)
+    dispatch_gemini_relay(state, token, uri, headers, raw_content, body_json, &model).await
 }
 
 // 素材代理 API 白名单（单资源读写删做归属校验；列表按本地归属过滤，确保数据隔离）
@@ -645,7 +334,9 @@ pub async fn ark_asset_proxy(
     State(state): State<Arc<AppState>>,
     Extension(token): Extension<ApiToken>,
     Query(params): Query<HashMap<String, String>>,
-    Json(mut body): Json<serde_json::Value>,
+    #[cfg_attr(not(feature = "commercial_plugins"), allow(unused_mut))] Json(mut body): Json<
+        serde_json::Value,
+    >,
 ) -> AppResult<Response> {
     #[cfg(feature = "commercial_plugins")]
     {
@@ -676,14 +367,24 @@ pub async fn ark_asset_proxy(
             )));
         }
 
-        // 3. 用户及插件等级权限检查
-        let user: crate::models::User = sqlx::query_as(&state.db.format_query("SELECT u.*, ul.name as level_name, ul.id as level_id FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ?"))
-        .bind(&token.user_id)
-        .fetch_optional(&state.db.pool)
-        .await?
-        .ok_or_else(|| AppError::Unauthorized)?;
+        if !crate::api::plugins::is_plugin_compiled(plugin_ns) {
+            return Err(AppError::Forbidden(format!(
+                "素材资产管理插件({})未安装或未启用",
+                plugin_ns
+            )));
+        }
 
-        if user.role != "admin" {
+        // 3. 用户及插件等级权限检查（仅投影鉴权必须的字段，避免查全表大文本与未使用的等级名）
+        let (user_id, user_role, user_group, user_level_id): (String, String, String, Option<i64>) =
+            sqlx::query_as(&state.db.format_query(
+                "SELECT u.id, u.role, u.user_group, ul.id as level_id FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ?"
+            ))
+            .bind(&token.user_id)
+            .fetch_optional(&state.db.pool)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized)?;
+
+        if user_role != "admin" {
             // 检查目标插件是否开启并授权当前用户等级
             let plugin_info: Option<(i64, String)> = sqlx::query_as(&state.db.format_query(
                 "SELECT is_enabled, allowed_levels FROM plugins WHERE name = ? AND is_enabled = 1",
@@ -702,8 +403,8 @@ pub async fn ark_asset_proxy(
             if let Some((_, ref allowed_levels)) = plugin_info {
                 if allowed_levels != "all" {
                     let allowed: Vec<&str> = allowed_levels.split(',').collect();
-                    let level_id_str = user.level_id.unwrap_or(0).to_string();
-                    if !allowed.contains(&user.user_group.as_str())
+                    let level_id_str = user_level_id.unwrap_or(0).to_string();
+                    if !allowed.contains(&user_group.as_str())
                         && !allowed.contains(&level_id_str.as_str())
                     {
                         return Err(AppError::Forbidden(
@@ -719,9 +420,9 @@ pub async fn ark_asset_proxy(
                 .unwrap_or_default();
             if !crate::api::plugins::is_asset_api_enabled(
                 &configs,
-                &user.id,
-                &user.user_group,
-                user.level_id,
+                &user_id,
+                &user_group,
+                user_level_id,
             ) {
                 return Err(AppError::Forbidden(
                     "您当前无权使用素材 API 接口调用".to_string(),
@@ -733,7 +434,7 @@ pub async fn ark_asset_proxy(
         let volc_config = crate::api::plugins::get_volc_config(&state, plugin_ns)
             .await
             .ok_or_else(|| {
-                AppError::BadRequest(format!("系统未配置火山引擎素材管理凭证({})", plugin_ns))
+                AppError::BadRequest(format!("系统未配置素材管理凭证({})", plugin_ns))
             })?;
 
         // 强制设置 ProjectName 为系统配置项，覆盖用户可能传的值，确保资产数据在系统统一管理下
@@ -792,7 +493,7 @@ pub async fn ark_asset_proxy(
         // 5. 用户归属校验 + List 预过滤准备（admin 跳过隔离）
         let mut list_owned_ids: Option<HashSet<String>> = None;
         let mut list_owned_total: i64 = 0;
-        if user.role != "admin" {
+        if user_role != "admin" {
             match action.as_str() {
                 "GetAsset" | "UpdateAsset" | "DeleteAsset" => {
                     let id = body_id
@@ -991,9 +692,19 @@ pub async fn volcengine_task_cancel(
     Path(task_id): Path<String>,
 ) -> AppResult<Response> {
     // 1. 从 logs 表查找任务记录，同时校验归属当前用户（含 channel_config_id 供 HA 子配还原）
-    let log_row: Option<(i64, i64, Option<String>, String, Option<i32>)> =
+    type NativeCancelLogRow = (
+        i64,
+        i64,
+        Option<String>,
+        String,
+        Option<i64>,
+        f64,
+        f64,
+        Option<i64>,
+    );
+    let log_row: Option<NativeCancelLogRow> =
         sqlx::query_as(&state.db.format_query(
-            "SELECT id, channel_id, billing_detail, COALESCE(endpoint, ''), channel_config_id \
+            "SELECT id, channel_id, billing_detail, COALESCE(endpoint, ''), channel_config_id, cost, pre_deduct_gift, token_id \
              FROM logs WHERE task_id = ? AND user_id = ? \
              ORDER BY id DESC LIMIT 1",
         ))
@@ -1002,7 +713,7 @@ pub async fn volcengine_task_cancel(
         .fetch_optional(&state.db.pool)
         .await?;
 
-    let (log_id, channel_id, billing_detail, endpoint, log_cfg_id) = match log_row {
+    let (log_id, channel_id, billing_detail, endpoint, log_cfg_id, pre_deduction, pre_deduct_gift, token_id_opt) = match log_row {
         Some(r) => r,
         None => {
             return Err(AppError::Forbidden(
@@ -1045,7 +756,7 @@ pub async fn volcengine_task_cancel(
         .map_err(|e| AppError::UpstreamError(format!("请求上游失败: {}", e)))?;
 
     let status = resp.status().as_u16();
-    if !resp.status().is_success() {
+    if !resp.status().is_success() && status != 404 {
         let err_body = resp.text().await.unwrap_or_default();
         crate::relay_debug!(
             "[Volcengine Cancel] 上游返回错误 状态码={} 响应体={}",
@@ -1070,27 +781,18 @@ pub async fn volcengine_task_cancel(
         .as_deref()
         .map_or(false, |d| d.contains("冻结"));
     if is_frozen {
-        // 任务仍在冻结（pending）状态，执行预扣费退还
-        let log_data: Option<(f64, f64, Option<i64>, Option<i64>, Option<i32>)> =
-            sqlx::query_as(&state.db.format_query(
-                "SELECT cost, pre_deduct_gift, token_id, channel_id, channel_config_id FROM logs WHERE id = ?",
-            ))
-            .bind(log_id)
-            .fetch_optional(&state.db.pool)
-            .await
-            .unwrap_or(None);
-
-        let (pre_deduction, pre_deduct_gift, token_id_opt, channel_id_opt, channel_config_id_opt) =
-            log_data.unwrap_or((0.0, 0.0, None, None, None));
+        let failure_meta = super::task::SettleFailureMeta {
+            cost: pre_deduction,
+            pre_deduct_gift,
+            user_id: &token.user_id,
+            token_id: token_id_opt,
+            channel_id: Some(channel_id),
+            channel_config_id: log_cfg_id,
+        };
         super::task::execute_refund_tx(
             &state,
             log_id,
-            &token.user_id,
-            token_id_opt,
-            channel_id_opt,
-            channel_config_id_opt,
-            pre_deduction,
-            pre_deduct_gift,
+            &failure_meta,
             "用户主动取消任务，预扣费已退回",
             499,
             Some("用户主动取消任务"),
@@ -1165,7 +867,7 @@ pub async fn volcengine_task_list(
     }
 
     // 2. 最近一条火山视频日志：channel_id + channel_config_id 还原 HA 子配
-    let ch_row: Option<(i64, Option<i32>)> = sqlx::query_as(&state.db.format_query(
+    let ch_row: Option<(i64, Option<i64>)> = sqlx::query_as(&state.db.format_query(
         "SELECT channel_id, channel_config_id FROM logs \
              WHERE user_id = ? AND task_id IS NOT NULL AND task_id != '' \
              AND action_type = '视频' AND upstream_url LIKE '%contents/generations%' \
@@ -1177,7 +879,7 @@ pub async fn volcengine_task_list(
     .await?;
 
     let (cid, log_cfg_id) =
-        ch_row.ok_or_else(|| AppError::BadRequest("未找到可用的火山方舟视频渠道".to_string()))?;
+        ch_row.ok_or_else(|| AppError::BadRequest("未找到可用的视频渠道".to_string()))?;
     let channel = super::router::fetch_channel(&state, cid, log_cfg_id)
         .await
         .ok_or_else(|| AppError::BadRequest("渠道不存在或已被删除".to_string()))?;
@@ -1224,7 +926,12 @@ pub async fn volcengine_task_list(
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         let err_body = resp.text().await.unwrap_or_default();
-        return Err(proxy::upstream_fail(status, &err_body, Some(upstream_hdrs)));
+        return Err(proxy::upstream_fail(
+            status,
+            &err_body,
+            Some(upstream_hdrs),
+            "/api/v3/contents/generations/tasks",
+        ));
     }
 
     let body = resp.bytes().await.unwrap_or_default();
@@ -1234,3 +941,59 @@ pub async fn volcengine_task_list(
         &log_id,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_has_gemini_image_params() {
+        // 1. 驼峰 imageConfig
+        let camel = serde_json::json!({
+            "generationConfig": {
+                "imageConfig": { "aspectRatio": "16:9", "imageSize": "2K" }
+            }
+        });
+        assert!(has_gemini_image_params(&camel));
+
+        // 2. 下划线 image_config
+        let snake = serde_json::json!({
+            "generation_config": {
+                "image_config": { "aspect_ratio": "16:9", "image_size": "2K" },
+                "thinking_config": { "thinking_level": "MEDIUM" }
+            }
+        });
+        assert!(has_gemini_image_params(&snake));
+
+        // 3. OpenAI 兼容生图参数（带 prompt 且无 messages）
+        let openai_img = serde_json::json!({
+            "prompt": "Draw a cheeseburger",
+            "size": "1024x1024"
+        });
+        assert!(has_gemini_image_params(&openai_img));
+
+        // 4. OpenAI 兼容聊天参数（带 messages）不被误判为生图
+        let openai_chat = serde_json::json!({
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        assert!(!has_gemini_image_params(&openai_chat));
+
+        // 5. 多模态对话（无 image_config）不被误判
+        let chat_multimodal = serde_json::json!({
+            "contents": [{"parts": [{"text": "hello"}]}],
+            "generation_config": {
+                "response_modalities": ["TEXT", "IMAGE"]
+            }
+        });
+        assert!(!has_gemini_image_params(&chat_multimodal));
+
+        // 6. 普通纯文本
+        let chat_plain = serde_json::json!({
+            "contents": [{"parts": [{"text": "hello"}]}]
+        });
+        assert!(!has_gemini_image_params(&chat_plain));
+    }
+}
+
+
+

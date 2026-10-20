@@ -26,8 +26,6 @@ pub struct ExtractedFeatures {
     pub prompt_extend: bool,
     /// 火山 Seedream 图层拆分（请求 layer_decomposition=true）
     pub layer_decomposition: bool,
-    /// 可灵视频生成模式（std/pro/4k），影响计费倍率，默认 std
-    pub mode: Option<String>,
     /// 可灵视频有声/无声（on/off），影响计费倍率，默认 off
     pub sound: Option<String>,
     /// 参考图数量（用于腾讯云 Vidu 图片计费区分 ref_1_3 / ref_4_7）
@@ -162,15 +160,22 @@ fn scan_typed_content(
     }
 }
 
-/// 扫描 contents 或 MiniMax content 中的参考视频与输入图数量
+/// 扫描 contents、Interactions input 或 MiniMax content 中的参考视频与输入图数量
 fn scan_content_references(arr: &[Value]) -> (bool, i32) {
     let mut has_video = false;
     let mut image_n = 0i32;
     for c in arr {
         match c.get("type").and_then(|t| t.as_str()) {
-            Some("base_video" | "feature_video" | "video_url") => has_video = true,
-            Some("first_frame" | "last_frame" | "refer_image" | "image_url") => image_n += 1,
+            Some("base_video" | "feature_video" | "video_url" | "video") => has_video = true,
+            Some("first_frame" | "last_frame" | "refer_image" | "image_url" | "image") => {
+                image_n += 1
+            }
             _ => {}
+        }
+        if let Some(sub) = c.get("content").and_then(|v| v.as_array()) {
+            let (sv, si) = scan_content_references(sub);
+            has_video |= sv;
+            image_n += si;
         }
     }
     (has_video, image_n)
@@ -202,7 +207,7 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
     let mut has_video = false;
     let mut has_audio = false;
 
-    // service_tier：根 / parameters；腾讯云 OffPeak=Enabled → flex
+    // service_tier：根 / parameters；腾讯云 OffPeak=Enabled → flex；Vidu off_peak=true → flex
     let service_tier = body
         .get("service_tier")
         .or_else(|| body.get("parameters").and_then(|p| p.get("service_tier")))
@@ -213,6 +218,12 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
                 .and_then(|v| v.as_str())
                 .filter(|s| s.eq_ignore_ascii_case("Enabled"))
                 .map(|_| "flex".to_string())
+        })
+        .or_else(|| {
+            let is_off_peak = body.get("off_peak").is_some_and(|v| {
+                v.as_bool() == Some(true) || v.as_str() == Some("true")
+            });
+            is_off_peak.then(|| "flex".to_string())
         });
 
     has_audio |= body
@@ -237,11 +248,14 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
     }
     has_video |=
         nonempty_array_field(body, "videos") || nonempty_array_field(body, "reference_video_urls");
-    has_audio |= nonempty_array_field(body, "reference_audio_urls");
+    has_audio |= nonempty_array_field(body, "reference_audio_urls")
+        || nonempty_array_field(body, "sounds")
+        || nonempty_array_field(body, "audios");
 
     let (content_video, content_images) = body
         .get("content")
         .or_else(|| body.get("contents"))
+        .or_else(|| body.get("input"))
         .and_then(|v| v.as_array())
         .map(|a| scan_content_references(a))
         .unwrap_or((false, 0));
@@ -297,21 +311,17 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
     let layer_decomposition =
         body.get("layer_decomposition").and_then(|v| v.as_bool()) == Some(true);
 
-    let mode = body
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_lowercase());
-    // generate_audio 优先于 sound；新协议 settings.audio（native→on）
+    // generate_audio（OpenAI 兼容参数）优先于 settings.audio（可灵 3.0 规范，native→on）
     let sound = if let Some(ga) = body.get("generate_audio") {
         let enabled = ga.as_bool().unwrap_or(false) || ga.as_str() == Some("true");
         Some(on_off(enabled))
-    } else if let Some(a) = body.pointer("/settings/audio").and_then(|v| v.as_str()) {
-        let a = a.to_ascii_lowercase();
-        Some(on_off(!(a == "off" || a == "false")))
     } else {
-        body.get("sound")
+        body.pointer("/settings/audio")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_lowercase())
+            .map(|a| {
+                let a = a.to_ascii_lowercase();
+                on_off(!(a == "off" || a == "false"))
+            })
     };
 
     let (tencent_refs, tencent_video) = {
@@ -341,7 +351,7 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
     has_video |= tencent_video;
 
     let mut has_image_ref = field_media_present(body, "image")
-        || field_media_present(body, "image_tail")
+        || nonempty_array_field(body, "images")
         || nonempty_array_field(body, "image_urls")
         || nonempty_array_field(body, "image_list")
         || nonempty_array_field(body, "subject_image_list")
@@ -351,12 +361,7 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
         || content_images > 0;
 
     let mut image_ref_count = {
-        let flat = count_image_field(body)
-            + if field_media_present(body, "image_tail") {
-                1
-            } else {
-                0
-            };
+        let flat = count_image_field(body);
         let count = if flat > 0 {
             flat
         } else {
@@ -501,7 +506,6 @@ pub fn extract_request_features(body: &Value) -> ExtractedFeatures {
         service_tier,
         prompt_extend,
         layer_decomposition,
-        mode,
         sound,
         image_ref_count,
         size,
@@ -530,7 +534,6 @@ impl ExtractedFeatures {
     pub fn merge(&mut self, other: ExtractedFeatures) {
         overwrite_if_some(&mut self.duration_seconds, other.duration_seconds);
         set_opt_if_none(&mut self.resolution, other.resolution);
-        set_opt_if_none(&mut self.mode, other.mode);
         set_opt_if_none(&mut self.sound, other.sound);
         set_opt_if_none(&mut self.version, other.version);
         self.has_video |= other.has_video;
@@ -543,7 +546,10 @@ impl ExtractedFeatures {
         // 峰谷快照：已锁定的值不被后续 merge 冲掉
         set_opt_if_none(&mut self.time_multiplier, other.time_multiplier);
         set_opt_if_none(&mut self.locked_site_discount, other.locked_site_discount);
-        set_opt_if_none(&mut self.locked_global_discount, other.locked_global_discount);
+        set_opt_if_none(
+            &mut self.locked_global_discount,
+            other.locked_global_discount,
+        );
         overwrite_if_some(&mut self.video_ref_seconds, other.video_ref_seconds);
         overwrite_if_some(&mut self.audio_ref_seconds, other.audio_ref_seconds);
     }
@@ -763,6 +769,26 @@ fn count_images_from_arrays(v: &Value) -> Option<i32> {
         }
     }
 
+    // 3b. Google Gemini Interactions: 非流式 steps[].content[] 与流式 step.delta (delta)
+    if total_count == 0 {
+        let is_interaction_image = |item: &Value| {
+            item.get("type")
+                .and_then(|t| t.as_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("image"))
+                && (nonempty_str_field(item, "data") || nonempty_str_field(item, "uri"))
+        };
+        if let Some(steps) = v.get("steps").and_then(|s| s.as_array()) {
+            total_count += steps
+                .iter()
+                .filter_map(|s| s.get("content").and_then(|c| c.as_array()))
+                .flatten()
+                .filter(|item| is_interaction_image(item))
+                .count() as i32;
+        } else if v.get("delta").is_some_and(is_interaction_image) {
+            total_count += 1;
+        }
+    }
+
     // 4. DashScope: output.results[]（须含有效媒体字段）
     if total_count == 0 {
         if let Some(results) = v.pointer("/output/results").and_then(|r| r.as_array()) {
@@ -807,6 +833,21 @@ fn count_images_from_arrays(v: &Value) -> Option<i32> {
         }
     }
 
+    // 6. 腾讯云 TokenHub 混元生图 3.5: choices[].delta.image.url
+    if total_count == 0 {
+        if let Some(choices) = v.get("choices").and_then(|c| c.as_array()) {
+            for choice in choices {
+                if choice
+                    .pointer("/delta/image/url")
+                    .and_then(|u| u.as_str())
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    total_count += 1;
+                }
+            }
+        }
+    }
+
     (total_count > 0).then_some(total_count)
 }
 
@@ -829,6 +870,10 @@ pub struct UsageTokens {
     pub audio_cached_tokens: i32,
     /// 图片输入 Token 数量（用于多模态 tokens 分类计价）
     pub image_tokens: i32,
+    /// 图片输出 Token 数量（用于多模态/生图模型输出图片分类计价）
+    pub output_image_tokens: i32,
+    /// 思考/推理 Token 数量（OpenAI completion_tokens_details / Gemini thoughtsTokenCount）
+    pub reasoning_tokens: i32,
     /// 联网搜索次数
     pub web_search: i32,
 }
@@ -859,6 +904,18 @@ fn max_usage_detail_i32(usage: &Value, key: &str) -> i32 {
             .unwrap_or(0) as i32
     };
     from("prompt_tokens_details").max(from("input_tokens_details"))
+}
+
+/// Chat Completions 与 Responses 的 output/completion details 双路径取较大值
+fn max_completion_detail_i32(usage: &Value, key: &str) -> i32 {
+    let from = |obj: &str| {
+        usage
+            .get(obj)
+            .and_then(|d| d.get(key))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32
+    };
+    from("completion_tokens_details").max(from("output_tokens_details"))
 }
 
 #[inline]
@@ -954,17 +1011,57 @@ pub fn gemini_usage_metadata_to_openai(u: &Value) -> Value {
     let prompt = n("promptTokenCount");
     let thoughts = n("thoughtsTokenCount").max(n("thoughtTokenCount"));
     let completion = n("candidatesTokenCount") + thoughts;
+
+    let extract_modality_tokens = |field: &str, target_modality: &str| -> i64 {
+        u.get(field)
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter(|item| {
+                        item.get("modality")
+                            .and_then(Value::as_str)
+                            .is_some_and(|m| m.eq_ignore_ascii_case(target_modality))
+                    })
+                    .map(|item| item.get("tokenCount").and_then(Value::as_i64).unwrap_or(0))
+                    .sum()
+            })
+            .unwrap_or(0)
+    };
+
+    let output_image_tokens = extract_modality_tokens("candidatesTokensDetails", "IMAGE");
+    let input_image_tokens = extract_modality_tokens("promptTokensDetails", "IMAGE");
+
     let mut usage = json!({
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": prompt + completion,
     });
-    if thoughts > 0 {
-        usage["completion_tokens_details"] = json!({ "reasoning_tokens": thoughts });
+    if thoughts > 0 || output_image_tokens > 0 {
+        let mut comp_details = json!({});
+        if thoughts > 0 {
+            comp_details["reasoning_tokens"] = json!(thoughts);
+        }
+        if output_image_tokens > 0 {
+            comp_details["image_tokens"] = json!(output_image_tokens);
+        }
+        usage["completion_tokens_details"] = comp_details;
     }
     let cached = n("cachedContentTokenCount");
-    if cached > 0 {
-        usage["prompt_tokens_details"] = json!({ "cached_tokens": cached });
+    if cached > 0 || input_image_tokens > 0 {
+        let mut prompt_details = json!({});
+        if cached > 0 {
+            prompt_details["cached_tokens"] = json!(cached);
+        }
+        if input_image_tokens > 0 {
+            prompt_details["image_tokens"] = json!(input_image_tokens);
+        }
+        usage["prompt_tokens_details"] = prompt_details;
+    }
+    if input_image_tokens > 0 {
+        usage["image_tokens"] = json!(input_image_tokens);
+    }
+    if output_image_tokens > 0 {
+        usage["output_image_tokens"] = json!(output_image_tokens);
     }
     usage
 }
@@ -1030,22 +1127,60 @@ pub fn tencent_usage_to_openai(u: &Value) -> Value {
     usage
 }
 
+fn sum_modality_tokens(usage: &Value, field: &str, modality: &str) -> i32 {
+    usage
+        .get(field)
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter(|m| {
+                    m.get("modality")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| s.eq_ignore_ascii_case(modality))
+                })
+                .map(|m| json_field_i32(m, "tokens"))
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 /// 从 usage JSON 对象提取 token 字段，取大值写入 UsageTokens（初始 0 时等同赋值，
 /// SSE 多事件场景防止后续缺失字段覆盖已提取值，如 Anthropic message_start 提供
 /// input_tokens、message_delta 提供 output_tokens）
 fn apply_usage_max(u: &mut UsageTokens, usage: &Value) {
     // 独立提取两组字段名后取较大值，避免上游同时返回 prompt_tokens=0 和 input_tokens>0
     // 时 or_else 回退链不触发导致漏取（如 gpt-image-2 上游返回 prompt_tokens:0 + input_tokens:1136）
-    let p = json_field_i32(usage, "prompt_tokens").max(json_field_i32(usage, "input_tokens"));
-    let img_tokens =
-        json_field_i32(usage, "image_tokens").max(max_usage_detail_i32(usage, "image_tokens"));
-    let c = json_field_i32(usage, "completion_tokens").max(json_field_i32(usage, "output_tokens"));
+    let p = json_field_i32(usage, "prompt_tokens")
+        .max(json_field_i32(usage, "input_tokens"))
+        .max(json_field_i32(usage, "total_input_tokens"));
+    let img_tokens = json_field_i32(usage, "image_tokens")
+        .max(max_usage_detail_i32(usage, "image_tokens"))
+        .max(sum_modality_tokens(usage, "input_tokens_by_modality", "image"));
+    let out_img_tokens = json_field_i32(usage, "output_image_tokens")
+        .max(max_completion_detail_i32(usage, "image_tokens"))
+        .max(sum_modality_tokens(usage, "output_tokens_by_modality", "image"));
+    let c = json_field_i32(usage, "completion_tokens")
+        .max(json_field_i32(usage, "output_tokens"))
+        .max(
+            json_field_i32(usage, "total_output_tokens")
+                + json_field_i32(usage, "total_thought_tokens"),
+        );
     assign_max(&mut u.prompt, p);
     assign_max(&mut u.completion, c);
     assign_max(&mut u.image_tokens, img_tokens);
+    assign_max(&mut u.output_image_tokens, out_img_tokens);
+    assign_max(
+        &mut u.reasoning_tokens,
+        max_completion_detail_i32(usage, "reasoning_tokens")
+            .max(json_field_i32(usage, "total_thought_tokens")),
+    );
     assign_upstream_total(u, json_field_i32(usage, "total_tokens"));
-    // Chat Completions: prompt_tokens_details；Responses: input_tokens_details
-    assign_max(&mut u.cached, max_usage_detail_i32(usage, "cached_tokens"));
+    // Chat Completions: prompt_tokens_details；Responses: input_tokens_details；Interactions: total_cached_tokens
+    assign_max(
+        &mut u.cached,
+        max_usage_detail_i32(usage, "cached_tokens")
+            .max(json_field_i32(usage, "total_cached_tokens")),
+    );
     assign_max(
         &mut u.cache_write,
         max_usage_detail_i32(usage, "cache_write_tokens"),
@@ -1091,8 +1226,8 @@ fn apply_usage_max(u: &mut UsageTokens, usage: &Value) {
 /// 从已解析的 JSON Value 中提取 usage，累加更新到 u 中
 pub fn parse_usage_from_value(u: &mut UsageTokens, v: &Value) -> bool {
     let mut found = false;
-    // 1. OpenAI / Volcengine / Anthropic（根级 usage）
-    if let Some(usage) = v.get("usage") {
+    // 1. OpenAI / Volcengine / Anthropic / TokenHub（根级 usage 或 tokenhub_usage）
+    if let Some(usage) = v.get("usage").or_else(|| v.get("tokenhub_usage")) {
         apply_usage_max(u, usage);
         found = true;
     }
@@ -1101,8 +1236,12 @@ pub fn parse_usage_from_value(u: &mut UsageTokens, v: &Value) -> bool {
         apply_usage_max(u, usage);
         found = true;
     }
-    // 1c. Responses API (response.completed)：usage 嵌套在 response 对象内
-    if let Some(usage) = v.get("response").and_then(|r| r.get("usage")) {
+    // 1c. Responses API (response.completed) / Gemini Interactions (interaction.completed)
+    if let Some(usage) = v
+        .get("response")
+        .or_else(|| v.get("interaction"))
+        .and_then(|r| r.get("usage"))
+    {
         apply_usage_max(u, usage);
         found = true;
     }
@@ -1145,9 +1284,11 @@ pub fn parse_usage(response: &str) -> UsageTokens {
         }
     }
 
-    // 下游仍依赖 total；缺省时回填。has_total_tokens 保持 false，避免误判 OpenAI 子集语义
+    // 下游仍依赖 total 与 completion：缺省 total 时由输入输出正向汇总；若仅有 total（如混元生图/视频等），总量归入 completion
     if u.total == 0 {
         u.total = u.prompt + u.completion;
+    } else if u.prompt == 0 && u.completion == 0 {
+        u.completion = u.total;
     }
 
     u
@@ -1157,6 +1298,9 @@ pub fn extract_usage_json_string(response: &str) -> Option<String> {
     if let Ok(v) = serde_json::from_str::<Value>(response) {
         // 仅提取 usage 节点，不返回完整响应体（避免存入 choices 等大量聊天内容）
         if let Some(usage) = v.get("usage") {
+            return Some(serde_json::json!({ "usage": usage }).to_string());
+        }
+        if let Some(usage) = v.get("tokenhub_usage") {
             return Some(serde_json::json!({ "usage": usage }).to_string());
         }
         if let Some(usage) = v.get("usageMetadata") {
@@ -1185,7 +1329,11 @@ pub fn extract_usage_json_string(response: &str) -> Option<String> {
             if let Ok(v) = serde_json::from_str::<Value>(json_str) {
                 if let Some(usage) = v.get("usage") {
                     last_usage_json = Some(serde_json::json!({ "usage": usage }).to_string());
-                } else if let Some(usage) = v.get("response").and_then(|r| r.get("usage")) {
+                } else if let Some(usage) = v
+                    .get("response")
+                    .or_else(|| v.get("interaction"))
+                    .and_then(|r| r.get("usage"))
+                {
                     last_usage_json = Some(serde_json::json!({ "usage": usage }).to_string());
                 } else if let Some(usage) = v.get("usageMetadata") {
                     last_usage_json =
@@ -1200,11 +1348,9 @@ pub fn extract_usage_json_string(response: &str) -> Option<String> {
     None
 }
 
-/// 从可灵视频终态响应中提取实际生成时长（秒）。
-/// 旧: data.task_result.videos[0].duration；新 3.0: data[0].outputs[0].duration
+/// 从可灵官方 3.0 视频终态响应中提取实际生成时长（秒）：data[0].outputs[0].duration
 fn extract_kling_video_duration(resp: &Value) -> Option<f64> {
     resp.pointer("/data/0/outputs/0/duration")
-        .or_else(|| resp.pointer("/data/task_result/videos/0/duration"))
         .and_then(parse_json_f64)
         .filter(|&d| d > 0.0)
 }
@@ -1272,46 +1418,42 @@ pub fn normalize_resolution_label(raw: &str) -> String {
     res
 }
 
-fn res_str(v: &Value) -> Option<&str> {
-    v.get("resolution")
-        .or_else(|| v.get("Resolution"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+#[inline]
+fn json_res_string(v: &Value) -> Option<String> {
+    if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s.to_string())
+    } else {
+        v.as_i64()
+            .or_else(|| v.as_u64().map(|n| n as i64))
+            .filter(|&n| n > 0)
+            .map(|n| n.to_string())
+    }
 }
 
-/// 从请求/响应体提取规范化分辨率（计费特征与模型别名映射共用唯一入口）。
-/// 来源：根 / task / parameters / settings / OutputConfig / ImageTask.AiTryOnConfig / usage.SR；缺省时由 size→1k/2k/4k。
+/// 从请求体提取规范化分辨率（模型别名路由与请求特征提取共用）。
+/// 精准支持：根级 resolution、parameters/settings、MiniMax OutputConfig、
+/// 腾讯云 AiTryOnConfig、谷歌 generationConfig/imageConfig/response_format，以及 OpenAI 根级 size。
 pub fn extract_resolution(body: &Value) -> Option<String> {
-    let mut resolution = res_str(body)
-        .or_else(|| {
-            ["task", "parameters", "settings", "OutputConfig"]
-                .iter()
-                .find_map(|k| body.get(*k).and_then(res_str))
-        })
-        .or_else(|| body.pointer("/ImageTask/AiTryOnConfig").and_then(res_str))
-        .map(str::to_string);
-    if let Some(usage) = body
-        .get("usage")
-        .or_else(|| body.get("task").and_then(|t| t.get("usage")))
-    {
-        if let Some(sr) = usage.get("SR") {
-            if let Some(n) = sr.as_i64() {
-                resolution = Some(format!("{}p", n));
-            } else if let Some(s) = sr.as_str().filter(|s| !s.is_empty()) {
-                resolution = Some(s.to_string());
-            }
+    let raw = body
+        .get("resolution")
+        .and_then(json_res_string)
+        .or_else(|| body.pointer("/parameters/resolution").and_then(json_res_string))
+        .or_else(|| body.pointer("/settings/resolution").and_then(json_res_string))
+        .or_else(|| body.pointer("/OutputConfig/Resolution").and_then(json_res_string))
+        .or_else(|| body.pointer("/ImageTask/AiTryOnConfig/Resolution").and_then(json_res_string))
+        .or_else(|| body.pointer("/generationConfig/imageConfig/imageSize").and_then(json_res_string))
+        .or_else(|| body.pointer("/generation_config/image_config/image_size").and_then(json_res_string))
+        .or_else(|| body.pointer("/response_format/image_size").and_then(json_res_string));
+
+    if let Some(r) = raw {
+        let normalized = normalize_resolution_label(&r);
+        if !normalized.is_empty() {
+            return Some(normalized);
         }
     }
-    if let Some(res) = resolution {
-        let res = normalize_resolution_label(&res);
-        if !res.is_empty() {
-            return Some(res);
-        }
-    }
+
     body.get("size")
-        .or_else(|| body.pointer("/data/0/size"))
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .and_then(parse_pixel_resolution)
 }
 
@@ -1352,7 +1494,7 @@ pub fn parse_pixel_resolution(size: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::UsageTokens;
+    use super::*;
 
     #[test]
     fn test_context_input_tokens_claude() {
@@ -1380,6 +1522,248 @@ mod tests {
         };
         // OpenAI 原生包含缓存语义：返回 prompt 自身
         assert_eq!(u.context_input_tokens(), 500);
+    }
+
+    #[test]
+    fn test_gemini_nano_banana_usage_and_billing() {
+        let raw_gemini_usage = serde_json::json!({
+            "promptTokenCount": 257,
+            "candidatesTokenCount": 2388,
+            "totalTokenCount": 3955,
+            "promptTokensDetails": [
+                { "modality": "TEXT", "tokenCount": 257 }
+            ],
+            "candidatesTokensDetails": [
+                { "modality": "IMAGE", "tokenCount": 1680 }
+            ],
+            "thoughtsTokenCount": 1310,
+            "serviceTier": "standard"
+        });
+
+        let openai_usage = super::gemini_usage_metadata_to_openai(&raw_gemini_usage);
+        assert_eq!(openai_usage["prompt_tokens"], 257);
+        assert_eq!(openai_usage["completion_tokens"], 3698);
+        assert_eq!(openai_usage["completion_tokens_details"]["reasoning_tokens"], 1310);
+        assert_eq!(openai_usage["completion_tokens_details"]["image_tokens"], 1680);
+        assert_eq!(openai_usage["output_image_tokens"], 1680);
+
+        let mut u = UsageTokens::default();
+        super::apply_usage_max(&mut u, &openai_usage);
+        assert_eq!(u.prompt, 257);
+        assert_eq!(u.completion, 3698);
+        assert_eq!(u.output_image_tokens, 1680);
+        assert_eq!(u.reasoning_tokens, 1310);
+
+        // 验证全双工多模态计费公式计算结果
+        let text_prompt = (u.prompt - u.image_tokens).max(0);
+        let thoughts = u.reasoning_tokens;
+        let text_completion = (u.completion - u.output_image_tokens - thoughts).max(0);
+        let p_rate = 1.5;
+        let c_rate = 7.5;
+        let img_comp_rate = 30.0;
+        let cost_raw = (text_prompt as f64 * p_rate
+            + (text_completion + thoughts) as f64 * c_rate
+            + u.output_image_tokens as f64 * img_comp_rate)
+            / 1_000_000.0;
+        assert!((cost_raw - 0.0659205).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_gemini_multimodal_billing_with_thoughts_and_image() {
+        let raw_gemini_usage = serde_json::json!({
+            "promptTokenCount": 6,
+            "candidatesTokenCount": 1209,
+            "totalTokenCount": 1354,
+            "promptTokensDetails": [
+                { "modality": "TEXT", "tokenCount": 6 }
+            ],
+            "candidatesTokensDetails": [
+                { "modality": "IMAGE", "tokenCount": 1120 }
+            ],
+            "thoughtsTokenCount": 139,
+            "serviceTier": "standard"
+        });
+
+        let openai_usage = super::gemini_usage_metadata_to_openai(&raw_gemini_usage);
+        let mut u = UsageTokens::default();
+        super::apply_usage_max(&mut u, &openai_usage);
+
+        assert_eq!(u.prompt, 6);
+        assert_eq!(u.output_image_tokens, 1120);
+        assert_eq!(u.reasoning_tokens, 139);
+
+        let text_prompt = (u.prompt - u.image_tokens).max(0);
+        let text_completion = (u.completion - u.output_image_tokens).max(0);
+        let thoughts = u.reasoning_tokens.min(text_completion);
+        let pure_text = text_completion - thoughts;
+        assert_eq!(text_prompt, 6);
+        assert_eq!(pure_text, 89);
+        assert_eq!(thoughts, 139);
+        assert_eq!(text_prompt + pure_text + thoughts + u.output_image_tokens, 1354);
+
+        let p_rate = 0.1;
+        let c_rate = 0.05;
+        let img_comp_rate = 0.4;
+        let cost_raw = (text_prompt as f64 * p_rate
+            + text_completion as f64 * c_rate
+            + u.output_image_tokens as f64 * img_comp_rate)
+            / 1_000_000.0;
+        assert!((cost_raw - 0.00046).abs() < 1e-8);
+    }
+
+    #[test]
+    fn test_extract_resolution_comprehensive() {
+        use super::extract_resolution;
+
+        // 1. 根级字符串与数字型 resolution
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "resolution": "1080p" })),
+            Some("1080p".into())
+        );
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "resolution": 720 })),
+            Some("720p".into())
+        );
+
+        // 2. 阿里 DashScope parameters & 快手可灵 settings
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "parameters": { "resolution": "720P" } })),
+            Some("720p".into())
+        );
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "settings": { "resolution": "1080p" } })),
+            Some("1080p".into())
+        );
+
+        // 3. MiniMax OutputConfig 与腾讯云 AiTryOnConfig
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "OutputConfig": { "Resolution": "1080P" } })),
+            Some("1080p".into())
+        );
+        assert_eq!(
+            extract_resolution(
+                &serde_json::json!({ "ImageTask": { "AiTryOnConfig": { "Resolution": "1K" } } })
+            ),
+            Some("1k".into())
+        );
+
+        // 4. 谷歌官方 imageConfig（同时支持驼峰与下划线）
+        assert_eq!(
+            extract_resolution(&serde_json::json!({
+                "generationConfig": { "imageConfig": { "imageSize": "2K" } }
+            })),
+            Some("2k".into())
+        );
+        assert_eq!(
+            extract_resolution(&serde_json::json!({
+                "generation_config": { "image_config": { "image_size": "2K" } }
+            })),
+            Some("2k".into())
+        );
+
+        // 5. OpenAI 根级 size
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "size": "1024x1024" })),
+            Some("1k".into())
+        );
+        assert_eq!(
+            extract_resolution(&serde_json::json!({ "size": "3840x2160" })),
+            Some("4k".into())
+        );
+    }
+
+    #[test]
+    fn test_tokenhub_hunyuan_image_count_and_usage() {
+        let v3_resp = r#"{
+            "created": 1785125529,
+            "data": [{ "url": "https://example.com/v3.png" }],
+            "tokenhub_usage": { "total_tokens": 1024 }
+        }"#;
+        assert_eq!(count_response_images(v3_resp), Some(1));
+        let u3 = parse_usage(v3_resp);
+        assert_eq!(u3.total, 1024);
+        assert_eq!(u3.completion, 1024);
+        assert_eq!(u3.prompt, 0);
+
+        let v35_resp = r#"{
+            "choices": [{
+                "delta": {
+                    "type": "image",
+                    "image": { "url": "https://example.com/v35.png" }
+                }
+            }],
+            "usage": { "total_tokens": 20000 }
+        }"#;
+        assert_eq!(count_response_images(v35_resp), Some(1));
+        let u35 = parse_usage(v35_resp);
+        assert_eq!(u35.total, 20000);
+        assert_eq!(u35.completion, 20000);
+        assert_eq!(u35.prompt, 0);
+    }
+
+    #[test]
+    fn test_google_interactions_usage_and_images() {
+        let resp = r#"{
+            "id": "v1_inter_123",
+            "object": "interaction",
+            "status": "completed",
+            "steps": [{
+                "type": "model_output",
+                "content": [
+                    { "type": "text", "text": "Here is your image" },
+                    { "type": "image", "data": "iVBORw0KGgoAAAANSUhEUg==", "mime_type": "image/png" }
+                ]
+            }],
+            "usage": {
+                "total_input_tokens": 300,
+                "total_output_tokens": 1290,
+                "total_thought_tokens": 110,
+                "total_cached_tokens": 50,
+                "total_tokens": 1700,
+                "input_tokens_by_modality": [{ "modality": "image", "tokens": 258 }],
+                "output_tokens_by_modality": [{ "modality": "image", "tokens": 1290 }]
+            }
+        }"#;
+        assert_eq!(count_response_images(resp), Some(1));
+        let u = parse_usage(resp);
+        assert_eq!(u.prompt, 300);
+        assert_eq!(u.completion, 1400);
+        assert_eq!(u.reasoning_tokens, 110);
+        assert_eq!(u.cached, 50);
+        assert_eq!(u.image_tokens, 258);
+        assert_eq!(u.output_image_tokens, 1290);
+        assert_eq!(u.total, 1700);
+
+        let req = serde_json::json!({
+            "model": "gemini-3.1-flash-image-preview",
+            "input": [
+                { "type": "text", "text": "Edit this image" },
+                { "type": "image", "data": "abc", "mime_type": "image/png" }
+            ],
+            "response_format": { "type": "image", "image_size": "2K" }
+        });
+        let feats = extract_request_features(&req);
+        assert_eq!(feats.image_ref_count, Some(1));
+        assert_eq!(extract_resolution(&req), Some("2k".into()));
+
+        // 验证 SSE 流式下 step.delta 图片计数与 interaction.completed 用量提取
+        let sse_resp = concat!(
+            "event: step.start\n",
+            "data: {\"index\":1,\"step\":{\"type\":\"model_output\"},\"event_type\":\"step.start\"}\n\n",
+            "event: step.delta\n",
+            "data: {\"index\":1,\"delta\":{\"mime_type\":\"image/jpeg\",\"data\":\"/9j/4AAQSkZJRg==\",\"type\":\"image\"},\"event_type\":\"step.delta\"}\n\n",
+            "event: step.stop\n",
+            "data: {\"index\":1,\"event_type\":\"step.stop\"}\n\n",
+            "event: interaction.completed\n",
+            "data: {\"interaction\":{\"id\":\"v1_inter_sse\",\"status\":\"completed\",\"usage\":{\"total_tokens\":1401,\"total_input_tokens\":3,\"total_output_tokens\":1398,\"output_tokens_by_modality\":[{\"modality\":\"image\",\"tokens\":1290}]}}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        assert_eq!(count_response_images(sse_resp), Some(1));
+        let sse_u = parse_usage(sse_resp);
+        assert_eq!(sse_u.prompt, 3);
+        assert_eq!(sse_u.completion, 1398);
+        assert_eq!(sse_u.output_image_tokens, 1290);
+        assert_eq!(sse_u.total, 1401);
     }
 }
 

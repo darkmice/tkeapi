@@ -225,7 +225,10 @@ pub(crate) fn tc_file(media: &str, extra: &[(&str, serde_json::Value)]) -> serde
 /// 从请求体中按字段优先级收集媒体对象数组（保留 role 等原始元数据）。
 /// 每个字段兼容：字符串、纯字符串数组、对象数组。
 /// 如果是字符串形式，会自动包装成包含该字符串的单个 JSON 串元素数组。
-pub(crate) fn collect_media_values(body: &serde_json::Value, fields: &[&str]) -> Vec<serde_json::Value> {
+pub(crate) fn collect_media_values(
+    body: &serde_json::Value,
+    fields: &[&str],
+) -> Vec<serde_json::Value> {
     for field in fields {
         if let Some(val) = body.get(*field) {
             let mut list = Vec::new();
@@ -244,13 +247,11 @@ pub(crate) fn collect_media_values(body: &serde_json::Value, fields: &[&str]) ->
 
 /// 媒体 URL 值：纯字符串，或嵌套 `{"url":"..."}`。
 pub(crate) fn as_media_url(v: &serde_json::Value) -> Option<&str> {
-    v.as_str()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            v.get("url")
-                .and_then(|u| u.as_str())
-                .filter(|s| !s.is_empty())
-        })
+    v.as_str().filter(|s| !s.is_empty()).or_else(|| {
+        v.get("url")
+            .and_then(|u| u.as_str())
+            .filter(|s| !s.is_empty())
+    })
 }
 
 /// 从请求体中按字段优先级收集图片/视频 URL（提取为纯 String 列表）。
@@ -449,6 +450,10 @@ pub(crate) async fn download_image_to_base64(
     client: &reqwest::Client,
     url: &str,
 ) -> Option<serde_json::Value> {
+    if !crate::services::http_client::is_safe_outbound_url(url).await {
+        crate::relay_debug!("[DownloadImage] 目标 URL 安全校验未通过（禁止访问私有内网）: {}", url);
+        return None;
+    }
     for attempt in 0..2 {
         let resp = match crate::services::http_client::with_download_timeout(client.get(url))
             .send()

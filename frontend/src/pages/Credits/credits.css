@@ -1,0 +1,254 @@
+.order-standalone {
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--dashboard);
+  padding: 16px 24px 64px;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: normal;
+}
+
+.order-standalone-back {
+  margin: 0 0 8px -8px;
+}
+
+.order-standalone.order-checkout-wrapper {
+  background: var(--dashboard);
+}
+
+[data-theme='dark'] .order-standalone.order-checkout-wrapper {
+  background: var(--dashboard);
+}
+
+.order-checkout-page {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.order-checkout-btn-primary {
+  height: 42px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  border: 1px solid #18181b !important;
+  background: #18181b !important;
+  color: #fafafa !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+  transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease !important;
+}
+
+.order-checkout-btn-primary:hover:not(:disabled) {
+  background: #27272a !important;
+  border-color: #27272a !important;
+  color: #fafafa !important;
+}
+
+.order-checkout-btn-primary:active:not(:disabled) {
+  transform: scale(0.995) !important;
+}
+
+.order-checkout-btn-primary:disabled {
+  opacity: 0.5 !important;
+}
+
+[data-theme='dark'] .order-checkout-btn-primary {
+  border-color: #fafafa !important;
+  background: #fafafa !important;
+  color: #09090b !important;
+}
+
+[data-theme='dark'] .order-checkout-btn-primary:hover:not(:disabled) {
+  background: #e4e4e7 !important;
+  border-color: #e4e4e7 !important;
+  color: #09090b !important;
+}
+
+@media (max-width: 640px) {
+  .order-standalone.order-checkout-wrapper {
+    padding: 12px 12px 32px;
+  }
+}
+
+.credits-page {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.credits-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.credits-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 460px;
+  border-radius: 18px;
+  padding: 22px 20px 18px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #1c1c1f;
+  color: #f5f5f5;
+}
+
+.credits-page.light .credits-card.accent-plain {
+  background: #f4f4f5;
+  color: #18181b;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.credits-card.accent-blue {
+  background: linear-gradient(180deg, #2f6bff 0%, #1d4ed8 100%);
+  border-color: transparent;
+}
+
+.credits-card.accent-purple {
+  background: linear-gradient(180deg, #8b5cf6 0%, #6d28d9 100%);
+  border-color: transparent;
+}
+
+.credits-card.accent-green {
+  background: linear-gradient(160deg, #14532d 0%, #052e16 100%);
+  border-color: transparent;
+}
+
+.credits-art {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.22) 1px, transparent 1px);
+  background-size: 12px 12px;
+  mask-image: radial-gradient(circle at 82% 12%, #000 0%, transparent 58%);
+  opacity: 0.55;
+}
+
+.credits-card-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.credits-name {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.credits-sub {
+  margin-top: 8px;
+  min-height: 44px;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.88;
+}
+
+.credits-price {
+  margin: 18px 0 4px;
+  font-size: 40px;
+  font-weight: 680;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.credits-price span {
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.credits-card .ant-btn {
+  margin-top: 16px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.credits-card.accent-plain .ant-btn {
+  background: #2a2a2e;
+  color: #fff;
+}
+
+.credits-page.light .credits-card.accent-plain .ant-btn {
+  background: #fff;
+  color: #18181b;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.credits-card.accent-blue .ant-btn,
+.credits-card.accent-purple .ant-btn,
+.credits-card.accent-green .ant-btn {
+  background: #fff;
+  color: #18181b;
+}
+
+.credits-includes {
+  margin-top: 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.credits-features {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.credits-features li {
+  display: flex;
+  gap: 8px;
+}
+
+.credits-banner {
+  margin-top: 14px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  min-height: 92px;
+  padding: 22px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(90deg, #0f3d22 0%, #14532d 70%, #166534 100%);
+  color: #f0fdf4;
+}
+
+.credits-note {
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  opacity: 0.62;
+}
+
+@media (max-width: 1100px) {
+  .credits-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .credits-grid {
+    grid-template-columns: 1fr;
+  }
+  .credits-card {
+    min-height: 0;
+  }
+  .credits-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

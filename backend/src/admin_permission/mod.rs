@@ -8,8 +8,8 @@
 mod policy;
 mod route_map;
 
-pub use policy::AdminGroupPermissionPolicy;
 use policy::permission_key_allowed;
+pub use policy::AdminGroupPermissionPolicy;
 use route_map::{classify_admin_write, WriteDecision};
 
 use std::sync::Arc;
@@ -22,6 +22,7 @@ use crate::AppState;
 #[derive(Clone)]
 pub struct AdminContext {
     is_super_admin: bool,
+    view: Vec<String>,
     edit: Vec<String>,
 }
 
@@ -37,17 +38,19 @@ pub fn users_write_perm(role: &str) -> &'static str {
     }
 }
 
-pub(crate) async fn load_admin_context(state: &Arc<AppState>, user_id: &str) -> AppResult<AdminContext> {
-    let row: Option<(String, Option<i64>, Option<String>)> = sqlx::query_as(
-        &state.db.format_query(
+pub(crate) async fn load_admin_context(
+    state: &Arc<AppState>,
+    user_id: &str,
+) -> AppResult<AdminContext> {
+    let row: Option<(String, Option<i64>, Option<String>)> =
+        sqlx::query_as(&state.db.format_query(
             "SELECT u.role, u.admin_group_id, g.permissions \
              FROM users u LEFT JOIN admin_groups g ON g.id = u.admin_group_id \
              WHERE u.id = ?",
-        ),
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db.pool)
-    .await?;
+        ))
+        .bind(user_id)
+        .fetch_optional(&state.db.pool)
+        .await?;
 
     let Some((role, admin_group_id, raw)) = row else {
         return Err(AppError::Unauthorized);
@@ -58,12 +61,15 @@ pub(crate) async fn load_admin_context(state: &Arc<AppState>, user_id: &str) -> 
     if admin_group_id.is_none() {
         return Ok(AdminContext {
             is_super_admin: true,
+            view: vec![],
             edit: vec![],
         });
     }
+    let policy = AdminGroupPermissionPolicy::parse(raw.as_deref());
     Ok(AdminContext {
         is_super_admin: false,
-        edit: AdminGroupPermissionPolicy::parse(raw.as_deref()).edit,
+        view: policy.view,
+        edit: policy.edit,
     })
 }
 
@@ -77,6 +83,14 @@ pub async fn is_super_admin_user(state: &Arc<AppState>, user_id: &str) -> AppRes
     .fetch_optional(&state.db.pool)
     .await?;
     Ok(row.is_some_and(|(role, gid)| is_super_admin(&role, gid)))
+}
+
+/// 读权限判定（GET 接口字段级过滤用）；`|` 分隔任一满足即可
+pub fn can_view(ctx: &AdminContext, perm_key: &str) -> bool {
+    ctx.is_super_admin
+        || perm_key
+            .split('|')
+            .any(|k| permission_key_allowed(&ctx.view, k))
 }
 
 pub fn require_edit(ctx: &AdminContext, perm_key: &str) -> AppResult<()> {
@@ -202,9 +216,7 @@ pub async fn enforce_admin_write(
                 return Ok(Some(ctx));
             }
             if super_only {
-                return Err(AppError::Forbidden(
-                    "仅超级管理员可执行此操作".to_string(),
-                ));
+                return Err(AppError::Forbidden("仅超级管理员可执行此操作".to_string()));
             }
             if perm_key.is_empty() {
                 tracing::warn!("admin write path missing permission map: {}", path);

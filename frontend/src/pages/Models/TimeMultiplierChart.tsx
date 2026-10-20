@@ -20,6 +20,7 @@ import ErrorBoundary from '../../components/ErrorBoundary';
 import {
   buildDayMultiplierSegments,
   formatClockMinutes,
+  isFreeTimeMultiplier,
   type TimeMultiplierRule,
 } from '../../utils/timeMultipliers';
 
@@ -72,7 +73,7 @@ function ScheduleTooltip({
           <span className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ backgroundColor: seg.fill }} />
           <span className="text-muted-foreground tabular-nums">{seg.range}</span>
           <span className="ml-auto font-mono font-medium tabular-nums text-foreground">
-            {seg.rate.toFixed(2)} 倍
+            {isFreeTimeMultiplier(seg.rate) ? '免费' : `${seg.rate.toFixed(2)} 倍`}
           </span>
         </div>
       ))}
@@ -85,7 +86,7 @@ const SegShape = (props: any) => {
   if (!width || width <= 0) return null;
   const idx = Number(String(dataKey).slice(1));
   const rate = Number(payload?.[`r${idx}`]);
-  const label = Number.isFinite(rate) ? rate.toFixed(2) : '';
+  const label = !Number.isFinite(rate) ? '' : (isFreeTimeMultiplier(rate) ? '免费' : rate.toFixed(2));
   return (
     <g>
       <rect x={x} y={y} width={width} height={height} fill={fill} rx={width > 10 ? 3 : 0} />

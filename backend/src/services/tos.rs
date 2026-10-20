@@ -331,9 +331,73 @@ async fn signed_request_once(
         .map_err(|e| format!("TOS 请求失败: {}", e))
 }
 
-/// 测试 TOS 连接（ListBuckets，对齐原 SDK）
+/// 测试当前配置：写入一个小文件再删除，确认存储可正常使用
 pub async fn test_connection(config: &TosConfig) -> Result<String, String> {
-    let host = endpoint_host(&config.endpoint);
+    let key = config.full_key(&format!(
+        "_connection_test/{}.txt",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    upload_file(
+        config,
+        &key,
+        b"tokensbyte storage connection test".to_vec(),
+        "text/plain",
+        None,
+    )
+    .await
+    .map_err(|e| format!("写入测试文件失败: {e}"))?;
+    if let Err(e) = delete_file(config, &key).await {
+        return Err(format!("测试文件已写入 {key}，但删除失败: {e}"));
+    }
+    Ok(format!("读写正常，已写入并删除测试文件 {key}"))
+}
+
+/// ListBuckets 返回的桶。地域与内外网域名用来自动填存储配置。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TosListedBucket {
+    pub name: String,
+    pub location: String,
+    pub extranet_endpoint: String,
+    pub intranet_endpoint: String,
+}
+
+/// 用 AK/SK 列举账号下的桶。未指定接入点时先走火山引擎公网，失败再试 BytePlus。
+pub async fn list_buckets(
+    access_key: &str,
+    secret_key: &str,
+    prefer_endpoint: &str,
+) -> Result<Vec<TosListedBucket>, String> {
+    let targets: [(&str, &str); 2] = if prefer_endpoint.contains("bytepluses.com") {
+        [
+            ("ap-southeast-1", "tos-ap-southeast-1.bytepluses.com"),
+            ("cn-beijing", "tos-cn-beijing.volces.com"),
+        ]
+    } else {
+        [
+            ("cn-beijing", "tos-cn-beijing.volces.com"),
+            ("ap-southeast-1", "tos-ap-southeast-1.bytepluses.com"),
+        ]
+    };
+    let mut last_err = String::new();
+    for (region, host) in targets {
+        let config = TosConfig {
+            access_key: access_key.to_string(),
+            secret_key: secret_key.to_string(),
+            endpoint: host.to_string(),
+            region: region.to_string(),
+            bucket: "list".to_string(),
+            path_prefix: String::new(),
+            custom_domain: String::new(),
+        };
+        match list_buckets_at(&config, host).await {
+            Ok(buckets) => return Ok(buckets),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+async fn list_buckets_at(config: &TosConfig, host: &str) -> Result<Vec<TosListedBucket>, String> {
     let resp = signed_request(
         config,
         reqwest::Method::GET,
@@ -342,56 +406,71 @@ pub async fn test_connection(config: &TosConfig) -> Result<String, String> {
         &[],
         &[],
         None,
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     )
     .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("连接失败 ({}): {}", status, body));
-    }
-
+    let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
-
-    let names = parse_bucket_names(&body);
-    if names.contains(&config.bucket) {
-        Ok(format!("连接成功，已找到目标 Bucket: {}", config.bucket))
-    } else {
-        Ok(format!(
-            "连接成功，但未找到 Bucket '{}'，可用: {:?}",
-            config.bucket, names
-        ))
+        .map_err(|e| format!("读取存储桶列表失败: {}", e))?;
+    if !status.is_success() {
+        let snippet: String = body.chars().take(300).collect();
+        return Err(format!("列举存储桶失败 ({}): {}", status, snippet));
     }
+    Ok(parse_buckets(&body))
 }
 
-/// ListBuckets：REST 为 XML；若体以 `{` 开头再按 JSON `Buckets[].Name` 解析（旧 SDK 形态）
-fn parse_bucket_names(body: &str) -> Vec<String> {
+/// ListBuckets：文档示例为 JSON；REST 也可能是 XML。
+fn parse_buckets(body: &str) -> Vec<TosListedBucket> {
     let trimmed = body.trim_start();
     if trimmed.starts_with('{') {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
             if let Some(arr) = v.get("Buckets").and_then(|b| b.as_array()) {
-                return arr
-                    .iter()
-                    .filter_map(|b| {
-                        b.get("Name")
-                            .and_then(|n| n.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .collect();
+                return arr.iter().filter_map(bucket_from_json).collect();
             }
         }
     }
-    let mut names = Vec::new();
+    let mut buckets = Vec::new();
     for block in body.split("<Bucket>").skip(1) {
-        if let Some(name) = extract_xml_value(block, "Name") {
-            names.push(name);
-        }
+        let Some(name) = extract_xml_value(block, "Name").filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        buckets.push(TosListedBucket {
+            name,
+            location: extract_xml_value(block, "Location")
+                .or_else(|| extract_xml_value(block, "LocationConstraint"))
+                .unwrap_or_default(),
+            extranet_endpoint: extract_xml_value(block, "ExtranetEndpoint").unwrap_or_default(),
+            intranet_endpoint: extract_xml_value(block, "IntranetEndpoint").unwrap_or_default(),
+        });
     }
-    names
+    buckets
+}
+
+fn bucket_from_json(v: &serde_json::Value) -> Option<TosListedBucket> {
+    let name = v.get("Name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(TosListedBucket {
+        name: name.to_string(),
+        location: v
+            .get("Location")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string(),
+        extranet_endpoint: v
+            .get("ExtranetEndpoint")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string(),
+        intranet_endpoint: v
+            .get("IntranetEndpoint")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
 }
 
 /// 上传文件到 TOS（显式设置 x-tos-acl: default 继承桶 ACL）
@@ -793,4 +872,44 @@ fn extract_xml_value(xml: &str, tag: &str) -> Option<String> {
     let start = xml.find(&open)? + open.len();
     let end = xml.find(&close)?;
     Some(xml[start..end].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_buckets;
+
+    #[test]
+    fn list_buckets_json_keeps_location_and_endpoints() {
+        let body = r#"{
+            "Buckets": [{
+                "Name": "buckettest001",
+                "Location": "cn-beijing",
+                "ExtranetEndpoint": "tos-cn-beijing.volces.com",
+                "IntranetEndpoint": "tos-cn-beijing.ivolces.com"
+            }]
+        }"#;
+        let buckets = parse_buckets(body);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].name, "buckettest001");
+        assert_eq!(buckets[0].location, "cn-beijing");
+        assert_eq!(buckets[0].extranet_endpoint, "tos-cn-beijing.volces.com");
+        assert_eq!(buckets[0].intranet_endpoint, "tos-cn-beijing.ivolces.com");
+    }
+
+    #[test]
+    fn list_buckets_xml_keeps_location_and_endpoints() {
+        let body = r#"<ListAllMyBucketsResult><Buckets><Bucket>
+            <Name>demo</Name><Location>ap-southeast-1</Location>
+            <ExtranetEndpoint>tos-ap-southeast-1.bytepluses.com</ExtranetEndpoint>
+            <IntranetEndpoint>tos-ap-southeast-1.ibytepluses.com</IntranetEndpoint>
+        </Bucket></Buckets></ListAllMyBucketsResult>"#;
+        let buckets = parse_buckets(body);
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].name, "demo");
+        assert_eq!(buckets[0].location, "ap-southeast-1");
+        assert_eq!(
+            buckets[0].extranet_endpoint,
+            "tos-ap-southeast-1.bytepluses.com"
+        );
+    }
 }

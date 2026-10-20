@@ -64,12 +64,12 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
 const DEMO_HTML = whatsTokenHomepageHtml;
 
-const FIXED_NAV_KEYS = ['home', 'marketplace', 'integration', 'contact', 'about'] as const;
+const FIXED_NAV_KEYS = ['home', 'marketplace', 'contact', 'about'] as const;
+const SYSTEM_MARKETPLACE_PATH = '/home/models';
 
 const DEFAULT_NAV_ITEMS = [
-  { label: '站点首页|Home', path: '/home', enabled: true, target_blank: false, key: 'home', is_fixed: true, sort: 50 },
-  { label: '模型广场|Model Marketplace', path: '/home/models', enabled: true, target_blank: false, key: 'marketplace', is_fixed: true, sort: 40 },
-  { label: '接入指南|Integration Guide', path: '#integration', enabled: true, target_blank: false, key: 'integration', is_fixed: true, sort: 30 },
+  { label: '站点首页|Home', path: '/home', enabled: true, target_blank: false, key: 'home', is_fixed: true, sort: 40 },
+  { label: '模型广场|Model Marketplace', path: SYSTEM_MARKETPLACE_PATH, enabled: true, target_blank: false, key: 'marketplace', is_fixed: true, sort: 30 },
   { label: '联系我们|Contact Us', path: '/home/contact', enabled: true, target_blank: false, key: 'contact', is_fixed: true, sort: 20 },
   { label: '关于我们|About Us', path: '/home/about', enabled: true, target_blank: false, key: 'about', is_fixed: true, sort: 10 },
 ];
@@ -113,10 +113,26 @@ function rankedList<T extends { sort?: unknown }>(items: T[]): (T & { sort: numb
   return sortByWeightDesc(withDefaultSort(items));
 }
 
-/** 保证系统五项存在且不可删除；按 sort 数值越大越靠前。 */
+function isDeadClassicAnchor(item: any): boolean {
+  const key = String(item?.key || '');
+  const path = String(item?.path || '').trim();
+  const dead = path === '' || path.startsWith('#');
+  return (key === 'integration' || key === 'features' || key === 'carousel') && dead;
+}
+
+/** 保证系统四项存在且不可删除；按 sort 数值越大越靠前。模型广场默认进系统主页面。 */
 function normalizeNavItems(rawItems: any[] = []): any[] {
-  const items = Array.isArray(rawItems) ? [...rawItems] : [];
-  const marked = items.map(it => (isFixedNavItem(it) ? { ...it, is_fixed: true } : it));
+  const items = (Array.isArray(rawItems) ? rawItems : []).filter(it => !isDeadClassicAnchor(it));
+  const marked = items.map(it => {
+    const next = isFixedNavItem(it) ? { ...it, is_fixed: true } : { ...it };
+    if (next.key === 'marketplace') {
+      const path = String(next.path || '').trim();
+      if (!path || path === '#models' || path === '/portal/models' || path === '/portal/models/') {
+        next.path = SYSTEM_MARKETPLACE_PATH;
+      }
+    }
+    return next;
+  });
   for (const key of FIXED_NAV_KEYS) {
     if (!marked.some(it => it.key === key)) {
       marked.push({ ...defaultNavItemByKey(key), sort: 0 });
@@ -386,9 +402,10 @@ const PortalManager: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const fetchConfig = async () => {
+  const fetchConfig = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await (request.get('/plugins/site-portal/portal-config') as Promise<any>);
       if (res.nav_config) {
         setNavConfig({
@@ -403,7 +420,7 @@ const PortalManager: React.FC = () => {
       if (res.generate_log) setGenerateLog(res.generate_log);
       if (res.custom_homepage) {
         setCustomHomepage(res.custom_homepage);
-        if (res.custom_homepage.enabled) {
+        if (!silent && res.custom_homepage.enabled) {
           setActiveMenu('custom_homepage');
         }
       }
@@ -413,7 +430,7 @@ const PortalManager: React.FC = () => {
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
   const handleSave = async (section: string, data: any) => {
@@ -547,7 +564,7 @@ const PortalManager: React.FC = () => {
           </Space>
         </div>
         <div style={{ marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 13 }}>💡 提示：系统内置「站点首页、模型广场、接入指南、联系我们、关于我们」不可删除，可调整排序、开启关闭、修改名称和链接路径。排序数值越大越靠前。自定义栏目可增删。站内锚点会在当前首页平滑滚动；名称格式为 <Text code>中文|English</Text>。</Text>
+          <Text type="secondary" style={{ fontSize: 13 }}>💡 提示：系统内置「站点首页、模型广场、联系我们、关于我们」不可删除，可调整排序、开启关闭、修改名称和链接路径。模型广场默认链接系统主页面 <Text code>/home/models</Text>。排序数值越大越靠前。自定义栏目可增删。名称格式为 <Text code>中文|English</Text>。</Text>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16, padding: '10px 12px', borderRadius: 8, background: _isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)' }}>
           <div>
@@ -608,7 +625,7 @@ const PortalManager: React.FC = () => {
                 items[idx] = { ...item, path: e.target.value };
                 setNavConfig({ ...navConfig, items });
               }}
-              placeholder="锚点或链接（如 #features、/home/models）"
+              placeholder="链接（如 /home、/home/models、/home/contact）"
             />
             <Input
               value={item.icon || ''}
@@ -712,11 +729,11 @@ const PortalManager: React.FC = () => {
               }}
             />
             <Input value={link.label || ''} onChange={e => { const links = [...(footerConfig.links || [])]; links[idx] = { ...link, label: e.target.value }; setFooterConfig({ ...footerConfig, links }); }} placeholder="名称，如 技术优势|Technical Advantages" />
-            <Input value={link.path || ''} onChange={e => { const links = [...(footerConfig.links || [])]; links[idx] = { ...link, path: e.target.value }; setFooterConfig({ ...footerConfig, links }); }} placeholder="锚点或链接，如 #features" />
+            <Input value={link.path || ''} onChange={e => { const links = [...(footerConfig.links || [])]; links[idx] = { ...link, path: e.target.value }; setFooterConfig({ ...footerConfig, links }); }} placeholder="链接，如 /home/models" />
             <Button danger icon={<DeleteOutlined />} onClick={() => setFooterConfig({ ...footerConfig, links: (footerConfig.links || []).filter((_: any, i: number) => i !== idx) })} />
           </div>
         ))}
-        <Button size="small" icon={<PlusOutlined />} onClick={() => setFooterConfig({ ...footerConfig, links: [...(footerConfig.links || []), { label: '新链接|New Link', path: '#features', enabled: true }] })}>添加底部链接</Button>
+        <Button size="small" icon={<PlusOutlined />} onClick={() => setFooterConfig({ ...footerConfig, links: [...(footerConfig.links || []), { label: '新链接|New Link', path: '/home', enabled: true }] })}>添加底部链接</Button>
         <Divider style={{ margin: '16px 0' }} />
         <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14, display: 'block', marginBottom: 12 }}>开发者资讯</Text>
         <Text style={labelStyle}>栏目标题（支持 中文|English）</Text>
@@ -786,20 +803,23 @@ const PortalManager: React.FC = () => {
           <div>
             <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14, display: 'block', marginBottom: 4 }}>手动静态 HTML 生成模式</Text>
             <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12 }}>
-              默认关闭。在关闭状态下，每次修改配置并保存后，后台均会自动实时生成前台 HTML 页面，无需手动生成。
+              关闭：保存门户或风格后，自动重写 /portal 静态页。开启：保存后不自动重写，要点下面的按钮。用户正在访问的 /home 每次直接渲染，不看这个开关。
             </Text>
           </div>
-          <Switch 
-            checked={staticGenConfig.manual_mode === true} 
+          <Switch
+            checked={staticGenConfig.manual_mode === true}
             onChange={async (checked) => {
-              const newConfig = { manual_mode: checked };
-              setStaticGenConfig(newConfig);
+              const prev = staticGenConfig;
+              const next = { ...prev, manual_mode: checked };
+              setStaticGenConfig(next);
               try {
-                await request.post('/plugins/site-portal/portal-config', { section: 'static_gen', data: newConfig });
-                message.success(checked ? '已开启手动静态 HTML 生成模式' : '已关闭手动模式，转为实时自动更新数据');
-                fetchConfig();
+                await request.post('/plugins/site-portal/portal-config', { section: 'static_gen', data: next });
+                message.success(checked ? '已开启手动静态 HTML 生成模式' : '已关闭手动模式，保存后会自动更新静态页');
+                fetchConfig({ silent: true });
               } catch (e) {
                 console.error(e);
+                setStaticGenConfig(prev);
+                message.error('静态生成模式保存失败');
               }
             }}
           />
@@ -822,18 +842,6 @@ const PortalManager: React.FC = () => {
         />
       )}
 
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="路径说明"
-        description={
-          <span>
-            互动模型广场走 React 路由 <Text code>/home/models</Text>；下方「SEO 模型页」生成的是 <Text code>/portal/models</Text> 静态页（供爬虫/外链），两者独立。
-          </span>
-        }
-      />
-
       <div style={cardStyle}>
         <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14, display: 'block', marginBottom: 16 }}>快捷操作</Text>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
@@ -852,13 +860,6 @@ const PortalManager: React.FC = () => {
             onClick={() => handleGenerate('home')}
           >
             首页
-          </Button>
-          <Button
-            disabled={staticGenConfig.manual_mode !== true}
-            loading={generating}
-            onClick={() => handleGenerate('columns', ['models'])}
-          >
-            SEO 模型页更新
           </Button>
           <Button
             disabled={staticGenConfig.manual_mode !== true}
@@ -1243,7 +1244,8 @@ const PortalManager: React.FC = () => {
       </div>
 
       <div style={cardStyle}>
-        <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14, display: 'block', marginBottom: 12 }}>Hero 副标题</Text>
+        <Text strong style={{ color: _isLight ? '#1f2937' : '#fff', fontSize: 14, display: 'block', marginBottom: 4 }}>Hero 副标题</Text>
+        <Text style={{ color: _isLight ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)', fontSize: 12, display: 'block', marginBottom: 8 }}>与 FAI 艺术关于我们页同一份数据。多语言用 <Text code>中文|English|日本語|한국어|Tiếng Việt</Text>，只填中文时使用内置译文。</Text>
         <TextArea rows={3} value={aboutConfig.hero_subtitle || ''} onChange={e => setAboutConfig({ ...aboutConfig, hero_subtitle: e.target.value })} />
       </div>
 

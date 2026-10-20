@@ -43,7 +43,7 @@ fn normalize_token_name(name: &str) -> AppResult<String> {
 }
 
 /// kid = 用户 UID 后 3 位 + 3 位随机数字
-fn make_token_kid(user_uid: &str) -> String {
+pub(crate) fn make_token_kid(user_uid: &str) -> String {
     let uid_suffix: String = user_uid
         .chars()
         .rev()
@@ -62,6 +62,17 @@ pub const DEDICATED_TOKEN_NAME: &str = "创作中心2026";
 
 fn is_dedicated_token(name: &str, only_playground_2026: i64) -> bool {
     only_playground_2026 == 1 && name == DEDICATED_TOKEN_NAME
+}
+
+/// 移动端 App 专用令牌：由 `mobile_app` 插件按用户自动创建，不可删除、不可改配置，只能启用或禁用。
+pub const MOBILE_APP_TOKEN_NAME: &str = "移动端APP";
+
+pub(crate) fn is_mobile_app_token(name: &str, only_playground_2026: i64) -> bool {
+    only_playground_2026 == 1 && name == MOBILE_APP_TOKEN_NAME
+}
+
+fn is_reserved_token_name(name: &str) -> bool {
+    name == DEDICATED_TOKEN_NAME || name == MOBILE_APP_TOKEN_NAME
 }
 
 async fn enrich_token_period_usage(state: &AppState, tokens: &mut [ApiToken]) {
@@ -146,12 +157,17 @@ pub async fn create_token(
             "创作中心2026 专用密钥由系统自动创建，不可手动新增".to_string(),
         ));
     }
+    if name_val == MOBILE_APP_TOKEN_NAME {
+        return Err(AppError::BadRequest(
+            "移动端APP 专用令牌由系统自动创建，不可手动新增".to_string(),
+        ));
+    }
 
-    // 管理员豁免；普通用户按注册设置绑定策略硬拦截（prompt_only 不拦截）
+    // 管理员豁免；普通用户按注册设置绑定策略硬拦截（弹窗提示类不拦截）
     if claims.role != "admin" {
         let settings = crate::api::settings::load_all_settings(&state).await?;
         let reg = &settings.registration;
-        if reg.bind_policy_active() && reg.bind_enforcement != "prompt_only" {
+        if reg.bind_policy_active() && !reg.is_prompt_enforcement() {
             let email: String = sqlx::query_scalar(
                 &state
                     .db
@@ -273,21 +289,27 @@ pub async fn update_token(
         ));
     }
 
-    if is_dedicated_token(
-        &token.name,
-        token.only_playground_2026,
-    ) {
+    if is_dedicated_token(&token.name, token.only_playground_2026) {
         return Err(AppError::BadRequest(
             "创作中心2026 专用密钥不可修改".to_string(),
         ));
     }
 
+    let request = if is_mobile_app_token(&token.name, token.only_playground_2026) {
+        UpdateTokenRequest {
+            is_active: request.is_active,
+            ..UpdateTokenRequest::default()
+        }
+    } else {
+        request
+    };
+
     if let Some(name) = request.name {
         let name_val = normalize_token_name(&name)?;
-        if name_val == DEDICATED_TOKEN_NAME {
-            return Err(AppError::BadRequest(
-                "创作中心2026 为系统保留名称，不可用作其它密钥".to_string(),
-            ));
+        if is_reserved_token_name(&name_val) {
+            return Err(AppError::BadRequest(format!(
+                "{name_val} 为系统保留名称，不可用作其它密钥"
+            )));
         }
         token.name = name_val;
     }
@@ -381,11 +403,9 @@ pub async fn delete_token(
     Path(id): Path<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     // Check ownership
-    let row: (String, String, String, i64) = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT user_id, token_key, name, only_playground_2026 FROM api_tokens WHERE id = ?",
-        ),
-    )
+    let row: (String, String, String, i64) = sqlx::query_as(&state.db.format_query(
+        "SELECT user_id, token_key, name, only_playground_2026 FROM api_tokens WHERE id = ?",
+    ))
     .bind(id)
     .fetch_optional(&state.db.pool)
     .await?
@@ -399,6 +419,11 @@ pub async fn delete_token(
     if is_dedicated_token(&token_name, only_playground_2026) {
         return Err(AppError::BadRequest(
             "创作中心2026 专用密钥不可删除".to_string(),
+        ));
+    }
+    if is_mobile_app_token(&token_name, only_playground_2026) {
+        return Err(AppError::BadRequest(
+            "移动端APP 专用令牌不可删除，可在列表中禁用".to_string(),
         ));
     }
 
@@ -484,10 +509,7 @@ pub async fn reset_token_usage(
         ));
     }
 
-    if is_dedicated_token(
-        &token.name,
-        token.only_playground_2026,
-    ) {
+    if is_dedicated_token(&token.name, token.only_playground_2026) {
         return Err(AppError::BadRequest(
             "创作中心2026 专用密钥不可修改".to_string(),
         ));

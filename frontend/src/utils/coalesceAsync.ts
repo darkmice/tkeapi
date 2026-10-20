@@ -55,3 +55,11 @@ export function invalidateCoalesce(key: string): void {
 export function primeCoalesce<T>(key: string, value: T): void {
   recent.set(key, { at: Date.now(), value });
 }
+
+/** 同步读取短时缓存。默认 8s 内有效，过期视为未命中，避免侧栏先用旧列表再刷一次 */
+export function peekCoalesce<T>(key: string, maxAgeMs = 8_000): T | null {
+  const cached = recent.get(key);
+  if (!cached) return null;
+  if (maxAgeMs > 0 && Date.now() - cached.at > maxAgeMs) return null;
+  return cached.value as T;
+}

@@ -384,3 +384,85 @@ body[data-theme='dark'] .docs-api-system .docs-sidebar-scroll::-webkit-scrollbar
   font-size: 14px !important;
   line-height: 1.7 !important;
 }
+
+/* 文档编辑器全屏 / 预览 / 裁剪：后台内容层 z-index 为 1，会把 fixed 层压在顶栏和侧栏下面，并被 overflow 裁切 */
+body:has(.docs-api-system .md-editor.md-editor-fullscreen) .ant-layout-content,
+body:has(.docs-api-system .medium-zoom-image--opened) .ant-layout-content,
+body:has(.md-editor-modal-mask) .ant-layout-content {
+  z-index: 2000 !important;
+  overflow: visible !important;
+}
+body:has(.docs-api-system .md-editor.md-editor-fullscreen) .docs-api-system,
+body:has(.docs-api-system .md-editor.md-editor-fullscreen) .docs-api-system > div,
+body:has(.docs-api-system .medium-zoom-image--opened) .docs-api-system,
+body:has(.docs-api-system .medium-zoom-image--opened) .docs-api-system > div,
+body:has(.md-editor-modal-mask) .docs-api-system,
+body:has(.md-editor-modal-mask) .docs-api-system > div {
+  overflow: visible !important;
+}
+.docs-api-system .md-editor.md-editor-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  z-index: 1 !important;
+  overflow: hidden !important;
+}
+.docs-api-system .md-editor-preview img {
+  max-width: 100%;
+  height: auto;
+}
+body:has(.docs-api-system .medium-zoom-image--opened) .docs-api-system .md-editor,
+body:has(.docs-api-system .medium-zoom-image--opened) .docs-api-system .md-editor-preview-wrapper {
+  overflow: visible !important;
+}
+.medium-zoom-overlay {
+  z-index: 1500 !important;
+}
+.medium-zoom-image--opened {
+  z-index: 2101 !important;
+}
+.md-editor-modal-mask {
+  z-index: 2100 !important;
+}
+.md-editor-modal {
+  z-index: 2101 !important;
+}
+.md-editor-modal-clip .md-editor-modal[style*="width: 100%"],
+.md-editor-modal-clip .md-editor-modal[style*="width:100%"] {
+  inset-inline-start: 0 !important;
+  inset-block-start: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.md-editor-modal-clip .md-editor-modal[style*="width: 100%"] .md-editor-modal-body,
+.md-editor-modal-clip .md-editor-modal[style*="width:100%"] .md-editor-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.md-editor-modal-clip .md-editor-modal[style*="width: 100%"] .md-editor-clip,
+.md-editor-modal-clip .md-editor-modal[style*="width:100%"] .md-editor-clip {
+  flex: 1;
+  height: auto !important;
+  min-height: 0;
+}
+.md-editor-clip-preview {
+  background: #111;
+  overflow: hidden;
+}
+.md-editor-clip-preview-target,
+.md-editor-clip-preview-target > div {
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden;
+}

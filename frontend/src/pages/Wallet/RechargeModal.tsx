@@ -10,6 +10,7 @@ import { Modal, Button, Typography, Space, Row, Col, QRCode, message, Spin, Resu
 import { useTranslation } from 'react-i18next';
 import { WalletOutlined, AlipayCircleOutlined, WechatOutlined, SafetyCertificateOutlined, LockOutlined, CreditCardOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import request from '../../utils/request';
+import PayNoticeBanner from './PayNoticeBanner';
 import { useThemeStore } from '../../store/theme';
 import useSettingsStore from '../../store/settings';
 import useAuthStore from '../../store/auth';
@@ -25,10 +26,35 @@ import {
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
+function positiveRechargeLimit(value: unknown, fallback: number): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function resolveRechargeLimits(
+  channel: PaymentChannelUiItem | undefined,
+  globalMin: number,
+  globalMax: number,
+): { min: number; max: number } {
+  if (channel?.recharge_limit_enabled) {
+    return {
+      min: positiveRechargeLimit(channel.min_recharge_amount, 0),
+      max: positiveRechargeLimit(channel.max_recharge_amount, 0),
+    };
+  }
+  return {
+    min: positiveRechargeLimit(globalMin, 0),
+    max: positiveRechargeLimit(globalMax, 0),
+  };
+}
+
 interface RechargeModalProps {
   visible: boolean;
   onCancel: () => void;
   onSuccess: () => void;
+  couponOrderNo?: string;
+  fixedAmount?: number;
 }
 
 /** HyperBC：裸 usdt/usdc→ERC20；USDC@Tron→Tron (USDCOLD)，与官方收银台一致 */
@@ -104,7 +130,7 @@ const pickDefaultHyperbc = (addrs: HyperbcAddr[]) => {
   return { coin, net, address: findHyperbcAddress(addrs, coin, net) };
 };
 
-const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSuccess }) => {
+const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSuccess, couponOrderNo, fixedAmount }) => {
   const { t, i18n } = useTranslation();
   const { user } = useAuthStore();
   const { settings } = useSettingsStore();
@@ -145,7 +171,24 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
 
   const timerRef = useRef<any>(null);
 
-  const finalAmount = isCustom ? (customAmount || 0) : (selectedAmount || 0);
+  const finalAmount = couponOrderNo ? Number(fixedAmount || 0) : (isCustom ? (customAmount || 0) : (selectedAmount || 0));
+
+  // 渠道不收默认货币时按公开汇率预估应付金额（向上取整，与后端下单口径一致；以下单返回为准）
+  const defaultCurrencyCode = String(settings?.currency?.default_currency || '').toUpperCase();
+  const selectedPayChannel = paymentChannels.find((c) => c.id === selectedChannel);
+  const payCurrency = selectedPayChannel?.pay_currency;
+  const payDecimals = selectedPayChannel?.pay_decimals ?? 2;
+  const payRate = selectedPayChannel?.pay_rate;
+  const needsConversion = !!payCurrency && payCurrency !== defaultCurrencyCode && !!payRate;
+  const payScale = 10 ** payDecimals;
+  const payPreview = needsConversion
+    ? Math.ceil(finalAmount * (payRate as number) * payScale - 1e-6) / payScale
+    : finalAmount;
+  const paySymbol = selectedPayChannel?.pay_currency_symbol || payCurrency || '';
+  const [orderPay, setOrderPay] = useState<{ currency: string; amount: number } | null>(null);
+  const paidLabel = orderPay && orderPay.currency !== defaultCurrencyCode
+    ? `${paySymbol} ${orderPay.amount.toFixed(payDecimals)}`
+    : `${currencySymbol} ${finalAmount.toFixed(2)}`;
 
   useEffect(() => {
     if (visible) {
@@ -161,6 +204,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
     clearTimer();
     setQrCodeUrl('');
     setOutTradeNo('');
+    setOrderPay(null);
     setPayStatus('idle');
     setHyperbcData(null);
     setSelectedAddress(null);
@@ -226,6 +270,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
   };
 
   const applyChannelSelection = (channel: PaymentChannelUiItem) => {
+    setErrorMessage(null);
     setSelectedChannel(channel.id);
     if (channel.id === 'allinpay') {
       const methods = getAllinpayMethods(channel);
@@ -306,7 +351,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
         if (res?.status === 'paid') {
           clearTimer();
           setPayStatus('success');
-          message.success(t('recharge.recharge_success', '充值成功！'));
+          message.success(couponOrderNo ? (i18n.language?.toLowerCase().startsWith('en') ? 'Paid. The coupon is in your account.' : '支付成功，卡券已发放') : t('recharge.recharge_success', '充值成功！'));
           setTimeout(() => { onSuccess(); }, 2000);
         }
       } catch (err) {
@@ -315,8 +360,21 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
     }, 3000);
   };
 
+  const globalMinRecharge = settings?.currency?.min_recharge_amount !== undefined
+    ? parseFloat(String(settings.currency.min_recharge_amount))
+    : 5;
+  const globalMaxRecharge = settings?.currency?.max_recharge_amount !== undefined
+    ? parseFloat(String(settings.currency.max_recharge_amount))
+    : 10000;
+  const rechargeLimits = resolveRechargeLimits(
+    paymentChannels.find((c) => c.id === selectedChannel),
+    globalMinRecharge,
+    globalMaxRecharge,
+  );
+
   const handleCreateOrder = async () => {
-    const minRechargeLimit = settings?.currency?.min_recharge_amount !== undefined ? parseFloat(String(settings.currency.min_recharge_amount)) : 5.0;
+    const minRechargeLimit = rechargeLimits.min;
+    const maxRechargeLimit = rechargeLimits.max;
 
     if (selectedChannel === 'allinpay') {
       const ap = paymentChannels.find((c) => c.id === 'allinpay');
@@ -329,11 +387,19 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
       }
     }
 
-    if (minRechargeLimit > 0 && finalAmount < minRechargeLimit) {
+    if (!couponOrderNo && minRechargeLimit > 0 && finalAmount < minRechargeLimit) {
       setErrorMessage(t('recharge.min_amount_error', { 
         defaultValue: `充值金额不能小于 ${minRechargeLimit} ${currencyUnit}`, 
         unit: currencyUnit, 
         limit: minRechargeLimit 
+      }));
+      return;
+    }
+    if (!couponOrderNo && maxRechargeLimit > 0 && finalAmount > maxRechargeLimit) {
+      setErrorMessage(t('recharge.max_amount_error', {
+        defaultValue: `充值金额不能大于 ${maxRechargeLimit} ${currencyUnit}`,
+        unit: currencyUnit,
+        limit: maxRechargeLimit
       }));
       return;
     }
@@ -345,7 +411,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
       }));
       return;
     }
-    if (paymentMethod === 'stripe' && currencyUnit.toUpperCase() === 'USD' && finalAmount < 0.5) {
+    if (paymentMethod === 'stripe' && (payCurrency || currencyUnit).toUpperCase() === 'USD' && payPreview < 0.5) {
       setErrorMessage(t('recharge.stripe_min_amount_error', {
         defaultValue: 'Stripe 支付单笔金额不能小于 0.50 USD',
       }));
@@ -360,10 +426,14 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
         amount: finalAmount,
         payment_method: paymentMethod,
         is_mobile: isMobile,
+        coupon_order_no: couponOrderNo || undefined,
       };
       const res = await (request.post('/finance/pay/create', reqBody, { skipErrorHandler: true } as any) as any);
       
       setOutTradeNo(res.out_trade_no);
+      if (res.pay_currency && typeof res.pay_amount === 'number') {
+        setOrderPay({ currency: String(res.pay_currency).toUpperCase(), amount: res.pay_amount });
+      }
       setPayStatus('paying');
       
       if (paymentMethod === 'alipay') {
@@ -606,7 +676,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
           </div>
           <div style={{ minWidth: 0 }}>
             <Title level={4} style={{ margin: 0, color: titleColor, fontSize: isMobile ? 15 : 18, fontWeight: 700, lineHeight: 1.2 }}>
-              {t('recharge.title', '钱包余额充值')}
+              {couponOrderNo ? (i18n.language?.toLowerCase().startsWith('en') ? 'Pay for coupon' : '支付卡券订单') : t('recharge.title', '钱包余额充值')}
             </Title>
             {!isMobile && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
@@ -664,7 +734,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
             <QRCode value={qrCodeUrl} size={200} color="#000000" />
           </div>
           <div style={{ marginTop: 20 }}>
-            <Title level={3} style={{ color: '#ef4444', margin: 0, fontWeight: 800 }}>{currencySymbol} {finalAmount.toFixed(2)}</Title>
+            <Title level={3} style={{ color: '#ef4444', margin: 0, fontWeight: 800 }}>{paidLabel}</Title>
             <Text type="secondary" style={{ fontSize: 13 }}>{t('recharge.order_no', '订单号: ')}{outTradeNo}</Text>
           </div>
           <Button style={{ marginTop: 20, borderRadius: 10, height: 40 }} onClick={resetState}>{t('recharge.return_modify', '返回修改')}</Button>
@@ -685,7 +755,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
           </Text>
           <Spin size="large" />
           <div style={{ marginTop: 20 }}>
-            <Title level={3} style={{ color: '#ef4444', margin: 0, fontWeight: 800 }}>{currencySymbol} {finalAmount.toFixed(2)}</Title>
+            <Title level={3} style={{ color: '#ef4444', margin: 0, fontWeight: 800 }}>{paidLabel}</Title>
             <Text type="secondary" style={{ fontSize: 13 }}>{t('recharge.order_no', '订单号: ')}{outTradeNo}</Text>
           </div>
           <Button style={{ marginTop: 20, borderRadius: 10, height: 40 }} onClick={resetState}>{t('recharge.return_modify', '返回修改')}</Button>
@@ -933,6 +1003,8 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
         )
       ) : (
         /* 主选择界面：横版双列 (Left: 金额选择，Right: 支付方式) */
+        <>
+        <PayNoticeBanner />
         <Row gutter={isMobile ? [0, 12] : [24, 20]} style={{ margin: 0 }}>
           {/* 左侧 Column：选择支付金额 */}
           <Col
@@ -945,6 +1017,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
               gap: isMobile ? 10 : 16,
             }}
           >
+                {!couponOrderNo && (<>
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isMobile ? 8 : 10 }}>
                     <Text strong style={{ fontSize: isMobile ? 13 : 14, color: labelColor }}>
@@ -1010,7 +1083,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
                     <Text strong style={{ color: isCustom ? (isLight ? '#18181b' : '#60a5fa') : descColor, fontSize: 16 }}>{currencySymbol}</Text>
                     <InputNumber
                       min={0.01}
-                      max={50000}
+                      max={rechargeLimits.max > 0 ? rechargeLimits.max : 50000}
                       precision={2}
                       placeholder={t('recharge.input_amount', '输入金额')}
                       value={customAmount}
@@ -1023,6 +1096,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
                     <Text style={{ color: subColor, fontSize: 13 }}>{currencyUnit}</Text>
                   </div>
                 </div>
+                </>)}
 
                 {/* 应付金额汇总卡片 */}
                 <div style={{
@@ -1043,8 +1117,21 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 800, color: '#ef4444', lineHeight: 1 }}>
-                      {currencySymbol} {finalAmount.toFixed(2)}
+                      {needsConversion
+                        ? `${paySymbol} ${payPreview.toFixed(payDecimals)}`
+                        : `${currencySymbol} ${finalAmount.toFixed(2)}`}
                     </div>
+                    {needsConversion && (
+                      <Text style={{ fontSize: 11, color: subColor, display: 'block', marginTop: 4 }}>
+                        {t('recharge.fx_pay_hint', {
+                          defaultValue: '到账 {{credit}} · 1 {{from}} ≈ {{rate}} {{to}}',
+                          credit: `${currencySymbol} ${finalAmount.toFixed(2)}`,
+                          from: defaultCurrencyCode,
+                          rate: Number((payRate as number).toPrecision(6)),
+                          to: payCurrency,
+                        })}
+                      </Text>
+                    )}
                   </div>
                 </div>
           </Col>
@@ -1265,6 +1352,7 @@ const RechargeModal: React.FC<RechargeModalProps> = ({ visible, onCancel, onSucc
             </div>
           </Col>
         </Row>
+        </>
       )}
     </Modal>
   );

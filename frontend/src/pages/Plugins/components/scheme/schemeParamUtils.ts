@@ -21,6 +21,12 @@ export const isCountParam = (param: SchemeParam): boolean => {
     k === 'generate_count' ||
     k === 'candidate_count' ||
     k === 'variations' ||
+    label === 'image count' ||
+    label.includes('image count') ||
+    label === 'count' ||
+    label.includes('quantity') ||
+    label.includes('batch size') ||
+    label.includes('number of images') ||
     label === '生成数量' ||
     label.includes('生成数量') ||
     label.includes('图片数量') ||
@@ -144,6 +150,41 @@ function localizeBuiltinChoice(param: SchemeParam, stored: string, isSimplified:
   return i18n.t(`playground_2026:${i18nKey}`, stored);
 }
 
+/** 数量参数选项文案格式化（支持单复数与多语言） */
+export const formatCountChoice = (param: SchemeParam, opt: string | number, isSimplified: boolean): string => {
+  const s = String(opt).trim();
+  const m = s.match(/\d+/);
+  if (!m) {
+    return s;
+  }
+  const n = parseInt(m[0], 10);
+  if (Number.isNaN(n)) return s;
+
+  if (isSimplified) {
+    return `${n} 张`;
+  }
+
+  const curLang = (i18n.language || 'zh').toLowerCase();
+  if (curLang === 'zh-tw' || curLang === 'zh-hk') {
+    return i18n.t('playground_2026:count_image_plural', { count: n, defaultValue: `${n} 張` });
+  }
+  if (curLang.startsWith('ja')) {
+    return i18n.t('playground_2026:count_image_plural', { count: n, defaultValue: `${n} 枚` });
+  }
+  if (curLang.startsWith('ko')) {
+    return i18n.t('playground_2026:count_image_plural', { count: n, defaultValue: `${n} 장` });
+  }
+  if (curLang.startsWith('vi')) {
+    return i18n.t('playground_2026:count_image_plural', { count: n, defaultValue: `${n} tấm` });
+  }
+
+  // English & other fallback
+  if (n === 1) {
+    return i18n.t('playground_2026:count_image_one', { count: 1, defaultValue: '1 image' });
+  }
+  return i18n.t('playground_2026:count_image_plural', { count: n, defaultValue: `${n} images` });
+};
+
 /** 选项文案：优先 option_labels，其次内置中文字典，时长 -1/数字加单位，其余跟方案 unit */
 export const formatChoiceLabel = (param: SchemeParam, opt: string | number): string => {
   const s = String(opt).trim();
@@ -177,12 +218,16 @@ export const formatChoiceLabel = (param: SchemeParam, opt: string | number): str
     if (lower === 'high' || s === '高精细画质' || s === '高清') return i18n.t('playground_2026:quality_high', '高精细画质');
   }
 
-  // 3. 特殊参数逻辑：时长智能 / 单位
+  // 3. 特殊参数逻辑：时长智能 / 数量单位
   if (isDurationParam(param)) {
     if (lower === '-1' || lower === 'auto' || lower === 'adaptive' || s === '智能' || s === '自适应') {
       return i18n.t('playground_2026:opt_auto', '智能');
     }
     if (/^\d+(\.\d+)?$/.test(s)) return `${s}s`;
+  }
+
+  if (isCountParam(param)) {
+    return formatCountChoice(param, opt, isSimplified);
   }
 
   // 4. 中文选项反向匹配 (当非简体中文时)
@@ -201,11 +246,37 @@ export const formatChoiceLabel = (param: SchemeParam, opt: string | number): str
     return param.unit ? `${matched} ${param.unit}` : matched;
   }
 
-  return param.unit ? `${s} ${param.unit}` : s;
+  if (param.unit) {
+    let unit = param.unit;
+    if (!isSimplified) {
+      if (unit === '张' || unit === '張') {
+        const langLower = curLang.toLowerCase();
+        if (langLower === 'zh-tw' || langLower === 'zh-hk') unit = '張';
+        else if (langLower.startsWith('ja')) unit = '枚';
+        else if (langLower.startsWith('ko')) unit = '장';
+        else if (langLower.startsWith('vi')) unit = 'tấm';
+        else unit = s === '1' ? 'image' : 'images';
+      } else if (unit === '秒') {
+        unit = 's';
+      }
+    }
+    return `${s} ${unit}`;
+  }
+
+  return s;
 };
 
 /** 常用英文参数名称内置中文对照字典 */
 export const DEFAULT_PARAM_LABELS: Record<string, string> = {
+  n: '生成数量',
+  batch_size: '生成数量',
+  num_images: '生成数量',
+  image_count: '生成数量',
+  count: '生成数量',
+  quantity: '生成数量',
+  generate_count: '生成数量',
+  candidate_count: '生成数量',
+  'image count': '生成数量',
   'prompt enhancer': '提示词增强',
   prompt_enhancer: '提示词增强',
   variations: '变体数量',
@@ -230,6 +301,15 @@ export const DEFAULT_PARAM_LABELS: Record<string, string> = {
 };
 
 const PARAM_LABEL_I18N_KEYS: Record<string, string> = {
+  n: 'param_count',
+  batch_size: 'param_count',
+  num_images: 'param_count',
+  image_count: 'param_count',
+  count: 'param_count',
+  quantity: 'param_count',
+  generate_count: 'param_count',
+  candidate_count: 'param_count',
+  'image count': 'param_count',
   'prompt enhancer': 'param_prompt_enhancer',
   prompt_enhancer: 'param_prompt_enhancer',
   variations: 'param_variations',
@@ -254,6 +334,9 @@ const PARAM_LABEL_I18N_KEYS: Record<string, string> = {
 };
 
 const CHINESE_PARAM_I18N_KEYS: Record<string, string> = {
+  '生成数量': 'param_count',
+  '图片数量': 'param_count',
+  '生成张数': 'param_count',
   '提示词增强': 'param_prompt_enhancer',
   '变体数量': 'param_variations',
   '分辨率': 'param_resolution',
@@ -278,6 +361,12 @@ const CHINESE_PARAM_I18N_KEYS: Record<string, string> = {
 
 /** 常用参数默认中文功能说明/描述文案字典（描述菜单） */
 export const DEFAULT_PARAM_HINTS: Record<string, string> = {
+  n: '单次生成的图片数量',
+  batch_size: '单次生成的图片数量',
+  count: '单次生成的图片数量',
+  image_count: '单次生成的图片数量',
+  quantity: '单次生成的图片数量',
+  generate_count: '单次生成的图片数量',
   prompt_enhancer: '开启后智能优化与润色提示词，丰富画面细节',
   'prompt enhancer': '开启后智能优化与润色提示词，丰富画面细节',
   variations: '单次生成的图片变体数量 (1-4)',
@@ -288,6 +377,15 @@ export const DEFAULT_PARAM_HINTS: Record<string, string> = {
 };
 
 const PARAM_HINT_I18N_KEYS: Record<string, string> = {
+  n: 'param_hint_count',
+  batch_size: 'param_hint_count',
+  count: 'param_hint_count',
+  image_count: 'param_hint_count',
+  quantity: 'param_hint_count',
+  generate_count: 'param_hint_count',
+  '生成数量': 'param_hint_count',
+  '图片数量': 'param_hint_count',
+  '生成张数': 'param_hint_count',
   prompt_enhancer: 'param_hint_prompt_enhancer',
   'prompt enhancer': 'param_hint_prompt_enhancer',
   variations: 'param_hint_variations',
@@ -402,6 +500,9 @@ export const formatParamLabel = (param: SchemeParam): string => {
     if (PARAM_LABEL_I18N_KEYS[lowerLbl]) {
       return i18n.t(`playground_2026:${PARAM_LABEL_I18N_KEYS[lowerLbl]}`, DEFAULT_PARAM_LABELS[lowerLbl] || lbl);
     }
+    if (isCountParam(param)) {
+      return i18n.t('playground_2026:param_count', 'Image Count');
+    }
   }
 
   // 2. 若原文本即包含中文字符且是简体中文环境，直接采用
@@ -422,6 +523,10 @@ export const formatParamLabel = (param: SchemeParam): string => {
   }
   if (DEFAULT_PARAM_LABELS[key]) {
     return DEFAULT_PARAM_LABELS[key];
+  }
+
+  if (isCountParam(param)) {
+    return isSimplified ? '生成数量' : i18n.t('playground_2026:param_count', 'Image Count');
   }
 
   return lbl || key;
@@ -445,6 +550,9 @@ export const formatParamHint = (param: SchemeParam): string | undefined => {
     }
     if (PARAM_HINT_I18N_KEYS[lowerLbl]) {
       return i18n.t(`playground_2026:${PARAM_HINT_I18N_KEYS[lowerLbl]}`, DEFAULT_PARAM_HINTS[lowerLbl]);
+    }
+    if (isCountParam(param)) {
+      return i18n.t('playground_2026:param_hint_count', 'Number of images generated per run');
     }
   }
 

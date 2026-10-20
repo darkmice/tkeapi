@@ -7,27 +7,28 @@
 
 //! 模型广场：内存缓存、`notify_marketplace_data_changed`、管理/公开 API。见 `mod.rs` 模块注释。
 
-use axum::{
-    extract::{Extension, Path, State},
-    Json,
-};
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::RwLock;
 use crate::{
     auth,
     error::{AppError, AppResult},
     models::Plugin,
     AppState,
 };
+use axum::{
+    extract::{Extension, Path, State},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
 
 use super::{
     load_plugin_configs,
     marketplace_visibility::{
-        mp_enabled, mp_is_candidate, mp_visible_to, parse_level_id_list, parse_mp_level_ids,
-        MarketplaceViewer,
+        deserialize_i64_flexible, deserialize_opt_i64_flexible, deserialize_opt_vec_i64_flexible,
+        deserialize_vec_i64_flexible, mp_enabled, mp_is_candidate, mp_visible_to,
+        parse_level_id_list, parse_mp_level_ids, MarketplaceViewer,
     },
     upsert_config,
 };
@@ -59,33 +60,113 @@ pub fn get_marketplace_cache() -> &'static RwLock<MarketplaceCache> {
     MARKETPLACE_CACHE.get_or_init(|| RwLock::new(MarketplaceCache::new()))
 }
 
-pub async fn notify_marketplace_data_changed(state: &Arc<AppState>) {
+pub async fn notify_marketplace_data_changed(_state: &Arc<AppState>) {
     get_marketplace_cache().write().await.invalidate();
     crate::relay::router::invalidate_channel_cache();
+}
 
-    #[cfg(feature = "plugin_site_portal")]
-    {
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) =
-                crate::api::plugins::site_portal::auto_generate_portal_models_static(&state_clone).await
-            {
-                tracing::warn!("Failed to auto generate portal static models: {:?}", e);
-            }
-        });
+/// 站点模型管理改了页面排序后，把广场配置里的 sort_order 写成同一个数。
+/// 没有广场配置行时不新建，避免白名单把未配置模型当成已配置。
+pub async fn sync_marketplace_page_sort(
+    state: &AppState,
+    model_id: i64,
+    sort_order: i64,
+) -> Result<(), sqlx::Error> {
+    let config_key = format!("mp_model_id_{model_id}");
+    let existing: Option<String> = sqlx::query_scalar(&state.db.format_query(
+        "SELECT config_value FROM plugin_configs WHERE plugin_name = 'model_marketplace' AND config_key = ?",
+    ))
+    .bind(&config_key)
+    .fetch_optional(&state.db.pool)
+    .await?;
+    let Some(raw) = existing else {
+        return Ok(());
+    };
+    let mut val: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+    let Some(obj) = val.as_object_mut() else {
+        return Ok(());
+    };
+    if obj.get("sort_order").and_then(|v| v.as_i64()) == Some(sort_order) {
+        return Ok(());
+    }
+    obj.insert("sort_order".to_string(), json!(sort_order));
+    upsert_config(state, "model_marketplace", &config_key, &val.to_string()).await?;
+    get_marketplace_cache().write().await.invalidate();
+    Ok(())
+}
+
+/// 创作中心2026保存模型配置时，同步单模型的广场展示开关与等级可见性到 `model_marketplace`。
+/// 若该模型尚无广场配置行且传入值等于当前展示模式的默认值，则不新建空行。
+pub async fn sync_marketplace_model_visibility(
+    state: &AppState,
+    model_id: i64,
+    enabled: Option<bool>,
+    level_ids: Option<&[i64]>,
+) -> Result<(), sqlx::Error> {
+    if enabled.is_none() && level_ids.is_none() {
+        return Ok(());
+    }
+    let config_key = format!("mp_model_id_{model_id}");
+    let existing: Option<String> = sqlx::query_scalar(&state.db.format_query(
+        "SELECT config_value FROM plugin_configs WHERE plugin_name = 'model_marketplace' AND config_key = ?",
+    ))
+    .bind(&config_key)
+    .fetch_optional(&state.db.pool)
+    .await?;
+
+    if let Some(raw) = existing {
+        let mut val: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
+        let cur_enabled = val.get("enabled").and_then(|v| v.as_bool());
+        let cur_level_ids = parse_mp_level_ids(&val);
+        let next_enabled = enabled.or(cur_enabled).unwrap_or(true);
+        let next_level_ids = level_ids.unwrap_or(&cur_level_ids);
+        if cur_enabled == Some(next_enabled) && cur_level_ids.as_slice() == next_level_ids {
+            return Ok(());
+        }
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("enabled".to_string(), json!(next_enabled));
+            obj.insert("level_ids".to_string(), json!(next_level_ids));
+        }
+        upsert_config(state, "model_marketplace", &config_key, &val.to_string()).await?;
+        get_marketplace_cache().write().await.invalidate();
+        return Ok(());
     }
 
-    #[cfg(feature = "commercial_plugins")]
-    {
-        let state_clone = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) =
-                crate::api::plugins::site_portal_pro::auto_generate_portal_models_static(&state_clone).await
-            {
-                tracing::warn!("Failed to auto generate portal_pro static models: {:?}", e);
-            }
-        });
+    let mode: Option<String> = sqlx::query_scalar(&state.db.format_query(
+        "SELECT config_value FROM plugin_configs WHERE plugin_name = 'model_marketplace' AND config_key = 'mp_display_mode'",
+    ))
+    .fetch_optional(&state.db.pool)
+    .await?;
+    let default_enabled = mode.as_deref().unwrap_or("blacklist") == "blacklist";
+    let next_enabled = enabled.unwrap_or(default_enabled);
+    let next_level_ids = level_ids.unwrap_or(&[]);
+    if next_enabled == default_enabled && next_level_ids.is_empty() {
+        return Ok(());
     }
+
+    let page_sort = listed_model_page_sort(state, model_id).await?;
+    let val = json!({
+        "enabled": next_enabled,
+        "sort_order": page_sort,
+        "description": "",
+        "description_en": "",
+        "level_ids": next_level_ids,
+    });
+    upsert_config(state, "model_marketplace", &config_key, &val.to_string()).await?;
+    get_marketplace_cache().write().await.invalidate();
+    Ok(())
+}
+
+async fn listed_model_page_sort(state: &AppState, id: i64) -> Result<i64, sqlx::Error> {
+    let sort: Option<i64> = sqlx::query_scalar(
+        &state
+            .db
+            .format_query("SELECT sort_order FROM models WHERE id = ?"),
+    )
+    .bind(id)
+    .fetch_optional(&state.db.pool)
+    .await?;
+    Ok(sort.unwrap_or(0))
 }
 
 fn get_default_trending_config() -> serde_json::Value {
@@ -157,11 +238,9 @@ pub(crate) async fn get_marketplace_models(
     let configs = load_plugin_configs(&state, &name).await?;
 
     // 查出全部模型及其 provider/type 信息
-    let models: Vec<crate::models::Model> = sqlx::query_as(
-        &state
-            .db
-            .format_query("SELECT * FROM models WHERE is_listed = 1 ORDER BY sort_order DESC, id DESC"),
-    )
+    let models: Vec<crate::models::Model> = sqlx::query_as(&state.db.format_query(
+        "SELECT * FROM models WHERE is_listed = 1 ORDER BY sort_order DESC, id DESC",
+    ))
     .fetch_all(&state.db.pool)
     .await?;
 
@@ -219,6 +298,9 @@ pub(crate) async fn get_marketplace_models(
             .map(|t| t.name.clone())
             .unwrap_or_default();
 
+        // 页面排序与站点模型管理共用 models.sort_order，不读插件配置里的旧副本。
+        let page_sort = m.sort_order;
+
         model_list.push(json!({
             "id": m.id,
             "mid": m.mid,
@@ -237,13 +319,14 @@ pub(crate) async fn get_marketplace_models(
                 .and_then(|tid| types.iter().find(|t| t.id == tid))
                 .map(|t| t.name_en.clone())
                 .unwrap_or_default(),
-            "is_active": m.is_active,
+            "is_active": m.is_active as i64,
             "mp_enabled": mp_enabled,
-            "sort_order": m.sort_order,
-            "mp_sort_order": m.sort_order as i64,
+            "sort_order": page_sort,
+            "mp_sort_order": page_sort,
             "mp_description": model_conf.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             "mp_description_en": model_conf.get("description_en").and_then(|v| v.as_str()).unwrap_or(""),
             "mp_level_ids": parse_mp_level_ids(&model_conf),
+            "feature_attributes": m.feature_attributes,
         }));
     }
 
@@ -262,13 +345,15 @@ pub(crate) async fn get_marketplace_models(
 
 #[derive(Deserialize)]
 pub(crate) struct MarketplaceModelConfig {
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub id: i64,
     pub enabled: bool,
+    #[serde(default, deserialize_with = "deserialize_opt_i64_flexible")]
     pub sort_order: Option<i64>,
     pub description: Option<String>,
     pub description_en: Option<String>,
     /// 广场展示开：不可查看的用户等级；关：可查看的用户等级。空则走对应默认。
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_i64_flexible")]
     pub level_ids: Vec<i64>,
 }
 
@@ -316,10 +401,35 @@ pub(crate) async fn save_marketplace_models(
     }
 
     for mc in &payload.models {
+        let page_sort = match mc.sort_order {
+            Some(sort_order) => {
+                sqlx::query(
+                    &state
+                        .db
+                        .format_query("UPDATE models SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"),
+                )
+                .bind(sort_order)
+                .bind(mc.id)
+                .execute(&state.db.pool)
+                .await?;
+                super::playground::sync_playground_2026_page_sort(&state, mc.id, sort_order)
+                    .await?;
+                sort_order
+            }
+            None => sqlx::query_scalar::<_, i64>(
+                &state
+                    .db
+                    .format_query("SELECT sort_order FROM models WHERE id = ?"),
+            )
+            .bind(mc.id)
+            .fetch_optional(&state.db.pool)
+            .await?
+            .unwrap_or(0),
+        };
         let config_key = format!("mp_model_id_{}", mc.id);
         let val = json!({
             "enabled": mc.enabled,
-            "sort_order": mc.sort_order.unwrap_or(0),
+            "sort_order": page_sort,
             "description": mc.description.as_deref().unwrap_or(""),
             "description_en": mc.description_en.as_deref().unwrap_or(""),
             "level_ids": mc.level_ids,
@@ -335,23 +445,26 @@ pub(crate) async fn save_marketplace_models(
 
 #[derive(Deserialize)]
 pub(crate) struct MarketplaceToggleRequest {
+    #[serde(deserialize_with = "deserialize_i64_flexible")]
     pub id: i64,
     pub enabled: bool,
-    pub sort_order: Option<i64>,
     pub description: Option<String>,
     pub description_en: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_opt_vec_i64_flexible")]
+    pub level_ids: Option<Vec<i64>>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct MarketplaceBatchToggleRequest {
+    #[serde(deserialize_with = "deserialize_vec_i64_flexible")]
     pub ids: Vec<i64>,
     pub enabled: bool,
 }
 
-/// 管理员：单模型广场展示开关即时切换
+/// 管理员：单模型广场展示开关/等级权限即时切换
 pub(crate) async fn toggle_marketplace_model(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path(_name): Path<String>,
     Extension(claims): Extension<auth::Claims>,
     Json(payload): Json<MarketplaceToggleRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
@@ -365,12 +478,9 @@ pub(crate) async fn toggle_marketplace_model(
     }
 
     let config_key = format!("mp_model_id_{}", payload.id);
-    let existing_val: Option<String> = sqlx::query_scalar(
-        &state.db.format_query(
-            "SELECT config_value FROM plugin_configs WHERE plugin_name = ? AND config_key = ?",
-        ),
-    )
-    .bind(&name)
+    let existing_val: Option<String> = sqlx::query_scalar(&state.db.format_query(
+        "SELECT config_value FROM plugin_configs WHERE plugin_name = 'model_marketplace' AND config_key = ?",
+    ))
     .bind(&config_key)
     .fetch_optional(&state.db.pool)
     .await?;
@@ -385,13 +495,14 @@ pub(crate) async fn toggle_marketplace_model(
             "level_ids": []
         }));
 
+    let has_level_ids_update = payload.level_ids.is_some();
     if let Some(obj) = model_conf.as_object_mut() {
         obj.insert("enabled".to_string(), json!(payload.enabled));
-        // 切换展示开关时，清空已选等级（与原业务规则一致）
-        obj.insert("level_ids".to_string(), json!([]));
-        if let Some(sort_order) = payload.sort_order {
-            obj.insert("sort_order".to_string(), json!(sort_order));
-        }
+        // 传入 level_ids 时更新已选等级；仅切换展示开关时清空已选等级（与原业务规则一致）
+        let next_level_ids = payload.level_ids.unwrap_or_default();
+        obj.insert("level_ids".to_string(), json!(next_level_ids));
+        let page_sort = listed_model_page_sort(&state, payload.id).await?;
+        obj.insert("sort_order".to_string(), json!(page_sort));
         if let Some(description) = payload.description {
             obj.insert("description".to_string(), json!(description));
         }
@@ -400,11 +511,13 @@ pub(crate) async fn toggle_marketplace_model(
         }
     }
 
-    upsert_config(&state, &name, &config_key, &model_conf.to_string()).await?;
+    upsert_config(&state, "model_marketplace", &config_key, &model_conf.to_string()).await?;
     get_marketplace_cache().write().await.invalidate();
 
     Ok(Json(json!({
-        "message": if payload.enabled {
+        "message": if has_level_ids_update {
+            "用户等级展示权限已更新"
+        } else if payload.enabled {
             "已开启广场展示"
         } else {
             "已关闭广场展示"
@@ -430,11 +543,9 @@ pub(crate) async fn batch_toggle_marketplace_models(
 
     for id in &payload.ids {
         let config_key = format!("mp_model_id_{}", id);
-        let existing_val: Option<String> = sqlx::query_scalar(
-            &state.db.format_query(
-                "SELECT config_value FROM plugin_configs WHERE plugin_name = ? AND config_key = ?",
-            ),
-        )
+        let existing_val: Option<String> = sqlx::query_scalar(&state.db.format_query(
+            "SELECT config_value FROM plugin_configs WHERE plugin_name = ? AND config_key = ?",
+        ))
         .bind(&name)
         .bind(&config_key)
         .fetch_optional(&state.db.pool)
@@ -453,6 +564,8 @@ pub(crate) async fn batch_toggle_marketplace_models(
         if let Some(obj) = model_conf.as_object_mut() {
             obj.insert("enabled".to_string(), json!(payload.enabled));
             obj.insert("level_ids".to_string(), json!([]));
+            let page_sort = listed_model_page_sort(&state, *id).await?;
+            obj.insert("sort_order".to_string(), json!(page_sort));
         }
 
         upsert_config(&state, &name, &config_key, &model_conf.to_string()).await?;
@@ -489,14 +602,11 @@ async fn marketplace_viewer_for_user(state: &AppState, user_id: &str) -> Marketp
     }
 }
 
-pub async fn marketplace_viewer_for_user_id(
-    state: &AppState,
-    user_id: &str,
-) -> MarketplaceViewer {
+pub async fn marketplace_viewer_for_user_id(state: &AppState, user_id: &str) -> MarketplaceViewer {
     marketplace_viewer_for_user(state, user_id).await
 }
 
-async fn marketplace_viewer_from_headers(
+pub(crate) async fn marketplace_viewer_from_headers(
     state: &AppState,
     headers: &axum::http::HeaderMap,
 ) -> MarketplaceViewer {
@@ -577,7 +687,7 @@ fn group_marketplace_models(models: &[Value]) -> Vec<Value> {
                 .max()
                 .unwrap_or(0);
             group["sort_order"] = json!(max_sort_order);
-            group["variant_count"] = json!(variants.len());
+            group["variant_count"] = json!(variants.len() as i64);
             group["variants"] = json!(variants);
             let original_id = primary
                 .get("original_id")
@@ -611,7 +721,13 @@ fn group_marketplace_models(models: &[Value]) -> Vec<Value> {
     groups
 }
 
-fn finalize_marketplace_cache(cached: &Value, viewer: MarketplaceViewer) -> Value {
+fn finalize_marketplace_cache(cached: &Value, viewer: MarketplaceViewer, site_tz: &str) -> Value {
+    use chrono::Datelike;
+    let tz: chrono_tz::Tz = site_tz.parse().unwrap_or(chrono_tz::Asia::Shanghai);
+    let local_now = chrono::Utc::now().with_timezone(&tz);
+    let current_time = local_now.time();
+    let current_weekday = local_now.weekday();
+
     let trending_config = cached
         .get("trending_config")
         .cloned()
@@ -641,6 +757,41 @@ fn finalize_marketplace_cache(cached: &Value, viewer: MarketplaceViewer) -> Valu
         let level_ids = parse_level_id_list(m.get("_mp_level_ids"));
         if !mp_visible_to(enabled, &level_ids, viewer) {
             continue;
+        }
+        let schedule_raw = m
+            .get("discount_schedule")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if crate::models::discount_schedule_enabled(schedule_raw) {
+            let site_d = m
+                .get("site_discount")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0);
+            let global_d = m
+                .get("global_discount")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0);
+            let site_en = m
+                .get("site_discount_enabled")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1);
+            let global_en = m
+                .get("global_discount_enabled")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let (eff_site, eff_global) = crate::models::effective_model_discounts(
+                site_d,
+                global_d,
+                site_en,
+                global_en,
+                schedule_raw,
+                current_time,
+                current_weekday,
+            );
+            m["base_site_discount"] = json!(site_d);
+            m["base_global_discount"] = json!(global_d);
+            m["site_discount"] = json!(eff_site);
+            m["global_discount"] = json!(eff_global);
         }
         if let Some(obj) = m.as_object_mut() {
             obj.remove("_mp_enabled");
@@ -683,9 +834,10 @@ fn finalize_marketplace_cache(cached: &Value, viewer: MarketplaceViewer) -> Valu
         "grouped_models": grouped_models,
         "providers": provider_list,
         "types": type_list,
-        "total": models.len(),
-        "group_total": grouped_models.len(),
+        "total": models.len() as i64,
+        "group_total": grouped_models.len() as i64,
         "trending_config": trending_config,
+        "icon_versions": cached.get("icon_versions").cloned().unwrap_or_else(|| json!({})),
     })
 }
 
@@ -782,6 +934,7 @@ pub async fn get_marketplace_public(
     }
 
     let viewer = marketplace_viewer_from_headers(&state, &headers).await;
+    let site_tz = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
 
     // 3. 尝试从缓存读取（内部候选数据，按当前观察者过滤）
     {
@@ -789,7 +942,11 @@ pub async fn get_marketplace_public(
         if cache.is_valid() {
             if let Some(ref data) = cache.data {
                 if data.get("_mp_internal").and_then(|v| v.as_bool()) == Some(true) {
-                    return Ok(Json(finalize_marketplace_cache(data, viewer)));
+                    return Ok(Json(finalize_marketplace_cache(
+                        data,
+                        viewer,
+                        site_tz.as_ref(),
+                    )));
                 }
             }
         }
@@ -808,12 +965,6 @@ pub async fn get_marketplace_public(
 
     let providers: Vec<crate::models::ModelProvider> = sqlx::query_as(&state.db.format_query(
         "SELECT * FROM model_providers WHERE is_active = 1 ORDER BY sort_order DESC, id ASC",
-    ))
-    .fetch_all(&state.db.pool)
-    .await?;
-
-    let api_providers: Vec<crate::models::ModelProvider> = sqlx::query_as(&state.db.format_query(
-        "SELECT * FROM model_api_providers ORDER BY sort_order DESC, id ASC",
     ))
     .fetch_all(&state.db.pool)
     .await?;
@@ -867,8 +1018,6 @@ pub async fn get_marketplace_public(
                                     continue;
                                 }
                                 subs.push(json!({
-                                    "name": cfg.name,
-                                    "provider_type": cfg.provider_type,
                                     "rate": cfg.rate,
                                     "is_ha": true,
                                 }));
@@ -883,11 +1032,11 @@ pub async fn get_marketplace_public(
                 if !sub_sids.is_empty() {
                     let sids_entry = ha_model_sub_ids
                         .entry(m_id.clone())
-                        .or_insert_with(std::collections::HashSet::new);
+                        .or_default();
                     sids_entry.extend(&sub_sids);
                 }
                 if !subs.is_empty() {
-                    let entry = ha_model_subs.entry(m_id).or_insert_with(Vec::new);
+                    let entry = ha_model_subs.entry(m_id).or_default();
                     // Avoid duplicates if multiple HA groups have the same model
                     for sub in &subs {
                         if !entry.contains(sub) {
@@ -899,37 +1048,31 @@ pub async fn get_marketplace_public(
         }
     }
 
-    // 补充：获取普通渠道（非HA）及其倍率，用于在前台也展示其上游渠道倍率
-    let normal_channels: Vec<(String, String, f64, Option<i64>, String)> = sqlx::query_as(
-        &state.db.format_query("SELECT models, name, rate, preset_id, provider_type FROM channels WHERE provider_type != 'high_availability_group' AND status = 1")
+    // 补充：获取普通渠道（非HA）及其倍率，用于在前台也展示其上游渠道倍率（严格仅获取倍率，不泄露上游渠道名称和类型）
+    let normal_channels: Vec<(String, f64, Option<i64>)> = sqlx::query_as(
+        &state.db.format_query("SELECT models, rate, preset_id FROM channels WHERE provider_type != 'high_availability_group' AND status = 1")
     ).fetch_all(&state.db.pool).await?;
 
-    for (models_str, name, rate, preset_id, provider_type) in normal_channels {
+    for (models_str, rate, preset_id) in normal_channels {
         if let Ok(m_ids) = serde_json::from_str::<Vec<String>>(&models_str) {
-            let mut effective_name = name;
             let mut effective_rate = rate;
-            let mut effective_provider_type = provider_type;
-            // 如果存在分组 preset_id，则优先展示渠道分组名称和分组倍率
+            // 如果存在分组 preset_id，则优先展示渠道分组倍率
             if let Some(pid) = preset_id {
                 if let Some(cfg) = config_map.get(&pid) {
                     if cfg.status != 1 {
                         continue;
                     }
-                    effective_name = cfg.name.clone();
                     effective_rate = cfg.rate;
-                    effective_provider_type = cfg.provider_type.clone();
                 }
             }
 
             let sub = json!({
-                "name": effective_name,
-                "provider_type": effective_provider_type,
                 "rate": effective_rate,
                 "is_ha": false,
             });
 
             for m_id in m_ids {
-                let entry = ha_model_subs.entry(m_id).or_insert_with(Vec::new);
+                let entry = ha_model_subs.entry(m_id).or_default();
                 if !entry.contains(&sub) {
                     entry.push(sub.clone());
                 }
@@ -950,8 +1093,7 @@ pub async fn get_marketplace_public(
 
     let mut marketplace_models: Vec<serde_json::Value> = Vec::new();
     #[cfg(feature = "plugin_volcengine_enhance")]
-    let volc_plugin_on =
-        crate::api::plugins::is_plugin_enabled(&state, "volcengine_enhance").await;
+    let volc_plugin_on = crate::api::plugins::is_plugin_enabled(&state, "volcengine_enhance").await;
     for m in &models {
         #[cfg(feature = "plugin_volcengine_enhance")]
         if !volc_plugin_on && crate::api::plugins::is_volc_preset_mid(&m.mid) {
@@ -971,7 +1113,7 @@ pub async fn get_marketplace_public(
             continue;
         }
 
-        let sort_order = m.sort_order as i64;
+        let sort_order = m.sort_order;
         let description = model_conf
             .get("description")
             .and_then(|v| v.as_str())
@@ -987,10 +1129,6 @@ pub async fn get_marketplace_public(
             .map(|p| p.name.clone())
             .unwrap_or_default();
 
-        let api_provider = m
-            .api_provider_id
-            .and_then(|pid| api_providers.iter().find(|p| p.id == pid));
-
         let type_name = m
             .type_id
             .and_then(|tid| types.iter().find(|t| t.id == tid))
@@ -1003,7 +1141,6 @@ pub async fn get_marketplace_public(
             .map(|b| {
                 json!({
                     "billing_type": b.billing_type,
-                    "name": b.name,
                     "prompt_rate": b.prompt_rate,
                     "completion_rate": b.completion_rate,
                     "cached_rate": b.cached_rate,
@@ -1040,9 +1177,6 @@ pub async fn get_marketplace_public(
                 .map(|p| p.name_en.clone())
                 .unwrap_or_default(),
             "provider_logo": provider_logo,
-            "api_provider_id": m.api_provider_id,
-            "api_provider_name": api_provider.map(|p| p.name.clone()).unwrap_or_default(),
-            "api_provider_name_en": api_provider.map(|p| p.name_en.clone()).unwrap_or_default(),
             "type_id": m.type_id,
             "type_name": type_name,
             "type_name_en": m.type_id
@@ -1056,13 +1190,17 @@ pub async fn get_marketplace_public(
             "description": description,
             "description_en": description_en,
             "model_description": m.description,
+            "site_discount": m.site_discount,
+            "site_discount_enabled": m.site_discount_enabled,
             "global_discount": m.global_discount,
             "global_discount_enabled": m.global_discount_enabled,
+            "discount_schedule": m.discount_schedule,
             "billing": billing_info,
             "has_ha": ha_model_ids.contains(&m.mid),
-            "ha_sub_count": ha_model_sub_ids.get(&m.mid).map(|s| s.len()).unwrap_or(0),
+            "ha_sub_count": ha_model_sub_ids.get(&m.mid).map(|s| s.len() as i64).unwrap_or(0),
             "ha_subchannels": ha_model_subs.get(&m.mid).cloned().unwrap_or_default(),
             "created_at": m.created_at,
+            "feature_attributes": m.feature_attributes,
             "_mp_enabled": is_enabled,
             "_mp_level_ids": level_ids,
         }));
@@ -1087,12 +1225,24 @@ pub async fn get_marketplace_public(
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_else(get_default_trending_config);
 
+    let icon_rows: Vec<(String, crate::time_system::DbTs)> = sqlx::query_as(
+        "SELECT name, updated_at FROM site_icons WHERE is_active = 1",
+    )
+    .fetch_all(&state.db.pool)
+    .await
+    .unwrap_or_default();
+    let mut icon_versions = serde_json::Map::new();
+    for (name, updated_at) in icon_rows {
+        icon_versions.insert(name, json!(updated_at.as_str()));
+    }
+
     let internal = json!({
         "_mp_internal": true,
         "models": marketplace_models,
         "providers": all_providers_json,
         "types": all_types_json,
         "trending_config": trending_config,
+        "icon_versions": icon_versions,
     });
 
     {
@@ -1101,11 +1251,20 @@ pub async fn get_marketplace_public(
         cache.updated_at = Instant::now();
     }
 
-    Ok(Json(finalize_marketplace_cache(&internal, viewer)))
+    Ok(Json(finalize_marketplace_cache(
+        &internal,
+        viewer,
+        site_tz.as_ref(),
+    )))
 }
 
-/// 广场计价只展示倍率：高可用组绑定多个上游时，相同倍率合并为一条。
-fn merge_ha_subchannels_by_rate(subs: Vec<Value>) -> Vec<Value> {
+/// 广场计价只展示倍率：高可用组绑定多个上游时，按倍率升序排列，相同倍率合并为一条。
+fn merge_ha_subchannels_by_rate(mut subs: Vec<Value>) -> Vec<Value> {
+    subs.sort_by(|a, b| {
+        let ra = a.get("rate").and_then(Value::as_f64).unwrap_or(1.0);
+        let rb = b.get("rate").and_then(Value::as_f64).unwrap_or(1.0);
+        ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(subs.len());
     for sub in subs {
@@ -1117,3 +1276,24 @@ fn merge_ha_subchannels_by_rate(subs: Vec<Value>) -> Vec<Value> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_ha_subchannels_by_rate_sorts_and_dedups() {
+        let subs = vec![
+            serde_json::json!({"rate": 1.3, "is_ha": true}),
+            serde_json::json!({"rate": 0.2, "is_ha": true}),
+            serde_json::json!({"rate": 0.5, "is_ha": true}),
+            serde_json::json!({"rate": 0.5, "is_ha": false}),
+        ];
+        let merged = merge_ha_subchannels_by_rate(subs);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0]["rate"], 0.2);
+        assert_eq!(merged[1]["rate"], 0.5);
+        assert_eq!(merged[2]["rate"], 1.3);
+    }
+}
+

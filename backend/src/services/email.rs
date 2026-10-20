@@ -79,9 +79,13 @@ impl EmailService {
             })?,
         );
 
+        let to_mailbox: Mailbox = to_email.parse().map_err(|e| {
+            crate::error::AppError::BadRequest(format!("收件人邮箱地址格式无效: {}", e))
+        })?;
+
         let email = Message::builder()
             .from(from_mailbox)
-            .to(to_email.parse().unwrap())
+            .to(to_mailbox)
             .subject(subject)
             .singlepart(SinglePart::html(html_body))
             .map_err(|e| crate::error::AppError::BadRequest(e.to_string()))?;
@@ -124,9 +128,13 @@ impl EmailService {
             })?,
         );
 
+        let to_mailbox: Mailbox = to_email.parse().map_err(|e| {
+            crate::error::AppError::BadRequest(format!("收件人邮箱地址格式无效: {}", e))
+        })?;
+
         let email = Message::builder()
             .from(from_mailbox)
-            .to(to_email.parse().unwrap())
+            .to(to_mailbox)
             .subject(subject)
             .singlepart(SinglePart::html(html_body))
             .map_err(|e| crate::error::AppError::BadRequest(e.to_string()))?;

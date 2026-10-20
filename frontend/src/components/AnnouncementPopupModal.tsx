@@ -167,29 +167,29 @@ const AnnouncementPopupModal: React.FC<AnnouncementPopupModalProps> = ({
         )}
       >
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
-          {/* Header: 多条时仅竖排目录；关闭按钮靠右。当前篇标题放正文置顶标签后 */}
+          {/* Header: 多条时竖排目录；单条时标题放在顶部与关闭按钮同一区域 */}
           <div
             style={{
               padding: '16px 20px',
               display: 'flex',
-              alignItems: 'flex-start',
+              alignItems: totalCount > 1 ? 'flex-start' : 'center',
               justifyContent: 'space-between',
               gap: '12px',
               borderBottom: tc.separator,
             }}
           >
-            <div
-              style={{
-                minWidth: 0,
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                gap: '4px',
-              }}
-            >
-              {totalCount > 1 &&
-                announcements.map((item, idx) => {
+            {totalCount > 1 ? (
+              <div
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: '4px',
+                }}
+              >
+                {announcements.map((item, idx) => {
                   const isActive = idx === currentIndex;
                   const rawTitle = getAnnouncementLabel(item.title);
                   return (
@@ -272,7 +272,62 @@ const AnnouncementPopupModal: React.FC<AnnouncementPopupModalProps> = ({
                     </button>
                   );
                 })}
-            </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                }}
+              >
+                {currentNotice.is_pinned === 1 && (
+                  <div
+                    style={{
+                      ...softAccent(themeMode === 'light' ? 'light' : 'dark'),
+                      fontSize: 12,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {t('common.pinned', '置顶')}
+                  </div>
+                )}
+                <span
+                  style={{
+                    fontSize: '15px',
+                    fontWeight: 500,
+                    color: tc.text,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
+                  {getAnnouncementLabel(currentNotice.title)}
+                </span>
+                {getAnnouncementDisplayTime(currentNotice) && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      fontSize: 12,
+                      color: tc.textSub,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Calendar size={12} />
+                    <span>{formatNoticeTime(getAnnouncementDisplayTime(currentNotice))}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Close Button */}
             <button
@@ -315,7 +370,7 @@ const AnnouncementPopupModal: React.FC<AnnouncementPopupModalProps> = ({
             </button>
           </div>
 
-          {/* Modal Body: 置顶 + 当前标题 + 序号 + 时间，再跟正文（切换通知时带平滑过渡） */}
+          {/* Modal Body: 多条时保留置顶+标题+序号；单条时标题已在顶部 Header 展示 */}
           <div
             key={currentNotice.id || currentIndex}
             style={{
@@ -326,43 +381,43 @@ const AnnouncementPopupModal: React.FC<AnnouncementPopupModalProps> = ({
             }}
             className="announcement-custom-scrollbar announcement-content-switch"
           >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '8px',
-                marginBottom: 12,
-              }}
-            >
-              {currentNotice.is_pinned === 1 && (
-                <div
-                  style={{
-                    ...softAccent(themeMode === 'light' ? 'light' : 'dark'),
-                    fontSize: 12,
-                    padding: '2px 6px',
-                    borderRadius: 4,
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                  }}
-                >
-                  {t('common.pinned', '置顶')}
-                </div>
-              )}
-              <span
+            {totalCount > 1 && (
+              <div
                 style={{
-                  fontSize: '16px',
-                  fontWeight: 500,
-                  color: tc.text,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  marginBottom: 12,
                 }}
               >
-                {getAnnouncementLabel(currentNotice.title)}
-              </span>
-              {totalCount > 1 && (
+                {currentNotice.is_pinned === 1 && (
+                  <div
+                    style={{
+                      ...softAccent(themeMode === 'light' ? 'light' : 'dark'),
+                      fontSize: 12,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {t('common.pinned', '置顶')}
+                  </div>
+                )}
+                <span
+                  style={{
+                    fontSize: '16px',
+                    fontWeight: 500,
+                    color: tc.text,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    minWidth: 0,
+                  }}
+                >
+                  {getAnnouncementLabel(currentNotice.title)}
+                </span>
                 <span
                   style={{
                     fontSize: '11px',
@@ -377,23 +432,8 @@ const AnnouncementPopupModal: React.FC<AnnouncementPopupModalProps> = ({
                 >
                   {currentIndex + 1}/{totalCount}
                 </span>
-              )}
-              {totalCount === 1 && getAnnouncementDisplayTime(currentNotice) && (
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    fontSize: 12,
-                    color: tc.textSub,
-                    flexShrink: 0,
-                  }}
-                >
-                  <Calendar size={12} />
-                  <span>{formatNoticeTime(getAnnouncementDisplayTime(currentNotice))}</span>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* 富文本内容区 */}
             <div

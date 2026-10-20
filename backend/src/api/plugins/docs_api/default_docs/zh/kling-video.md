@@ -1,6 +1,6 @@
 # 可灵 Kling 视频生成接入指南
 
-OpenAI 兼容：`POST /v1/video/generations`。官方 3.0 / Omni 原生路径：`POST /text-to-video/${model_id}`、`POST /image-to-video/${model_id}`、`POST /omni-video/${model_id}`。兼容历史路径：`/v1/videos/text2video`、`/v1/videos/omni-video`。
+OpenAI 兼容：`POST /v1/video/generations`。官方 3.0 / Omni 原生路径：`POST /text-to-video/${model_id}`、`POST /image-to-video/${model_id}`、`POST /omni-video/${model_id}`。
 
 * **提交**：`POST /v1/video/generations` 或官方路由 `POST /text-to-video/${model_id}`、`POST /image-to-video/${model_id}`、`POST /omni-video/${model_id}`
 * **查询**：官方 3.0 路由 `GET /tasks?task_ids=${task_id}`；兼容路由 `GET /v1/video/generations/{task_id}` 或 `/v1/tasks/{task_id}`

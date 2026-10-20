@@ -296,3 +296,34 @@ export function isRedemptionExpired(
 
   return false;
 }
+
+/**
+ * 兑换码是否尚未到开始生效时间。空值表示生成后立即生效。
+ * 纯日期按站点时区该日 00:00 起算。
+ */
+export function isRedemptionNotStarted(
+  startsAt: string | null | undefined,
+  tz?: string,
+): boolean {
+  if (!startsAt || !String(startsAt).trim()) return false;
+  const zone = tz || siteTimezone();
+  const start = String(startsAt).trim();
+  const now = dayjs().tz(zone);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    const begin = dayjs.tz(start, 'YYYY-MM-DD', zone).startOf('day');
+    return now.isBefore(begin);
+  }
+
+  if (start.includes('T') && (start.includes('+') || start.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(start))) {
+    return now.isBefore(dayjs(start));
+  }
+
+  const dt = dayjs.tz(start, 'YYYY-MM-DD HH:mm:ss', zone);
+  if (dt.isValid()) return now.isBefore(dt);
+
+  const dt2 = dayjs.tz(start, 'YYYY-MM-DDTHH:mm:ss', zone);
+  if (dt2.isValid()) return now.isBefore(dt2);
+
+  return false;
+}

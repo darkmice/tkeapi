@@ -1620,8 +1620,9 @@ response = client.chat.completions.create(
 
       const termsLink = document.getElementById('terms-link');
       const privacyLink = document.getElementById('privacy-link');
-      if (termsLink) termsLink.href = `/legal/terms?lang=${lang}`;
-      if (privacyLink) privacyLink.href = `/legal/privacy?lang=${lang}`;
+      const legalLang = String(lang).toLowerCase().startsWith('zh') ? 'zh' : 'en';
+      if (termsLink) termsLink.href = `/legal/terms?lang=${legalLang}`;
+      if (privacyLink) privacyLink.href = `/legal/privacy?lang=${legalLang}`;
       if (!document.documentElement.hasAttribute('data-managed-seo')) {
         document.title = lang === 'zh'
           ? 'Tkeapi - 全球 AI 模型 API 中转与分发'

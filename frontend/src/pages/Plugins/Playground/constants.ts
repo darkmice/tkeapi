@@ -35,7 +35,7 @@ export const RESOLUTION_MAP: Record<string, Record<string, string>> = {
 /** 获取类别对应的 Lucide 图标 (Shadcn UI 风格) */
 export const getLucideCategoryIcon = (cat: string, size = 16) => {
   if (cat === '默认展示') return React.createElement(StarLucide, { size });
-    if (cat.includes('画质增强') || cat.includes('视频增强') || cat.includes('video-enhance') || cat.includes('videoenhance') || cat.includes('video_enhance')) return React.createElement(Sparkles, { size });
+    if (cat.includes('封装')) return React.createElement(Sparkles, { size });
   if (cat === 'video' || cat.includes('视频')) return React.createElement(VideoIcon, { size });
   if (cat === 'image' || cat.includes('图片')) return React.createElement(ImageIcon, { size });
   if (cat === 'chat' || cat.includes('聊天')) return React.createElement(MessageSquare, { size });
@@ -46,7 +46,7 @@ export const getLucideCategoryIcon = (cat: string, size = 16) => {
 /** 获取类别对应的图标 */
 export const getCategoryIcon = (cat: string, isActive: boolean, size = 16) => {
   if (cat === '默认展示') return React.createElement(StarOutlined, { style: { fontSize: size } });
-  if (cat.includes('画质增强') || cat.includes('视频增强') || cat.includes('video-enhance') || cat.includes('videoenhance') || cat.includes('video_enhance')) return React.createElement(ThunderboltOutlined, { style: { fontSize: size } });
+  if (cat.includes('封装')) return React.createElement(ThunderboltOutlined, { style: { fontSize: size } });
   if (cat === 'video' || cat.includes('视频')) return React.createElement(VideoCameraOutlined, { style: { fontSize: size } });
   if (cat === 'image' || cat.includes('图片')) return React.createElement(PictureOutlined, { style: { fontSize: size } });
   if (cat === 'chat' || cat.includes('聊天')) return React.createElement(MessageOutlined, { style: { fontSize: size } });
@@ -57,7 +57,7 @@ export const getCategoryIcon = (cat: string, isActive: boolean, size = 16) => {
 /** 获取类别的中文标签 */
 export const getCategoryLabel = (cat: string): string => {
   if (cat === '默认展示') return '默认展示';
-  if (cat.includes('画质增强') || cat.includes('视频增强') || cat.includes('video-enhance') || cat.includes('videoenhance') || cat.includes('video_enhance')) return '画质增强';
+  if (cat.includes('封装')) return '封装';
   if (cat === 'video' || cat.includes('视频')) return '视频创作';
   if (cat === 'image' || cat.includes('图片')) return '图片创作';
   if (cat === 'chat' || cat.includes('聊天')) return '聊天问答';

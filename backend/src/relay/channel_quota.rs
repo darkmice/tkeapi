@@ -137,9 +137,9 @@ pub async fn refund_channel(
 
 #[derive(sqlx::FromRow)]
 struct ConfigDailyReset {
-    daily_reset_hour: i32,
-    daily_reset_minute: i32,
-    daily_reset_cooldown_minutes: i32,
+    daily_reset_hour: i64,
+    daily_reset_minute: i64,
+    daily_reset_cooldown_minutes: i64,
 }
 
 async fn config_period_keys(
@@ -278,6 +278,11 @@ impl ChannelQuotaAggregator {
         }
         deltas
     }
+
+    #[inline]
+    pub fn clear_target(&self, target: QuotaTarget) {
+        self.buffers.remove(&target);
+    }
 }
 
 static AGGREGATOR: LazyLock<ChannelQuotaAggregator> = LazyLock::new(ChannelQuotaAggregator::new);
@@ -292,6 +297,22 @@ pub fn record_channel_quota(channel_id: i64, amount: f64) {
 #[inline]
 pub fn record_config_quota(config_id: i64, amount: f64) {
     AGGREGATOR.record_config(config_id, amount);
+}
+
+/// 清理指定渠道的内存待刷配额增量（手动清零或删除渠道时调用，防止旧增量回写）
+#[inline]
+pub fn clear_channel_quota_buffer(channel_id: i64) {
+    if channel_id > 0 {
+        AGGREGATOR.clear_target(QuotaTarget::Channel(channel_id));
+    }
+}
+
+/// 清理指定预设配置的内存待刷配额增量（手动清零或删除预设时调用，防止旧增量回写）
+#[inline]
+pub fn clear_config_quota_buffer(config_id: i64) {
+    if config_id > 0 {
+        AGGREGATOR.clear_target(QuotaTarget::Config(config_id));
+    }
 }
 
 /// 批量刷盘：将内存累加值写回 channels 与 channel_configs 表
@@ -309,7 +330,9 @@ pub async fn flush_channel_quotas(db: &Database) {
             QuotaTarget::Config(id) => ("channel_configs", id),
         };
         let sql = db.format_query(&crate::models::channel_quota::consume_quota_sql(table));
-        if let Err(e) = execute_consume(&db.pool, &sql, amount, &now_day, &now_week, &now_month, id).await {
+        if let Err(e) =
+            execute_consume(&db.pool, &sql, amount, &now_day, &now_week, &now_month, id).await
+        {
             tracing::warn!(
                 "[ChannelQuotaPipeline] 批量刷盘失败 (table={}, id={}): {:?}",
                 table,

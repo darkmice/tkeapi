@@ -2,13 +2,11 @@
 
 Kling AI được sử dụng rộng rãi nhờ chất lượng hình ảnh video và khả năng kiểm soát chuyển động cực kỳ cao. Gateway đã mở ra định tuyến Kling chuyên dụng, căn chỉnh hoàn toàn với API chính thức của Kling. 
 
-### 1. Giao diện mô hình video
-* **Chuyển văn bản thành video (Text-to-Video)**: `/v1/videos/text2video` (`POST`)
-* **Chuyển hình ảnh thành video (Image-to-Video)**: `/v1/videos/image2video` (`POST`)
-* **Omni video tham chiếu tạo video**: `/v1/videos/omni-video` (`POST`)
-* **Truy vấn trạng thái tác vụ**: `/v1/videos/{endpoint}/{task_id}` (`GET`)
-
-*Lưu ý: Trong giao diện truy vấn, `{endpoint}` tương ứng với loại dịch vụ được sử dụng khi bạn gửi tác vụ (như `text2video`, `image2video`, v.v.).*
+### 1. Giao diện mô hình video (Gốc chính thức)
+* **Chuyển văn bản thành video**: `/text-to-video/{model_id}` (`POST`)
+* **Chuyển hình ảnh thành video**: `/image-to-video/{model_id}` (`POST`)
+* **Omni video tham chiếu tạo video**: `/omni-video/{model_id}` (`POST`)
+* **Truy vấn trạng thái tác vụ**: `/tasks?task_ids={task_id}` (`GET`)
 
 ### 2. Giao diện mô hình hình ảnh
 * **Chuyển văn bản/hình ảnh tiêu chuẩn thành hình ảnh**: `/v1/images/generations` (`POST`)

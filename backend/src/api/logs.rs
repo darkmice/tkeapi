@@ -101,7 +101,7 @@ pub(crate) async fn user_allow_view_log_details(
     db: &crate::db::Database,
     user_id: &str,
 ) -> AppResult<bool> {
-    let perm: Option<i32> = sqlx::query_scalar(
+    let perm: Option<i64> = sqlx::query_scalar(
         &db.format_query(
             "SELECT ul.allow_view_log_details FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key WHERE u.id = ?",
         ),
@@ -115,12 +115,10 @@ pub(crate) async fn user_allow_view_log_details(
 
 /// 与部分索引 `idx_logs_vision_created_at_v2` 谓词对齐（精确对齐系统固定视觉类型，零冗余）。
 pub(crate) const SQL_VISION_ACTION_FILTER: &str =
-    " AND l.action_type = ANY(ARRAY['图片','视频','视频增强','图像增强'])";
-
-
+    " AND l.action_type = ANY(ARRAY['图片','视频','封装'])";
 
 /// WHERE 只引用 `logs l`；跨表条件用 EXISTS，COUNT/stats 无需 JOIN。
-fn build_log_where(
+pub(crate) fn build_log_where(
     claims: &auth::Claims,
     query: &LogQuery,
     allowed_target_user: bool,
@@ -178,7 +176,7 @@ fn build_log_where(
     }
 
     if let Some(code) = query.status_code {
-        sql.push_str(" AND l.status_code = CAST(? AS INTEGER)");
+        sql.push_str(" AND l.status_code = CAST(? AS BIGINT)");
         binds.push(code.to_string());
     }
 
@@ -231,7 +229,7 @@ fn build_log_where(
     }
 
     if let Some(has_video) = query.has_video {
-        sql.push_str(" AND l.has_video = CAST(? AS SMALLINT)");
+        sql.push_str(" AND l.has_video = CAST(? AS BIGINT)");
         binds.push(has_video.to_string());
     }
 
@@ -290,21 +288,17 @@ pub(crate) fn push_created_at_bound(
     date_helper::push_timestamptz_bound(sql, binds, "l.created_at", raw, is_end, tz);
 }
 
-/// 管理后台：站点默认时区。用户端：请求头 / 个人时区合法 IANA，否则 UTC。落库仍是 UTC。
+/// 管理后台：请求头 / 管理后台展示时区。用户端：请求头 / 个人时区合法 IANA，否则 UTC。落库仍是 UTC。
 pub(crate) async fn request_timedisplay(
     db: &crate::db::Database,
     claims: &auth::Claims,
     headers: &HeaderMap,
 ) -> AppResult<chrono_tz::Tz> {
-    if claims.role == "admin" {
-        let site = crate::relay::relay_settings::get_cached_site_timezone(db).await;
-        return Ok(crate::time_system::parse_timedisplay(&site));
-    }
     let header_tz = headers
         .get("x-timezone")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    Ok(date_helper::resolve_user_timezone(db, false, &claims.sub, header_tz).await?)
+    Ok(date_helper::resolve_user_timezone(db, claims.role == "admin", &claims.sub, header_tz).await?)
 }
 
 pub(crate) const LOGS_LIST_JOINS: &str = " LEFT JOIN channels c ON l.channel_id = c.id \
@@ -313,10 +307,21 @@ pub(crate) const LOGS_LIST_JOINS: &str = " LEFT JOIN channels c ON l.channel_id 
       LEFT JOIN user_levels ul ON u.user_group = ul.group_key \
       LEFT JOIN api_tokens t ON l.token_id = t.id";
 
-/// 列表页附带模型 MID（logs.model 可能是 mid 或 model_id）；COUNT / 导出不加，避免放大扫描。
+/// 列表页附带模型 MID（logs.model 可能是 mid 或 model_id）；按渠道绑定与实际规则精准反查变体
 pub(crate) const LOGS_MODEL_MID_JOIN: &str = " LEFT JOIN LATERAL (\
- SELECT mid FROM models WHERE mid = l.model OR model_id = l.model \
- ORDER BY CASE WHEN mid = l.model THEN 0 ELSE 1 END LIMIT 1) md ON TRUE";
+ SELECT m.mid FROM models m WHERE m.mid = l.model OR m.model_id = l.model \
+ ORDER BY \
+   CASE \
+     WHEN m.mid = l.model THEN 0 \
+     WHEN c.models IS NOT NULL AND position('\"' || m.mid || '\"' in c.models) > 0 THEN 1 \
+     WHEN l.forward_eid IS NOT NULL AND l.forward_eid <> '' \
+          AND EXISTS (SELECT 1 FROM forward_rules fr WHERE fr.eid = l.forward_eid AND COALESCE(m.forward_rule_ids, '') ~ ('\\m' || fr.id || '\\M')) THEN 2 \
+     WHEN l.billing_pid IS NOT NULL AND l.billing_pid <> '' \
+          AND EXISTS (SELECT 1 FROM billing_rules br WHERE br.id = m.billing_rule_id AND br.pid = l.billing_pid) THEN 3 \
+     ELSE 4 \
+   END, \
+   m.id DESC \
+ LIMIT 1) md ON TRUE";
 
 /// 任务列表结算态：失败 / 冻结中 / 是否有计费明细（替代传 billing_detail 全文）。
 pub(crate) const SQL_BILLING_SETTLE_FLAGS: &str = "\
@@ -328,13 +333,17 @@ COALESCE(l.billing_detail LIKE '%冻结%', false) AS billing_frozen, \
 pub(crate) fn push_log_status_filter(sql: &mut String, status: &str) {
     match status {
         "success" | "succeeded" => {
-            sql.push_str(" AND l.status_code >= 200 AND l.status_code < 400 AND l.is_completed = 1");
+            sql.push_str(
+                " AND l.status_code >= 200 AND l.status_code < 400 AND l.is_completed = 1",
+            );
         }
         "processing" | "pending" => {
             sql.push_str(" AND (l.status_code = 0 OR l.is_completed = 0)");
         }
         "fail" | "failed" => {
-            sql.push_str(" AND l.status_code != 0 AND (l.status_code >= 400 OR l.status_code < 200)");
+            sql.push_str(
+                " AND l.status_code != 0 AND (l.status_code >= 400 OR l.status_code < 200)",
+            );
         }
         _ => {}
     }
@@ -348,8 +357,8 @@ pub(crate) const LOGS_LIST_SELECT: &str = "SELECT l.id, l.log_id, l.user_id, l.c
          l.is_stream, \
          COALESCE(l.billing_detail LIKE '%退回%', false) AS billing_refunded, \
          COALESCE(l.billing_detail LIKE '%失败%', false) AS billing_failed, \
-         COALESCE((regexp_match(COALESCE(l.billing_detail, ''), '(\\d+)创建@'))[1]::int, 0) AS billing_cache_creation, \
-         COALESCE((regexp_match(COALESCE(l.billing_detail, ''), '(\\d+)读取@'))[1]::int, 0) AS billing_cache_read, \
+         COALESCE((regexp_match(COALESCE(l.billing_detail, ''), '(\\d+)创建@'))[1]::bigint, 0) AS billing_cache_creation, \
+         COALESCE((regexp_match(COALESCE(l.billing_detail, ''), '(\\d+)读取@'))[1]::bigint, 0) AS billing_cache_read, \
          COALESCE((regexp_match(COALESCE(l.billing_detail, ''), '联网搜索:\\s*([\\d.]+)次'))[1]::float8, 0) AS billing_web_search, \
          l.billing_pid, l.forward_eid, l.pre_deduct_gift, \
          l.action_type, l.is_completed, l.channel_config_id, l.task_id, l.created_at, \
@@ -360,8 +369,8 @@ pub(crate) const LOGS_LIST_SELECT: &str = "SELECT l.id, l.log_id, l.user_id, l.c
          NULLIF(btrim(COALESCE(u.admin_remark, '')), '') AS user_admin_remark, \
          u.user_group, ul.name AS user_level_name, u.uid AS user_uid, \
          t.name AS token_name, t.kid AS token_kid, \
-         COALESCE(t.high_availability, 0) AS token_ha, \
-         CASE WHEN COALESCE(t.only_playground, 0) = 1 OR COALESCE(t.only_playground_2026, 0) = 1 THEN 1 ELSE 0 END AS token_pg";
+         COALESCE(t.high_availability, 0)::bigint AS token_ha, \
+         CASE WHEN COALESCE(t.only_playground, 0) = 1 OR COALESCE(t.only_playground_2026, 0) = 1 THEN 1::bigint ELSE 0::bigint END AS token_pg";
 
 fn append_default_stats_window(
     where_clause: &str,
@@ -407,7 +416,16 @@ pub(crate) async fn fetch_logs_count(
     where_clause: &str,
     binds: &[String],
 ) -> Result<i64, sqlx::Error> {
-    let sql = db.format_query(&format!("SELECT COUNT(*) FROM logs l{}", where_clause));
+    fetch_logs_count_for_table(db, "logs", where_clause, binds).await
+}
+
+pub(crate) async fn fetch_logs_count_for_table(
+    db: &crate::db::Database,
+    table_name: &str,
+    where_clause: &str,
+    binds: &[String],
+) -> Result<i64, sqlx::Error> {
+    let sql = db.format_query(&format!("SELECT COUNT(*)::bigint FROM {table_name} l{where_clause}"));
     let mut q = sqlx::query_scalar::<_, i64>(&sql);
     for v in binds {
         q = q.bind(v);
@@ -415,9 +433,19 @@ pub(crate) async fn fetch_logs_count(
     q.fetch_one(&db.pool).await
 }
 
+
 /// COUNT + 汇总一次扫描（条件相同时替代并行两次全表聚合）
-async fn fetch_logs_count_and_stats(
+pub(crate) async fn fetch_logs_count_and_stats(
     db: &crate::db::Database,
+    where_clause: &str,
+    binds: &[String],
+) -> Result<(i64, f64, i64, i64, f64, i64, i64, i64), sqlx::Error> {
+    fetch_logs_count_and_stats_for_table(db, "logs", where_clause, binds).await
+}
+
+pub(crate) async fn fetch_logs_count_and_stats_for_table(
+    db: &crate::db::Database,
+    table_name: &str,
     where_clause: &str,
     binds: &[String],
 ) -> Result<(i64, f64, i64, i64, f64, i64, i64, i64), sqlx::Error> {
@@ -429,8 +457,7 @@ async fn fetch_logs_count_and_stats(
          COALESCE(SUM(l.prompt_tokens), 0)::bigint, \
          COALESCE(SUM(l.completion_tokens), 0)::bigint, \
          COALESCE(SUM(CASE WHEN l.has_video = 1 THEN l.completion_tokens ELSE 0 END), 0)::bigint \
-         FROM logs l{}",
-        where_clause
+         FROM {table_name} l{where_clause}"
     ));
     let mut q = sqlx::query_as::<_, (i64, f64, i64, i64, f64, i64, i64, i64)>(&sql);
     for v in binds {
@@ -452,7 +479,7 @@ async fn fetch_logs_stats(
     }
 }
 
-async fn fetch_logs_list_rows(
+pub(crate) async fn fetch_logs_list_rows(
     db: &crate::db::Database,
     data_sql: &str,
     binds: &[String],
@@ -601,15 +628,8 @@ pub async fn list_logs(
             fetch_logs_list_rows(&db, &data_sql, &binds_data),
             fetch_logs_stats(&state.db, &stats_where_owned, &stats_binds_owned),
         );
-        let (
-            total_cost,
-            success_count,
-            fail_count,
-            total_gift_cost,
-            prompt,
-            completion,
-            with_v,
-        ) = stats;
+        let (total_cost, success_count, fail_count, total_gift_cost, prompt, completion, with_v) =
+            stats;
         (
             total_res?,
             logs_res?,
@@ -659,8 +679,8 @@ pub async fn get_log_detail(
     #[derive(sqlx::FromRow)]
     struct DetailRow {
         user_id: String,
-        status_code: i32,
-        is_completed: i16,
+        status_code: i64,
+        is_completed: i64,
         task_id: Option<String>,
         model: String,
         endpoint: Option<String>,
@@ -688,19 +708,10 @@ pub async fn get_log_detail(
              billing_detail, plugin_tag \
              FROM logs WHERE id = ?"
     };
-    let row: Option<DetailRow> = match sqlx::query_as(&state.db.format_query(detail_sql))
+    let row: Option<DetailRow> = sqlx::query_as(&state.db.format_query(detail_sql))
         .bind(id)
         .fetch_optional(&state.db.pool)
-        .await?
-    {
-        Some(r) => Some(r),
-        None => {
-            sqlx::query_as(&state.db.format_query(&detail_sql.replace("FROM logs WHERE", "FROM logs_archive WHERE")))
-                .bind(id)
-                .fetch_optional(&state.db.pool)
-                .await?
-        }
-    };
+        .await?;
     let row = row.ok_or_else(|| AppError::BadRequest("日志记录不存在".to_string()))?;
 
     if !is_admin && row.user_id != claims.sub {
@@ -824,14 +835,23 @@ pub async fn get_log_detail(
             .action_type
             .as_deref()
             .filter(|c| !c.is_empty())
-            .unwrap_or_else(|| if clean_ep.contains("video") { "视频" } else { "图片" });
+            .unwrap_or_else(|| {
+                if clean_ep.contains("video") {
+                    "视频"
+                } else {
+                    "图片"
+                }
+            });
         let req_str = detail.request_content.as_deref().unwrap_or("");
-        let is_async = detail.post_response.is_some()
-            || row.task_id.as_deref().is_some_and(|t| !t.is_empty());
+        let is_async =
+            detail.post_response.is_some() || row.task_id.as_deref().is_some_and(|t| !t.is_empty());
 
         if let Some(ref mut post) = detail.post_response {
-            let formatted = crate::relay::response_formatter::apply_format(clean_ep, cat, post, false, None);
-            let wrapped = crate::relay::forward::wrap_official_client(clean_ep, &formatted, &row.model, req_str);
+            let formatted =
+                crate::relay::response_formatter::apply_format(clean_ep, cat, post, false, None);
+            let wrapped = crate::relay::forward::wrap_official_client(
+                clean_ep, &formatted, &row.model, req_str,
+            );
             if !wrapped.is_empty() {
                 *post = wrapped;
             }
@@ -845,11 +865,19 @@ pub async fn get_log_detail(
                 row.task_id.as_deref(),
             );
             let query_path = if is_async {
-                crate::relay::forward::to_official_query_path(clean_ep, row.task_id.as_deref().unwrap_or(""))
+                crate::relay::forward::to_official_query_path(
+                    clean_ep,
+                    row.task_id.as_deref().unwrap_or(""),
+                )
             } else {
                 clean_ep.to_string()
             };
-            let wrapped = crate::relay::forward::wrap_official_client(&query_path, &formatted, &row.model, req_str);
+            let wrapped = crate::relay::forward::wrap_official_client(
+                &query_path,
+                &formatted,
+                &row.model,
+                req_str,
+            );
             if !wrapped.is_empty() {
                 *resp = wrapped;
             }
@@ -868,37 +896,130 @@ struct ExportCol {
 
 /// 与管理端日志列表展示顺序对齐；勾选导出时保持该列序。
 const LOG_EXPORT_COLUMNS: &[ExportCol] = &[
-    ExportCol { key: "created_at", header: "时间" },
-    ExportCol { key: "log_id", header: "日志ID" },
-    ExportCol { key: "task_id", header: "任务ID" },
-    ExportCol { key: "upstream_request_id", header: "上游请求ID" },
-    ExportCol { key: "id", header: "ID" },
-    ExportCol { key: "channel_group_aid", header: "渠道AID" },
-    ExportCol { key: "is_ha", header: "渠道HA" },
-    ExportCol { key: "yid", header: "上游YID" },
-    ExportCol { key: "sub_channel_name", header: "实际上游" },
-    ExportCol { key: "user_nickname", header: "用户昵称" },
-    ExportCol { key: "user_uid", header: "UID" },
-    ExportCol { key: "user_id", header: "用户ID" },
-    ExportCol { key: "user_admin_remark", header: "管理员备注" },
-    ExportCol { key: "token_name", header: "令牌" },
-    ExportCol { key: "token_kid", header: "密钥KID" },
-    ExportCol { key: "token_ha", header: "令牌HA" },
-    ExportCol { key: "token_pg", header: "令牌PG" },
-    ExportCol { key: "status_code", header: "状态码" },
-    ExportCol { key: "model", header: "模型" },
-    ExportCol { key: "billing_pid", header: "计费PID" },
-    ExportCol { key: "forward_eid", header: "转发EID" },
-    ExportCol { key: "latency_ms", header: "耗时(ms)" },
-    ExportCol { key: "is_stream", header: "类型" },
-    ExportCol { key: "prompt_tokens", header: "输入Tokens" },
-    ExportCol { key: "completion_tokens", header: "输出Tokens" },
-    ExportCol { key: "cached_tokens", header: "缓存Tokens" },
-    ExportCol { key: "cost", header: "费用" },
-    ExportCol { key: "billing_detail", header: "计费明细" },
-    ExportCol { key: "error_message", header: "错误信息" },
-    ExportCol { key: "action_type", header: "动作类型" },
-    ExportCol { key: "endpoint", header: "请求路径" },
+    ExportCol {
+        key: "created_at",
+        header: "时间",
+    },
+    ExportCol {
+        key: "log_id",
+        header: "日志ID",
+    },
+    ExportCol {
+        key: "task_id",
+        header: "任务ID",
+    },
+    ExportCol {
+        key: "upstream_request_id",
+        header: "上游请求ID",
+    },
+    ExportCol {
+        key: "id",
+        header: "ID",
+    },
+    ExportCol {
+        key: "channel_group_aid",
+        header: "渠道AID",
+    },
+    ExportCol {
+        key: "is_ha",
+        header: "渠道HA",
+    },
+    ExportCol {
+        key: "yid",
+        header: "上游YID",
+    },
+    ExportCol {
+        key: "sub_channel_name",
+        header: "实际上游",
+    },
+    ExportCol {
+        key: "user_nickname",
+        header: "用户昵称",
+    },
+    ExportCol {
+        key: "user_uid",
+        header: "UID",
+    },
+    ExportCol {
+        key: "user_id",
+        header: "用户ID",
+    },
+    ExportCol {
+        key: "user_admin_remark",
+        header: "管理员备注",
+    },
+    ExportCol {
+        key: "token_name",
+        header: "令牌",
+    },
+    ExportCol {
+        key: "token_kid",
+        header: "密钥KID",
+    },
+    ExportCol {
+        key: "token_ha",
+        header: "令牌HA",
+    },
+    ExportCol {
+        key: "token_pg",
+        header: "令牌PG",
+    },
+    ExportCol {
+        key: "status_code",
+        header: "状态码",
+    },
+    ExportCol {
+        key: "model",
+        header: "模型",
+    },
+    ExportCol {
+        key: "billing_pid",
+        header: "计费PID",
+    },
+    ExportCol {
+        key: "forward_eid",
+        header: "转发EID",
+    },
+    ExportCol {
+        key: "latency_ms",
+        header: "耗时(ms)",
+    },
+    ExportCol {
+        key: "is_stream",
+        header: "类型",
+    },
+    ExportCol {
+        key: "prompt_tokens",
+        header: "输入Tokens",
+    },
+    ExportCol {
+        key: "completion_tokens",
+        header: "输出Tokens",
+    },
+    ExportCol {
+        key: "cached_tokens",
+        header: "缓存Tokens",
+    },
+    ExportCol {
+        key: "cost",
+        header: "费用",
+    },
+    ExportCol {
+        key: "billing_detail",
+        header: "计费明细",
+    },
+    ExportCol {
+        key: "error_message",
+        header: "错误信息",
+    },
+    ExportCol {
+        key: "action_type",
+        header: "动作类型",
+    },
+    ExportCol {
+        key: "endpoint",
+        header: "请求路径",
+    },
 ];
 
 fn csv_escape(s: &str) -> String {
@@ -972,7 +1093,11 @@ fn export_cell(key: &str, row: &ExportLogRow) -> String {
         "billing_pid" => csv_escape(opt_dash(&row.billing_pid)),
         "forward_eid" => csv_escape(opt_dash(&row.forward_eid)),
         "latency_ms" => row.latency_ms.to_string(),
-        "is_stream" => csv_escape(if row.is_stream == Some(1) { "流" } else { "非流" }),
+        "is_stream" => csv_escape(if row.is_stream == Some(1) {
+            "流"
+        } else {
+            "非流"
+        }),
         "prompt_tokens" => row.prompt_tokens.to_string(),
         "completion_tokens" => row.completion_tokens.to_string(),
         "cached_tokens" => row.cached_tokens.to_string(),
@@ -1016,14 +1141,14 @@ struct ExportLogRow {
     log_id: String,
     user_id: String,
     model: String,
-    prompt_tokens: i32,
-    completion_tokens: i32,
-    cached_tokens: i32,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    cached_tokens: i64,
     cost: f64,
-    latency_ms: i32,
-    status_code: i32,
+    latency_ms: i64,
+    status_code: i64,
     endpoint: String,
-    is_stream: Option<i32>,
+    is_stream: Option<i64>,
     billing_detail: Option<String>,
     created_at: crate::time_system::DbTs,
     user_nickname: Option<String>,
@@ -1031,13 +1156,13 @@ struct ExportLogRow {
     user_admin_remark: Option<String>,
     task_id: String,
     channel_group_aid: Option<String>,
-    is_ha: i32,
+    is_ha: i64,
     yid: Option<String>,
     sub_channel_name: Option<String>,
     token_name: Option<String>,
     token_kid: Option<String>,
-    token_ha: i32,
-    token_pg: i32,
+    token_ha: i64,
+    token_pg: i64,
     billing_pid: Option<String>,
     forward_eid: Option<String>,
     error_message: Option<String>,
@@ -1095,8 +1220,8 @@ pub async fn export_logs(
          NULLIF(btrim(COALESCE(u.admin_remark, '')), '') as user_admin_remark, \
          COALESCE(l.task_id, '') as task_id, \
          c.group_aid as channel_group_aid, l.is_ha, cc.yid as yid, cc.name as sub_channel_name, \
-         t.name as token_name, t.kid as token_kid, COALESCE(t.high_availability, 0) as token_ha, \
-         CASE WHEN COALESCE(t.only_playground, 0) = 1 OR COALESCE(t.only_playground_2026, 0) = 1 THEN 1 ELSE 0 END as token_pg, \
+         t.name as token_name, t.kid as token_kid, COALESCE(t.high_availability, 0)::bigint as token_ha, \
+         CASE WHEN COALESCE(t.only_playground, 0) = 1 OR COALESCE(t.only_playground_2026, 0) = 1 THEN 1::bigint ELSE 0::bigint END as token_pg, \
          l.billing_pid, l.forward_eid, l.error_message, l.action_type, l.upstream_request_id \
          FROM logs l{LOGS_LIST_JOINS} \
          {where_clause} ORDER BY l.created_at DESC LIMIT {EXPORT_LIMIT}"
@@ -1135,13 +1260,25 @@ pub(crate) fn deferred_join_page_sql(
     per_page: i64,
     offset: i64,
 ) -> String {
+    deferred_join_page_sql_for_table("logs", select_sql, joins, where_clause, per_page, offset)
+}
+
+/// 支持指定目标表（例如 logs 或冷归档 logs_archive）的深翻页 SQL 生成器
+pub(crate) fn deferred_join_page_sql_for_table(
+    table_name: &str,
+    select_sql: &str,
+    joins: &str,
+    where_clause: &str,
+    per_page: i64,
+    offset: i64,
+) -> String {
     format!(
         "{select_sql} FROM (
-            SELECT l.id FROM logs l{where_clause}
+            SELECT l.id FROM {table_name} l{where_clause}
             ORDER BY l.created_at DESC
             LIMIT {per_page} OFFSET {offset}
          ) page
-         INNER JOIN logs l ON l.id = page.id
+         INNER JOIN {table_name} l ON l.id = page.id
          {joins}
          ORDER BY l.created_at DESC"
     )
@@ -1174,4 +1311,3 @@ pub fn format_db_time(raw: &str) -> String {
     }
     raw.split('.').next().unwrap_or(raw).to_string()
 }
-

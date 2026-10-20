@@ -117,7 +117,9 @@ impl CosConfig {
             map.get("cos_region").map(String::as_str).unwrap_or(""),
             map.get("cos_bucket").map(String::as_str).unwrap_or(""),
             map.get("cos_path_prefix").map(String::as_str).unwrap_or(""),
-            map.get("cos_custom_domain").map(String::as_str).unwrap_or(""),
+            map.get("cos_custom_domain")
+                .map(String::as_str)
+                .unwrap_or(""),
         )
     }
 
@@ -359,36 +361,92 @@ async fn signed_request_once(
         .map_err(|e| format!("COS 请求失败: {e}"))
 }
 
-pub async fn test_connection(config: &CosConfig) -> Result<String, String> {
-    let host = config.request_host();
+/// 用 SecretId/SecretKey 列举腾讯云 COS 账号下的存储桶。
+pub async fn list_buckets(
+    secret_id: &str,
+    secret_key: &str,
+    prefer_endpoint: &str,
+) -> Result<Vec<super::tos::TosListedBucket>, String> {
+    let prefer_host = if !prefer_endpoint.trim().is_empty() {
+        endpoint_host(prefer_endpoint).trim()
+    } else {
+        ""
+    };
+    let mut targets = vec!["service.cos.myqcloud.com"];
+    if !prefer_host.is_empty() && !targets.contains(&prefer_host) {
+        targets.push(prefer_host);
+    }
+
+    let mut last_err = String::new();
+    for host in targets {
+        match list_buckets_at(secret_id, secret_key, host).await {
+            Ok(buckets) => return Ok(buckets),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+async fn list_buckets_at(
+    secret_id: &str,
+    secret_key: &str,
+    host: &str,
+) -> Result<Vec<super::tos::TosListedBucket>, String> {
+    let temp_config = CosConfig {
+        secret_id: secret_id.trim().to_string(),
+        secret_key: secret_key.trim().to_string(),
+        endpoint: host.to_string(),
+        region: String::new(),
+        bucket: String::new(),
+        path_prefix: String::new(),
+        custom_domain: String::new(),
+    };
     let resp = signed_request(
-        config,
+        &temp_config,
         reqwest::Method::GET,
-        &host,
+        host,
         "/",
-        &[("max-keys", "1")],
+        &[],
         &[],
         None,
-        Duration::from_secs(10),
+        Duration::from_secs(15),
     )
     .await?;
+
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if status.is_success() {
-        Ok(format!(
-            "连接成功，已访问 Bucket: {} ({})",
-            config.bucket, config.region
-        ))
-    } else {
-        let code = extract_xml_value(&body, "Code").unwrap_or_default();
-        let msg = extract_xml_value(&body, "Message").unwrap_or_default();
-        let detail = if !code.is_empty() {
-            format!("{code}: {msg}")
-        } else {
-            body
-        };
-        Err(format!("连接失败 ({status}): {detail}"))
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取存储桶列表失败: {e}"))?;
+
+    if !status.is_success() {
+        let msg = extract_xml_value(&body, "Message")
+            .or_else(|| extract_xml_value(&body, "Code"))
+            .unwrap_or_else(|| body.chars().take(300).collect());
+        return Err(format!("列举存储桶失败 ({status}): {msg}"));
     }
+    Ok(parse_cos_buckets(&body))
+}
+
+/// 测试当前配置：写入一个小文件再删除，确认存储可正常使用
+pub async fn test_connection(config: &CosConfig) -> Result<String, String> {
+    let key = config.full_key(&format!(
+        "_connection_test/{}.txt",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    upload_file(
+        config,
+        &key,
+        b"tokensbyte storage connection test".to_vec(),
+        "text/plain",
+        None,
+    )
+    .await
+    .map_err(|e| format!("写入测试文件失败: {e}"))?;
+    if let Err(e) = delete_file(config, &key).await {
+        return Err(format!("测试文件已写入 {key}，但删除失败: {e}"));
+    }
+    Ok(format!("读写正常，已写入并删除测试文件 {key}"))
 }
 
 pub async fn upload_file(
@@ -550,7 +608,8 @@ pub async fn list_folder(
     let mut marker: Option<String> = None;
 
     for _ in 0..LIST_MAX_PAGES {
-        let mut query: Vec<(&str, &str)> = vec![("max-keys", LIST_PAGE_SIZE), ("prefix", prefix.as_str())];
+        let mut query: Vec<(&str, &str)> =
+            vec![("max-keys", LIST_PAGE_SIZE), ("prefix", prefix.as_str())];
         if let Some(m) = marker.as_deref() {
             query.push(("marker", m));
         }
@@ -642,3 +701,33 @@ fn xml_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
+fn parse_cos_buckets(body: &str) -> Vec<super::tos::TosListedBucket> {
+    let mut buckets = Vec::new();
+    for block in body.split("<Bucket>").skip(1) {
+        let Some(name) = extract_xml_value(block, "Name").filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let location = extract_xml_value(block, "Location")
+            .or_else(|| extract_xml_value(block, "LocationConstraint"))
+            .unwrap_or_default();
+        let extranet_endpoint = if !location.is_empty() {
+            format!("https://cos.{location}.myqcloud.com")
+        } else {
+            String::new()
+        };
+        let intranet_endpoint = if !location.is_empty() {
+            format!("https://cos-internal.{location}.tencentcos.cn")
+        } else {
+            String::new()
+        };
+        buckets.push(super::tos::TosListedBucket {
+            name,
+            location,
+            extranet_endpoint,
+            intranet_endpoint,
+        });
+    }
+    buckets
+}
+

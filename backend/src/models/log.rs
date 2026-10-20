@@ -17,6 +17,10 @@ fn is_zero_i32(v: &i32) -> bool {
     *v == 0
 }
 
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
+}
+
 fn is_zero_f64(v: &f64) -> bool {
     *v == 0.0
 }
@@ -33,14 +37,14 @@ pub struct RequestLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_id: Option<i64>,
     pub model: String,
-    pub prompt_tokens: i32,
-    pub completion_tokens: i32,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
     /// 缓存命中的 Token 数量（属于输入的子集）
     #[sqlx(default)]
-    pub cached_tokens: i32,
+    pub cached_tokens: i64,
     pub cost: f64,
-    pub latency_ms: i32,
-    pub status_code: i32,
+    pub latency_ms: i64,
+    pub status_code: i64,
     pub endpoint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
@@ -62,8 +66,8 @@ pub struct RequestLog {
     pub mid: Option<String>,
     /// 请求当时是否走 HA 组（写路径快照，非 JOIN 当前渠道）
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub is_ha: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub is_ha: i64,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_content: Option<String>,
@@ -78,7 +82,7 @@ pub struct RequestLog {
     pub upstream_req_content: Option<String>,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_stream: Option<i32>,
+    pub is_stream: Option<i64>,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_name: Option<String>,
@@ -87,12 +91,12 @@ pub struct RequestLog {
     pub token_kid: Option<String>,
     /// 令牌当前是否开启高可用（JOIN `api_tokens.high_availability`，非请求快照）
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub token_ha: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub token_ha: i64,
     /// 是否创作中心专用令牌（JOIN `only_playground` / `only_playground_2026`）
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub token_pg: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub token_pg: i64,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_nickname: Option<String>,
@@ -125,11 +129,11 @@ pub struct RequestLog {
     pub billing_failed: bool,
     /// 列表用量数字（SQL 从 billing_detail 抽出）
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub billing_cache_creation: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub billing_cache_creation: i64,
     #[sqlx(default)]
-    #[serde(default, skip_serializing_if = "is_zero_i32")]
-    pub billing_cache_read: i32,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    pub billing_cache_read: i64,
     #[sqlx(default)]
     #[serde(default, skip_serializing_if = "is_zero_f64")]
     pub billing_web_search: f64,
@@ -145,6 +149,7 @@ pub struct RequestLog {
     pub billing_features: Option<String>,
     /// 预扣费中从赠送余额扣除的金额，用于退款时精准归还
     #[sqlx(default)]
+    #[serde(default)]
     pub pre_deduct_gift: f64,
     /// 插件标记 JSON（列表/仪表盘不返回；仅详情接口）
     #[sqlx(default)]
@@ -155,13 +160,15 @@ pub struct RequestLog {
     pub action_type: Option<String>,
     /// 任务是否已终结(1=已完成,0=进行中或待结算)
     #[sqlx(default)]
-    pub is_completed: i16,
+    #[serde(default)]
+    pub is_completed: i64,
     /// 视频模型输入是否包含视频(1=含视频, 0=无视频)
     #[sqlx(default)]
-    pub has_video: i16,
+    #[serde(default)]
+    pub has_video: i64,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel_config_id: Option<i32>,
+    pub channel_config_id: Option<i64>,
     #[sqlx(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_channel_name: Option<String>,
@@ -169,6 +176,10 @@ pub struct RequestLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     pub created_at: DbTs,
+    /// 归档时间（仅 logs_archive 冷表包含）
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<DbTs>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -182,7 +193,7 @@ pub struct LogQuery {
     pub token_id: Option<i64>,
     pub status: Option<String>,
     /// 精确 HTTP 状态码；可与 status=success/fail 叠加
-    pub status_code: Option<i32>,
+    pub status_code: Option<i64>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub user_group: Option<String>,
@@ -194,7 +205,7 @@ pub struct LogQuery {
     pub task_id: Option<String>,
     pub search_keyword: Option<String>,
     /// 视频模型输入形态过滤：1=含视频，0=无视频
-    pub has_video: Option<i16>,
+    pub has_video: Option<i64>,
     /// CSV 导出字段（逗号分隔 key）；空则全部。仅 `/logs/export` 使用。
     pub export_fields: Option<String>,
     /// 客户端已知的总记录数（翻页时回传，避免重跑 COUNT）

@@ -1,7 +1,6 @@
 # IDE
 .vscode/
 .idea/
-.cursor/
 *.swp
 *.swo
 
@@ -28,8 +27,9 @@ data/*.db
 data/*.sqlite
 
 # Docker volumes
-data/
+/data/
 pgdata/
+!backend/src/**/data/
 
 # Build
 dist/
@@ -43,20 +43,31 @@ build/
 /logs/
 /backend/logs/
 *.log
+.dev-pids/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
 # Workspace
-.agents/
 .gemini/
+.workbuddy/
 /tmp/
 docker-images/
 backup/
 *.dump
-opensource/
-tokensbyte-server-bin*
-tokensbyte-images*.tar.gz
-backend/git_log.txt
-backend/tokensbyte-server
-build_and_push_cnb.sh
+*.tar.gz
+newapi/
+token.txt
+dbtest/
+query_db.cjs
+backend/.cargo/
+*tokensbyte-server-bin
+tokensbyte-server-bin.stamp
+dockerimage/
+
+# 本机自动化辅助脚本（不入库：含硬编码企业微信 webhook key 等本机私密配置）
+/scripts/notify-wecom.ps1
+/scripts/security-audit-prompt.md
+
+# 站点协议自动生成静态页面（由后端启动与设置变更时动态落盘，不跟踪更新）
+/frontend/public/legal/

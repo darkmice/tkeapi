@@ -122,7 +122,7 @@ docker compose up -d
 打包提速（不影响线上运行时逻辑）：
 
 - **同架构**构建 + 保留 BuildKit Cargo cache（`ENABLE_CARGO_CACHE=1`，默认开）；勿随意 `docker builder prune`，否则会丢缓存变回全量编译
-- **Mac**：脚本内联 zigbuild + `--features cross_compile`；`USE_PREBUILT=1` 时前后端并行；外置盘自动迁 `CARGO_TARGET_DIR`；`FORCE_ZIGBUILD=1` 重编；失败即停（`ALLOW_DOCKER_CARGO=1` 才允许容器内编译）
+- **Mac**：构建前刷新 `backend/git_log.txt`；bin 的 stamp 与当前 backend 一致则复用，否则 zigbuild；`FORCE_ZIGBUILD=1` 强制重编；`USE_PREBUILT=1` 时前后端并行；外置盘自动迁 `CARGO_TARGET_DIR`；失败即停（`ALLOW_DOCKER_CARGO=1` 才允许容器内编译）
 - **Windows**：`.\export-images.ps1` / `.\push-images.ps1` 默认 `JOBS=2`；OOM 时 `$env:CARGO_BUILD_JOBS=1`；同样勿随意 prune；根目录放 Linux ELF `tokensbyte-server-bin` 会自动 `USE_PREBUILT=1`
 - **Windows 中文路径**：脚本已 UTF-8 + 自动把中文目录名映射为 ASCII 的 `PROJECT_NAME`（也可手动 `$env:PROJECT_NAME='myproject'`）；**仓库路径仍建议纯英文**（否则 Docker COPY/挂载可能失败）
 - 同架构 Linux 上先编好 `tokensbyte-server-bin`（ELF）再导出：脚本会自动 `USE_PREBUILT=1`，镜像阶段跳过容器内 Rust 编译

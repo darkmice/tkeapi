@@ -39,7 +39,7 @@ cargo install cargo-zigbuild
 
 ## 📦 本地打包与离线镜像导出
 
-`export-images.sh` / `push-images.sh`：Mac 选定目标架构后 **必须** 先 `cargo zigbuild` 生成匹配的 `tokensbyte-server-bin`（校验 ELF/架构），再以 `USE_PREBUILT=1` 打镜像；失败直接退出，不再掉进 Docker 内 cargo（避免 OOM）。已有正确 bin 则复用；`FORCE_ZIGBUILD=1` 重编；仅调试用 `ALLOW_DOCKER_CARGO=1`。
+`export-images.sh` / `push-images.sh`：构建前刷新 `backend/git_log.txt`。Mac 用匹配架构的 `tokensbyte-server-bin` 再 `USE_PREBUILT=1` 打镜像；stamp 与当前 backend 一致则复用，否则 zigbuild；失败即停。`FORCE_ZIGBUILD=1` 强制重编；仅调试用 `ALLOW_DOCKER_CARGO=1`。
 
 ### 1. 导出 Docker 镜像
 在项目根目录运行：

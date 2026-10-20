@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Card, Table, Button, Space, Form, Input, Switch, message, Popconfirm, Tag, Radio, InputNumber, Row, Col, Typography, Grid, Tooltip, Select, Modal, TimePicker, Alert } from 'antd';
+import { Card, Table, Button, Space, Form, Input, Switch, message, Popconfirm, Tag, Radio, InputNumber, Row, Col, Typography, Grid, Tooltip, Select, Modal, TimePicker, Alert, Segmented } from 'antd';
 import MobileCardList, { MobileCard, CardRow, CardActions } from '../../components/MobileCardList';
 import { listPagination, useListPager } from '../../components/ListPagination';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DeleteTwoTone, CopyOutlined } from '@ant-design/icons';
@@ -28,10 +28,13 @@ import {
   invertRemainderFromExt,
   isAllDayMultiplier,
   isAllWeekdays,
+  isFreeTimeMultiplier,
   migrateLegacyInvertItems,
   normalizeWeekdays,
   resolveTimeMultiplierAt,
 } from '../../utils/timeMultipliers';
+import { formatWallClock } from '../../utils/timedisplay';
+import { convertScheduleSlots, scheduleInputTzName, type ScheduleTzMode } from './scheduleTzConvert';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
@@ -68,6 +71,13 @@ const RULES_WITH_PRICING_TIERS = new Set([
   'video_seconds_io',
   'video_seconds_ref',
 ]);
+
+const VIDU_VIDEO_ATTRS = [
+  { value: 'text', label: '文生视频' },
+  { value: 'image', label: '图生视频 (含首尾帧)' },
+  { value: 'ref', label: '参考生视频 (主体/音频)' },
+];
+const VIDU_VIDEO_RESOLUTIONS = ['480p', '540p', '720p', '1080p', '2k', '4k'];
 
 interface RuleContainerProps {
   isLight: boolean;
@@ -289,12 +299,67 @@ const WeekdayPicker: React.FC<{
   );
 };
 
+function multiplierPhrase(rate: number): string {
+  return isFreeTimeMultiplier(rate) ? '免费' : `${rate.toFixed(2)} 倍`;
+}
+
+const MultiplierInput: React.FC<{
+  value?: number | null;
+  onChange?: (value: number | null) => void;
+  placeholder?: string;
+  style?: React.CSSProperties;
+  addonBefore?: React.ReactNode;
+}> = ({ value, onChange, placeholder, style, addonBefore }) => {
+  const [editing, setEditing] = useState(false);
+  const hasValue = value != null && (value as unknown) !== '';
+  const numeric = hasValue ? Number(value) : NaN;
+  const showFree = !editing && isFreeTimeMultiplier(numeric);
+  return (
+    <InputNumber
+      value={value ?? undefined}
+      onChange={(next) => {
+        if (next == null || (next as unknown) === '') {
+          onChange?.(null);
+          return;
+        }
+        const n = Number(next);
+        onChange?.(Number.isFinite(n) ? n : null);
+      }}
+      placeholder={placeholder}
+      min={0}
+      precision={2}
+      step={0.1}
+      style={style}
+      addonBefore={addonBefore}
+      addonAfter={showFree ? undefined : '倍'}
+      onFocus={() => setEditing(true)}
+      onBlur={() => setEditing(false)}
+      formatter={(raw, info) => {
+        if (info?.userTyping) return info.input;
+        if (raw == null || (raw as unknown) === '') return '';
+        const n = Number(raw);
+        if (isFreeTimeMultiplier(n)) return editing ? '0' : '免费';
+        return String(raw);
+      }}
+      parser={(raw) => {
+        const str = String(raw ?? '');
+        if (str.includes('免费')) return 0;
+        const text = str.trim();
+        if (text === '' || text === '.') return '' as unknown as number;
+        const n = Number(text);
+        return Number.isFinite(n) ? n : ('' as unknown as number);
+      }}
+    />
+  );
+};
+
 const RealTimeClock: React.FC<{
   defaultTz: string;
+  label?: string;
   enabled?: boolean;
   items?: any[];
   remainder?: number;
-}> = ({ defaultTz, enabled, items, remainder }) => {
+}> = ({ defaultTz, label, enabled, items, remainder }) => {
   const [time, setTime] = useState(dayjs());
 
   useEffect(() => {
@@ -305,16 +370,12 @@ const RealTimeClock: React.FC<{
   }, []);
 
   let displayTime = time;
-  let offsetStr = time.format('Z');
   try {
     if (defaultTz) {
       if (defaultTz.startsWith('UTC') || defaultTz.match(/^[+-]\d/)) {
-        const offset = defaultTz.replace('UTC', '');
-        displayTime = time.utcOffset(offset);
-        offsetStr = displayTime.format('Z');
+        displayTime = time.utcOffset(defaultTz.replace('UTC', ''));
       } else {
         displayTime = time.tz(defaultTz);
-        offsetStr = displayTime.format('Z');
       }
     }
   } catch (e) {
@@ -329,8 +390,8 @@ const RealTimeClock: React.FC<{
 
   return (
     <Text type="secondary" style={{ fontSize: 12 }}>
-      当前管理后台系统时间: {displayTime.format('YYYY-MM-DD HH:mm:ss')} (UTC{offsetStr})
-      {enabled ? ` · 此刻 ${currentRate.toFixed(2)} 倍` : ''}
+      {label || '运营时间'}: {formatWallClock(defaultTz || 'UTC')} · {defaultTz}
+      {enabled ? (isFreeTimeMultiplier(currentRate) ? ' · 此刻 免费' : ` · 此刻 ${currentRate.toFixed(2)} 倍`) : ''}
     </Text>
   );
 };
@@ -341,6 +402,8 @@ const BillingRules: React.FC = () => {
   const { t } = useTranslation();
   const { settings } = useSettingsStore();
   const adminPath = settings?.site?.admin_path || 'admin1688';
+  const operationTz = settings?.site?.default_timezone?.trim() || 'Asia/Shanghai';
+  const adminTz = settings?.site?.admin_display_timezone?.trim() || operationTz;
   const navigate = useNavigate();
   const location = useLocation();
   const { id: routeParamId } = useParams<{ id?: string }>();
@@ -394,6 +457,7 @@ const BillingRules: React.FC = () => {
   // 腾讯云 Vidu 视频/图片精确查表 state
   const [viduVideoPriceTable, setViduVideoPriceTable] = useState<Record<string, number>>({});
   const [viduVideoDisabledKeys, setViduVideoDisabledKeys] = useState<string[]>([]);
+  const [viduActiveAttr, setViduActiveAttr] = useState<string>('text');
   const [viduImagePriceTable, setViduImagePriceTable] = useState<Record<string, number>>({});
   const [viduImageDisabledKeys, setViduImageDisabledKeys] = useState<string[]>([]);
   // 火山引擎级联增强精确查表 state
@@ -546,6 +610,7 @@ const BillingRules: React.FC = () => {
     setKlingDisabledKeys([]);
     setViduVideoPriceTable({});
     setViduVideoDisabledKeys([]);
+    setViduActiveAttr('text');
     setViduImagePriceTable({});
     setViduImageDisabledKeys([]);
     setVolcCascadePriceTable({});
@@ -567,6 +632,7 @@ const BillingRules: React.FC = () => {
         enable_time_multipliers: false,
         invert_time_multipliers: false,
         invert_remainder_multiplier: 1,
+        time_input_tz: 'operation',
         time_multipliers: [],
         web_search_rate: 0,
       },
@@ -589,7 +655,7 @@ const BillingRules: React.FC = () => {
       kling_video_ref_no: 1.0, kling_video_ref_yes: 1.5,
       kling_enable_mode: true, kling_enable_sound: true, kling_enable_video_ref: false,
       kling_use_price_table: false,
-      vidu_offpeak_discount: 0.5,
+      vidu_offpeak_discount: 1.0,
       enable_cached_rate: false,
       enable_claude_cache_creation: false,
       enable_claude_cache_read: false,
@@ -662,7 +728,8 @@ const BillingRules: React.FC = () => {
       setVolcCascadeDisabledKeys([]);
     }
 
-    let timeMultipliers = [];
+    let timeMultipliers: any[] = [];
+    const timeInputTz = ext.time_input_tz === 'admin_display' ? 'admin_display' : 'operation';
     if (Array.isArray(ext.time_multipliers)) {
       timeMultipliers = ext.time_multipliers.map((i: any) => ({
         start: i.start ? dayjs(i.start, 'HH:mm') : null,
@@ -674,6 +741,11 @@ const BillingRules: React.FC = () => {
       if (ext.invert_time_multipliers && !hasExplicitRemainder(ext)) {
         timeMultipliers = migrateLegacyInvertItems(timeMultipliers);
       }
+      timeMultipliers = convertScheduleSlots(
+        timeMultipliers,
+        operationTz,
+        scheduleInputTzName(timeInputTz, operationTz, adminTz),
+      );
     }
 
     let sd2_resolutions: any[] = [];
@@ -705,6 +777,7 @@ const BillingRules: React.FC = () => {
       s1_online_rate: ext.online_rate || 0,
       s1_offline_rate: ext.offline_rate || 0,
       image_prompt_rate: ext.image_prompt_rate || 0,
+      image_completion_rate: ext.image_completion_rate || 0,
       prompt_extend_multiplier: ext.prompt_extend_multiplier || 1,
       image_ref_multiplier: ext.image_ref_multiplier ?? 1,
       free_image_count: resolveFreeImageCount(ext.free_image_count, item.billing_rule),
@@ -732,7 +805,7 @@ const BillingRules: React.FC = () => {
       kling_enable_video_ref: ext.enable_video_ref === true,
       enable_video_ref: ext.enable_video_ref !== false,
       kling_use_price_table: item.billing_rule === 'kling_video' && !!ext.price_table && Object.keys(ext.price_table).length > 0,
-      vidu_offpeak_discount: ext.offpeak_discount ?? 0.5,
+      vidu_offpeak_discount: ext.offpeak_discount ?? 1.0,
       enable_cached_rate: (item as any).cached_rate > 0,
       enable_claude_cache_creation: (item as any).claude_cache_creation_rate > 0,
       enable_claude_cache_read: (item as any).claude_cache_read_rate > 0,
@@ -754,6 +827,7 @@ const BillingRules: React.FC = () => {
         enable_time_multipliers: !!ext.enable_time_multipliers,
         invert_time_multipliers: !!ext.invert_time_multipliers,
         invert_remainder_multiplier: invertRemainderFromExt(ext),
+        time_input_tz: timeInputTz,
         time_multipliers: timeMultipliers,
         web_search_rate: ext.web_search_rate || 0,
       },
@@ -891,7 +965,7 @@ const BillingRules: React.FC = () => {
         const intervals = [];
         for (let i = 0; i < timeMultipliers.length; i++) {
           const item = timeMultipliers[i];
-          if (item.multiplier === undefined || item.multiplier === null || Number(item.multiplier) < 0) {
+          if (item.multiplier === undefined || item.multiplier === null || item.multiplier === '' || !Number.isFinite(Number(item.multiplier)) || Number(item.multiplier) < 0) {
             message.error(`第 ${i + 1} 个规则的倍率无效`);
             return;
           }
@@ -994,7 +1068,7 @@ const BillingRules: React.FC = () => {
         extConfig = {
           price_table: viduVideoPriceTable,
           price_table_disabled: viduVideoDisabledKeys,
-          offpeak_discount: values.vidu_offpeak_discount ?? 0.5,
+          offpeak_discount: values.vidu_offpeak_discount ?? 1.0,
         };
       } else if (values.billing_rule === 'volc_enhance_cascade') {
         extConfig = {
@@ -1009,8 +1083,9 @@ const BillingRules: React.FC = () => {
       } else if (values.billing_rule === 'multimodal') {
         extConfig = {
           image_prompt_rate: values.image_prompt_rate || 0,
+          image_completion_rate: values.image_completion_rate || 0,
         };
-        values.completion_rate = 0;
+        values.completion_rate = values.completion_rate || 0;
       } else if (values.billing_rule === 'gpt_billing') {
         const gpt_config: Record<string, any> = {};
         GPT_BILLING_ITEMS.forEach(it => {
@@ -1085,13 +1160,43 @@ const BillingRules: React.FC = () => {
       }
 
       // 将时间段倍率配置序列化为 HH:mm 并写入 extConfig
-      const invertRemainderRaw = Number(form.getFieldValue(['extended_config', 'invert_remainder_multiplier']));
+      const invertRemainderField = form.getFieldValue(['extended_config', 'invert_remainder_multiplier']);
+      const invertRemainderRaw = invertRemainderField == null || invertRemainderField === '' ? NaN : Number(invertRemainderField);
       if (enableTimeMultipliers && (!Number.isFinite(invertRemainderRaw) || invertRemainderRaw < 0)) {
         message.error('请填写未规划时段倍率');
         return;
       }
       if (enableTimeMultipliers) {
-        const formattedMultipliers = timeMultipliers.map((item: any) => {
+        const timeInputTz = form.getFieldValue(['extended_config', 'time_input_tz']) === 'admin_display'
+          ? 'admin_display'
+          : 'operation';
+        const storedMultipliers = convertScheduleSlots(
+          timeMultipliers,
+          scheduleInputTzName(timeInputTz, operationTz, adminTz),
+          operationTz,
+        );
+        const storedIntervals = [];
+        for (let i = 0; i < storedMultipliers.length; i++) {
+          const item: any = storedMultipliers[i];
+          const days = normalizeWeekdays(item.days);
+          if (isAllDayMultiplier(item)) continue;
+          if (!item.start || !item.end || typeof item.start.format !== 'function' || typeof item.end.format !== 'function') {
+            message.error(`第 ${i + 1} 个时段折算到站点运营时区后无效，请改用运营时区填写或拆开全天规则`);
+            return;
+          }
+          const startMin = item.start.hour() * 60 + item.start.minute();
+          const endMin = item.end.hour() * 60 + item.end.minute();
+          if (startMin === endMin) {
+            message.error(`第 ${i + 1} 个时段折算后起止时间相同，未写入，避免计费空窗`);
+            return;
+          }
+          storedIntervals.push(...expandTimeMultiplierIntervals(startMin, endMin, days, i));
+        }
+        if (findOverlappingTimeMultipliers(storedIntervals)) {
+          message.error('时段折算到站点运营时区后出现重叠，请改用运营时区填写或调整星期');
+          return;
+        }
+        const formattedMultipliers = storedMultipliers.map((item: any) => {
           const days = normalizeWeekdays(item.days);
           if (isAllDayMultiplier(item)) {
             return {
@@ -1112,6 +1217,7 @@ const BillingRules: React.FC = () => {
           enable_time_multipliers: true,
           invert_time_multipliers: true,
           invert_remainder_multiplier: invertRemainderRaw,
+          time_input_tz: timeInputTz,
           time_multipliers: formattedMultipliers,
         };
       } else {
@@ -1662,9 +1768,9 @@ const BillingRules: React.FC = () => {
                       <Radio value="gpt_billing">GPT图片计费</Radio>
                       <Radio value="tiered">{t('models.rule_tiered')}</Radio>
                       <Radio value="doubao_chat">豆包聊天阶梯</Radio>
-                      <Radio value="seedance2.0">Seedance 2.0</Radio>
-                      <Radio value="seedance1.5pro">Seedance 1.5 Pro</Radio>
-                      <Radio value="seedance1.0">Seedance 1.0</Radio>
+                      <Radio value="seedance2.0">Seedance 2 规则</Radio>
+                      <Radio value="seedance1.5pro">Seedance 1.5 规则</Radio>
+                      <Radio value="seedance1.0">Seedance 1 规则</Radio>
                       <Radio value="glm_5_3">glm 5.3</Radio>
                     </Radio.Group>
                   </Form.Item>
@@ -1733,6 +1839,18 @@ const BillingRules: React.FC = () => {
                               </Col>
                               <Col span={12}>
                                 <Form.Item name="image_prompt_rate" label={t('models.image_input_rate')} rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+                                  <InputNumber style={{ width: '100%' }} precision={6} addonAfter="/ 1M" />
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                            <Row gutter={16} style={{ marginTop: 16 }}>
+                              <Col span={12}>
+                                <Form.Item name="completion_rate" label={t('models.text_completion_rate', '文本/思考输出单价')} rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+                                  <InputNumber style={{ width: '100%' }} precision={6} addonAfter="/ 1M" />
+                                </Form.Item>
+                              </Col>
+                              <Col span={12}>
+                                <Form.Item name="image_completion_rate" label={t('models.image_completion_rate', '图片输出单价')} rules={[{ required: true }]} style={{ marginBottom: 0 }}>
                                   <InputNumber style={{ width: '100%' }} precision={6} addonAfter="/ 1M" />
                                 </Form.Item>
                               </Col>
@@ -2545,7 +2663,7 @@ const BillingRules: React.FC = () => {
                       <Radio value="kling_video">可灵视频</Radio>
                       <Radio value="vidu_video">Vidu 视频</Radio>
                       {(hasVolcengineEnhance || editingItem?.billing_rule === 'volc_enhance_cascade') && (
-                        <Radio value="volc_enhance_cascade">火山级联增强</Radio>
+                        <Radio value="volc_enhance_cascade">火山级联封装</Radio>
                       )}
                     </Radio.Group>
                   </Form.Item>
@@ -3198,28 +3316,66 @@ const BillingRules: React.FC = () => {
                       }
 
                       if (rule === 'vidu_video') {
-                        // 腾讯云 Vidu 视频精确查表
-                        const viduAttrs = ['text', 'image', 'ref'];
-                        const viduRes = ['480p', '720p', '1080p', '2k', '4k'];
-                        const viduAttrLabels: Record<string, string> = { text: '文生视频', image: '图生视频', ref: '参考生视频' };
+                        const activeLabel = VIDU_VIDEO_ATTRS.find(a => a.value === viduActiveAttr)?.label || '文生视频';
+
+                        // 一键同步：将当前选中的分类价格复制到所有其他生成类型
+                        const copyCurrentToAll = () => {
+                          setViduVideoPriceTable(prev => {
+                            const next = { ...prev };
+                            VIDU_VIDEO_RESOLUTIONS.forEach(r => {
+                              const val = prev[`${viduActiveAttr}|${r}`] ?? 0;
+                              VIDU_VIDEO_ATTRS.forEach(a => {
+                                next[`${a.value}|${r}`] = val;
+                              });
+                            });
+                            return next;
+                          });
+                          message.success(`已将【${activeLabel}】的 6 档分辨率价格同步至全部生成类型`);
+                        };
+
                         return (
                           <RuleContainer
                             isLight={_isLight}
                             title="Vidu 视频价格表"
-                            description="适用腾讯云 Vidu 系列视频模型，按文生/图生/参考生视频与分辨率组合查表计费，支持错峰折扣。"
+                            description="适用 Vidu 官方开放平台与腾讯云系列视频模型，按生成类型与分辨率组合查表计费，支持错峰折扣。"
                           >
-                            <Form.Item name="vidu_offpeak_discount" label="错峰折扣率" initialValue={0.5} style={{ marginBottom: 16 }}>
-                              <InputNumber style={{ width: '200px' }} precision={2} step={0.1} min={0} max={1} addonAfter="x" />
-                            </Form.Item>
+                            <Row gutter={16} align="middle" style={{ marginBottom: 12 }}>
+                              <Col>
+                                <Form.Item name="vidu_offpeak_discount" label="错峰折扣率" initialValue={1.0} style={{ marginBottom: 0 }}>
+                                  <InputNumber style={{ width: '160px' }} precision={2} step={0.1} min={0} max={1} addonAfter="x" />
+                                </Form.Item>
+                              </Col>
+                              <Col>
+                                <Text type="secondary" style={{ fontSize: '12px' }}>
+                                  💡 传入 off_peak: true 或 service_tier: flex 时自动执行错峰折扣；未声明分辨率默认按 540p 计费
+                                </Text>
+                              </Col>
+                            </Row>
+
                             <div style={{ padding: '12px', background: _isLight ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.02)', borderRadius: 8 }}>
-                              <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 12 }}>精确价格表 (单价/秒)</Text>
-                              {viduAttrs.map(attr => viduRes.map(res => {
-                                const key = `${attr}|${res}`;
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+                                <Segmented
+                                  value={viduActiveAttr}
+                                  onChange={(val) => setViduActiveAttr(val as string)}
+                                  options={VIDU_VIDEO_ATTRS}
+                                />
+                                <Button
+                                  type="dashed"
+                                  size="small"
+                                  icon={<CopyOutlined />}
+                                  onClick={copyCurrentToAll}
+                                >
+                                  将当前【{activeLabel}】价格同步至其他类型
+                                </Button>
+                              </div>
+
+                              {VIDU_VIDEO_RESOLUTIONS.map(res => {
+                                const key = `${viduActiveAttr}|${res}`;
                                 const isDisabled = viduVideoDisabledKeys.includes(key);
                                 return (
                                   <PriceTableRow
                                     key={key}
-                                    label={`${viduAttrLabels[attr] || attr} / ${res}`}
+                                    label={`${res} ${res === '540p' ? '(默认基准)' : ''}`}
                                     value={viduVideoPriceTable[key] ?? 0}
                                     isDisabled={isDisabled}
                                     step={0.01}
@@ -3228,21 +3384,23 @@ const BillingRules: React.FC = () => {
                                     onActiveChange={(checked) => setViduVideoDisabledKeys(prev => checked ? prev.filter(k => k !== key) : [...prev, key])}
                                   />
                                 );
-                              })).flat()}
+                              })}
                             </div>
                           </RuleContainer>
                         );
                       }
 
                       if (rule === 'volc_enhance_cascade') {
-                        // 仅标准版 / 极速版：由模型 Id 是否含 fast 自动选用，与请求体 version 无关
-                        const volcVersions = ['fast', 'standard'];
+                        // 覆盖极速版/标准版/专业版/大模型版全档位，与转发规则及计费查表一致
+                        const volcVersions = ['fast', 'standard', 'pro', 'ai'];
                         const volcRes = ['720p', '1080p', '2k', '4k'];
                         const volcInputs = ['no', 'yes'];
 
                         const volcVersionLabels: Record<string, string> = {
-                          fast: '极速版 (模型 Id 含 fast)',
-                          standard: '标准版 (默认)',
+                          fast: '极速版 (fast)',
+                          standard: '标准版 (standard)',
+                          pro: '专业版 (pro)',
+                          ai: '大模型封装版 (ai / vve-gt)',
                         };
                         const volcInputLabels: Record<string, string> = {
                           no: '无视频输入',
@@ -3252,8 +3410,8 @@ const BillingRules: React.FC = () => {
                         return (
                           <RuleContainer
                             isLight={_isLight}
-                            title="火山级联增强价格表"
-                            description="适用火山引擎视频画质增强 (MediaKit 级联)，按标准/极速版、目标分辨率及是否有输入视频查表计费。"
+                            title="火山级联封装价格表"
+                            description="适用火山引擎视频封装 (MediaKit 级联)，按极速版/标准版/专业版/大模型版、目标分辨率及是否有输入视频查表计费。"
                           >
                             <div style={{ padding: '12px', background: _isLight ? 'rgba(0,0,0,0.02)' : 'rgba(255,255,255,0.02)', borderRadius: 8 }}>
                               <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 12 }}>精确价格表 (单价/秒)</Text>
@@ -3302,15 +3460,19 @@ const BillingRules: React.FC = () => {
                   ['extended_config', 'enable_time_multipliers'],
                   ['extended_config', 'invert_remainder_multiplier'],
                   ['extended_config', 'time_multipliers'],
+                  ['extended_config', 'time_input_tz'],
                 ]}
               >
                 {({ getFieldValue }) => {
                   const enabled = getFieldValue(['extended_config', 'enable_time_multipliers']);
                   const previewItems = getFieldValue(['extended_config', 'time_multipliers']) || [];
-                  const remainderRaw = Number(getFieldValue(['extended_config', 'invert_remainder_multiplier']));
+                  const remainderField = getFieldValue(['extended_config', 'invert_remainder_multiplier']);
+                  const remainderRaw = remainderField == null || remainderField === '' ? NaN : Number(remainderField);
                   const remainder = Number.isFinite(remainderRaw) && remainderRaw >= 0
                     ? remainderRaw
                     : 1;
+                  const timeInputTz = (getFieldValue(['extended_config', 'time_input_tz']) || 'operation') as ScheduleTzMode;
+                  const clockTz = scheduleInputTzName(timeInputTz, operationTz, adminTz);
                   return (
                     <RuleContainer
                       isLight={_isLight}
@@ -3318,7 +3480,8 @@ const BillingRules: React.FC = () => {
                       extra={
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                           <RealTimeClock
-                            defaultTz={settings?.site?.default_timezone || 'Asia/Shanghai'}
+                            defaultTz={clockTz}
+                            label={timeInputTz === 'admin_display' ? '后台时间' : '运营时间'}
                             enabled={enabled}
                             items={previewItems}
                             remainder={remainder}
@@ -3328,10 +3491,28 @@ const BillingRules: React.FC = () => {
                           </Form.Item>
                         </div>
                       }
-                      description="上方填的是默认价格（倍率 1.00）。开启后按星期规划各时段倍率，该倍率即模型当前价（优先级最高）。实际结算 = 默认价 × 当时时段倍率 × 用户等级/模型折扣 × 渠道倍率。时段之间只取一档、不叠加。没写到的时段用「未规划」倍率。按站点时区、请求开始锁定。"
+                      description="按所选时钟填时段，保存后按运营时区计费。只取一档，未命中用「未规划」。"
                     >
                       {enabled && (
                         <>
+                          <Form.Item name={['extended_config', 'time_input_tz']} initialValue="operation" style={{ marginBottom: 12 }}>
+                            <Radio.Group
+                              buttonStyle="solid"
+                              size="small"
+                              onChange={(e) => {
+                                const next = e.target.value as ScheduleTzMode;
+                                const fromTz = scheduleInputTzName(timeInputTz, operationTz, adminTz);
+                                const toTz = scheduleInputTzName(next, operationTz, adminTz);
+                                form.setFieldValue(
+                                  ['extended_config', 'time_multipliers'],
+                                  convertScheduleSlots(previewItems, fromTz, toTz),
+                                );
+                              }}
+                            >
+                              <Radio.Button value="operation">运营时区</Radio.Button>
+                              <Radio.Button value="admin_display">后台时区</Radio.Button>
+                            </Radio.Group>
+                          </Form.Item>
                           <div style={{
                             display: 'flex',
                             alignItems: 'flex-start',
@@ -3342,8 +3523,8 @@ const BillingRules: React.FC = () => {
                           }}>
                             <div style={{ flex: 1, minWidth: 240 }}>
                               <Text style={{ fontSize: 13, fontWeight: 500 }}>未规划时段倍率</Text>
-                              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4, lineHeight: 1.5 }}>
-                                当天写过时段、但没落到任何一条时用此倍率。1.00 = 用上方默认价。例：09:00–12:00 填 1.00、未规划填 0.50 → 这三小时默认价，其余 5 折。
+                              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                                当天有规划但没命中时用。1.00 = 默认价，0 = 免费。
                               </Text>
                             </div>
                             <Form.Item
@@ -3351,31 +3532,11 @@ const BillingRules: React.FC = () => {
                               style={{ margin: 0 }}
                               rules={[{ required: true, message: '未规划倍率' }]}
                             >
-                              <InputNumber
-                                min={0}
-                                precision={2}
-                                step={0.1}
+                              <MultiplierInput
                                 style={{ width: 148 }}
                                 addonBefore="未规划"
-                                addonAfter="倍"
                               />
                             </Form.Item>
-                          </div>
-                          <div style={{
-                            marginBottom: 16,
-                            padding: '10px 12px',
-                            borderRadius: 8,
-                            background: _isLight ? 'rgba(22,119,255,0.04)' : 'rgba(22,119,255,0.08)',
-                            fontSize: 12,
-                            lineHeight: 1.7,
-                            color: 'var(--text-secondary, #595959)',
-                          }}>
-                            <div style={{ fontWeight: 500, marginBottom: 2 }}>时段倍率（模型当前价，只取一档）</div>
-                            <div>1. 命中具体时段 → 用该时段填写倍率（例：09:00–12:00 的 1.00）</div>
-                            <div>2. 当天有全天规则 → 用全天倍率（例：周日全天 0.70）</div>
-                            <div>3. 当天已规划过时段、但此刻没命中 → 用「未规划」倍率</div>
-                            <div>4. 否则 1.00（上方默认价）。跨天时段在次日凌晨仍算第 1 档。</div>
-                            <div>结算再乘用户等级 / 模型折扣 / 渠道倍率；折扣限价不管控时段本身。</div>
                           </div>
                           <Form.List name={['extended_config', 'time_multipliers']} initialValue={[]}>
                             {(fields, { add, remove }) => (
@@ -3439,6 +3600,7 @@ const BillingRules: React.FC = () => {
                                               format="HH:mm"
                                               style={{ width: '100%' }}
                                               allowClear={false}
+                                              needConfirm={false}
                                             />
                                           </Form.Item>
                                         </Col>
@@ -3457,6 +3619,7 @@ const BillingRules: React.FC = () => {
                                               format="HH:mm"
                                               style={{ width: '100%' }}
                                               allowClear={false}
+                                              needConfirm={false}
                                             />
                                           </Form.Item>
                                         </Col>
@@ -3468,13 +3631,9 @@ const BillingRules: React.FC = () => {
                                             style={{ marginBottom: 8 }}
                                             initialValue={1.0}
                                           >
-                                            <InputNumber
+                                            <MultiplierInput
                                               placeholder="倍率"
-                                              min={0}
-                                              precision={2}
-                                              step={0.1}
                                               style={{ width: '100%' }}
-                                              addonAfter="倍"
                                             />
                                           </Form.Item>
                                         </Col>
@@ -3490,13 +3649,9 @@ const BillingRules: React.FC = () => {
                                               style={{ marginBottom: 8 }}
                                               initialValue={0.6}
                                             >
-                                              <InputNumber
+                                              <MultiplierInput
                                                 placeholder="全天倍率"
-                                                min={0}
-                                                precision={2}
-                                                step={0.1}
                                                 style={{ width: '100%' }}
-                                                addonAfter="倍"
                                               />
                                             </Form.Item>
                                           </Col>
@@ -3518,8 +3673,8 @@ const BillingRules: React.FC = () => {
                                       </div>
                                       <Text type="secondary" style={{ fontSize: 12 }}>
                                         {allDay
-                                          ? `${daysLabel}全天 ${selectedRate.toFixed(2)} 倍；同日更细时段会覆盖，不相乘`
-                                          : `${daysLabel}：所选 ${selectedRate.toFixed(2)} 倍${sharesAllDay ? '（覆盖全天）' : `，未规划 ${restRate.toFixed(2)} 倍`}`}
+                                          ? `${daysLabel}全天 ${multiplierPhrase(selectedRate)}；同日更细时段会覆盖，不相乘`
+                                          : `${daysLabel}：所选 ${multiplierPhrase(selectedRate)}${sharesAllDay ? '（覆盖全天）' : `，未规划 ${multiplierPhrase(restRate)}`}`}
                                       </Text>
                                     </div>
                                   );

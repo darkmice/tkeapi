@@ -100,8 +100,10 @@ proxy::pre_deduct_or_intercept(..., category).await
 ## 四、HA（`ha.rs`）
 
 ```rust
-let mut ha = HaAttempt::begin(&state, token.high_availability).await;
+let req_start = std::time::Instant::now();
+let mut ha = HaAttempt::begin(&state, token.high_availability, req_start).await;
 while ha.cont() {
+    let attempt_start = std::time::Instant::now();
     // select → ha.on_select_err / access → ha.on_access_err
     // spawn 内：HaAttempt::park(&buf, FailBill::transport|http|biz(...), headers)
     let ctx = HaBillCtx::new(&state, &token, model, &ep).category("聊天").db(db_model.as_ref());
@@ -156,7 +158,7 @@ POST 冻结（`billing_detail` 含「冻结」）→ GET 成功结算 / 失败�
 - Usage：`usage_extractor::parse_usage`（OpenAI / Gemini / 火山 / SSE）
 - 转发：`forward.rs`（`ResolvedForward`、`target_type`、白名单透传）
 - 素材：`asset_convert.rs`（仅 `asset_convert==true`；失败不阻塞主请求）
-- 异步任务：`poll_task_result` → `PollOutcome`（`Succeeded` / `Failed{timed_out}`）+ `PollTaskOpts`（查询前 5→1s，可重试达 `POLL_FAIL_LIMIT=15`，不可重试立即失败并保留上游文案）；级联裁剪/抽帧经插件 `crop_volc_cascade_video` / `extract_volc_last_frame`（腾讯为 `crop_tencent_cascade_video` / `extract_tencent_last_frame`）；增强状态仍由 GET/TaskPoller；后台周期见 `RelaySettings.poll_tick_secs`（缓存）
+- 异步任务：`poll_task_result` → `PollOutcome`（`Succeeded` / `Failed{timed_out}`）+ `PollTaskOpts`（查询前 5→1s，可重试达 `POLL_FAIL_LIMIT=40`，不可重试立即失败并保留上游文案）；级联裁剪/抽帧经插件 `crop_volc_cascade_video` / `extract_volc_last_frame`（腾讯为 `crop_tencent_cascade_video` / `extract_tencent_last_frame`）；增强状态仍由 GET/TaskPoller；后台周期见 `RelaySettings.poll_tick_secs`（缓存）
 - 级联增强：S2 成功走 `cascade_on_s2_succeeded`（usage×res_mul + 按需抽帧写 stage2）；对外/用户端经 `cascade_s1_with_s2_url` 叠尾帧；落库 stage1 保持原尾帧
 - 级联出片不变量：S2 完成前禁止展示 S1 成片（剥 content/data/video_url 等）；失败勿回退空 URL；logs 短路先 status 再级联；处理中无 `{id,status}` 空壳兜底
 - 结算：`cascade_stage2_submit` 立刻返回、失败只落库；退费由下次 `prepare_poll` / task `settle_failure` 结案

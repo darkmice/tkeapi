@@ -69,6 +69,9 @@ pub async fn create_rule(
         .unwrap_or_else(|_| "[]".to_string());
     let extended_config_str = serde_json::to_string(&req.extended_config.unwrap_or_default())
         .unwrap_or_else(|_| "{}".to_string());
+    if let Err(msg) = crate::models::validate_time_multiplier_config(&extended_config_str) {
+        return Err(crate::error::AppError::BadRequest(msg));
+    }
 
     let exists: Option<i64> = sqlx::query_scalar(
         &state
@@ -320,6 +323,9 @@ pub async fn update_rule(
     }
     if let Some(val) = &req.extended_config {
         let str_val = serde_json::to_string(val).unwrap_or_else(|_| "{}".to_string());
+        if let Err(msg) = crate::models::validate_time_multiplier_config(&str_val) {
+            return Err(crate::error::AppError::BadRequest(msg));
+        }
         sqlx::query(
             &state
                 .db
@@ -349,7 +355,7 @@ pub async fn update_rule(
                     "计费规则 PID 必须是 5 位数字字符串".to_string(),
                 ));
             }
-            let is_system: i32 = sqlx::query_scalar(
+            let is_system: i64 = sqlx::query_scalar(
                 &state
                     .db
                     .format_query("SELECT is_system FROM billing_rules WHERE id = ?"),
@@ -717,19 +723,21 @@ fn get_default_by_name(name: &str) -> Option<BillingRuleDefault> {
             pricing_tiers: "[]",
             extended_config: "{}",
         }),
-        "火山 MediaKit 图像画质增强" | "火山 MediaKit 图像背景移除" => Some(BillingRuleDefault {
-            billing_type: "requests",
-            prompt_rate: 0.0,
-            completion_rate: 0.0,
-            cached_rate: 0.0,
-            claude_cache_creation_rate: 0.0,
-            claude_cache_read_rate: 0.0,
-            fixed_rate: 0.006,
-            duration_rate: 0.0,
-            billing_rule: "standard",
-            pricing_tiers: "[]",
-            extended_config: "{}",
-        }),
+        "火山 MediaKit 图像画质增强" | "火山 MediaKit 图像背景移除" => {
+            Some(BillingRuleDefault {
+                billing_type: "requests",
+                prompt_rate: 0.0,
+                completion_rate: 0.0,
+                cached_rate: 0.0,
+                claude_cache_creation_rate: 0.0,
+                claude_cache_read_rate: 0.0,
+                fixed_rate: 0.006,
+                duration_rate: 0.0,
+                billing_rule: "standard",
+                pricing_tiers: "[]",
+                extended_config: "{}",
+            })
+        }
         "火山 MediaKit 视频字幕擦除 (精细版)" => Some(BillingRuleDefault {
             billing_type: "duration",
             prompt_rate: 0.0,
@@ -743,7 +751,7 @@ fn get_default_by_name(name: &str) -> Option<BillingRuleDefault> {
             pricing_tiers: "[]",
             extended_config: "{}",
         }),
-        "火山级联画质增强默认计费" => Some(BillingRuleDefault {
+        "火山级联封装默认计费" => Some(BillingRuleDefault {
             billing_type: "duration",
             prompt_rate: 0.0,
             completion_rate: 0.0,
@@ -805,7 +813,7 @@ pub async fn restore_default_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
 ) -> AppResult<Json<BillingRule>> {
-    let current: Option<(String, i32)> = sqlx::query_as(
+    let current: Option<(String, i64)> = sqlx::query_as(
         &state
             .db
             .format_query("SELECT name, is_system FROM billing_rules WHERE id = ?"),
@@ -883,34 +891,41 @@ pub async fn restore_default_rule(
     Ok(Json(rule))
 }
 
-/// 当开启火山引擎 AI MediaKit 插件时，系统自动注入火山级联画质增强默认计费 (PID 78242) 及相关预设规则
+/// 当开启火山引擎 AI MediaKit 插件时，系统自动注入火山级联封装默认计费 (PID 78242) 及相关预设规则
 pub async fn ensure_volcengine_enhance_system_rules(state: &AppState) -> AppResult<()> {
     let pool = &state.db.pool;
+    let _ = crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await;
 
-    let volc_provider_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM model_providers WHERE name = '火山引擎' LIMIT 1"
-    ).fetch_optional(pool).await.unwrap_or(None);
+    let volc_provider_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM model_providers WHERE name = '火山引擎' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
     let _volc_api_provider_id: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM model_api_providers WHERE name ILIKE '%火山%' OR name ILIKE '%volcengine%' LIMIT 1"
     ).fetch_optional(pool).await.unwrap_or(None);
 
-    let enhance_type_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM model_types WHERE name IN ('画质增强', '视频增强', '图像增强') ORDER BY CASE name WHEN '画质增强' THEN 0 ELSE 1 END LIMIT 1"
-    ).fetch_optional(pool).await.unwrap_or(None);
+    let enhance_type_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '封装' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
-    let video_type_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM model_types WHERE name = '视频' LIMIT 1"
-    ).fetch_optional(pool).await.unwrap_or(None);
+    let video_type_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM model_types WHERE name = '视频' LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
 
-    // 1. 注入/保障「火山级联画质增强默认计费」(PID 78242)
+    // 1. 注入/保障「火山级联封装默认计费」(PID 78242)
     let cascade_exists: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM billing_rules WHERE name = '火山级联画质增强默认计费' OR pid = '78242' LIMIT 1"
+        "SELECT id FROM billing_rules WHERE name = '火山级联封装默认计费' OR pid = '78242' LIMIT 1"
     ).fetch_optional(pool).await.unwrap_or(None);
 
     if let Some(id) = cascade_exists {
         let _ = sqlx::query(
-            "UPDATE billing_rules SET pid = '78242', is_system = 1, provider_id = COALESCE(provider_id, $1), type_id = COALESCE(type_id, $2) WHERE id = $3"
+            "UPDATE billing_rules SET name = '火山级联封装默认计费', pid = '78242', is_system = 1, provider_id = COALESCE(provider_id, $1), type_id = COALESCE(type_id, $2) WHERE id = $3"
         )
         .bind(volc_provider_id)
         .bind(video_type_id)
@@ -922,7 +937,7 @@ pub async fn ensure_volcengine_enhance_system_rules(state: &AppState) -> AppResu
                 name, billing_type, prompt_rate, completion_rate, fixed_rate, duration_rate,
                 billing_rule, extended_config, is_system, pid, pricing_type, provider_id, type_id
             ) VALUES (
-                '火山级联画质增强默认计费', 'duration', 0.0, 0.0, 0.0, 0.0,
+                '火山级联封装默认计费', 'duration', 0.0, 0.0, 0.0, 0.0,
                 'volc_enhance_cascade',
                 '{"price_table": {"fast|720p|no": 0.80, "fast|1080p|no": 1.80, "fast|2k|no": 3.20, "fast|4k|no": 7.20, "standard|720p|no": 1.00, "standard|1080p|no": 2.24, "standard|2k|no": 4.00, "standard|4k|no": 8.94, "pro|720p|no": 1.20, "pro|1080p|no": 2.70, "pro|2k|no": 4.80, "pro|4k|no": 10.70, "ai|720p|no": 1.40, "ai|1080p|no": 3.16, "fast|720p|yes": 0.84, "fast|1080p|yes": 1.88, "fast|2k|yes": 3.40, "fast|4k|yes": 7.40, "standard|720p|yes": 1.06, "standard|1080p|yes": 2.36, "standard|2k|yes": 4.30, "standard|4k|yes": 9.24, "pro|720p|yes": 1.28, "pro|1080p|yes": 2.86, "pro|2k|yes": 5.20, "pro|4k|yes": 11.10, "ai|720p|yes": 1.60, "ai|1080p|yes": 3.51}}',
                 1, '78242', 'official', $1, $2
@@ -935,13 +950,48 @@ pub async fn ensure_volcengine_enhance_system_rules(state: &AppState) -> AppResu
 
     // 2. 保障 MediaKit 视频画质增强及字幕擦除细分计费规则
     let mediakit_rules = [
-        ("火山 MediaKit 官方视频超分计费", 0.20f64, "video_quality", r#"[{"resolution":"720p","fps_range":"<=30","rate":0.10,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.15,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.20,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.30,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.50,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.80,"enabled":true}]"#),
-        ("火山 MediaKit 视频画质增强 (标准版)", 0.0125, "video_quality", r#"[{"resolution":"720p","fps_range":"<=30","rate":0.0125,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.025,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.025,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.05,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.05,"enabled":true},{"resolution":"2k","fps_range":">30","rate":0.10,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.10,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.20,"enabled":true}]"#),
-        ("火山 MediaKit 视频画质增强 (专业版)", 0.125, "video_quality", r#"[{"resolution":"720p","fps_range":"<=30","rate":0.125,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.25,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.25,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.50,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.50,"enabled":true},{"resolution":"2k","fps_range":">30","rate":1.00,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":1.00,"enabled":true},{"resolution":"4k","fps_range":">30","rate":2.00,"enabled":true}]"#),
-        ("火山 MediaKit 视频画质增强 (极速版)", 0.00333333, "video_quality", r#"[{"resolution":"720p","fps_range":"<=30","rate":0.00333333,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.00666667,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.00666667,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.01333333,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.01333333,"enabled":true},{"resolution":"2k","fps_range":">30","rate":0.02666667,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.02666667,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.05333333,"enabled":true}]"#),
-        ("火山 MediaKit 视频画质增强 (大模型版)", 0.04166667, "video_quality", r#"[{"resolution":"720p","fps_range":"<=30","rate":0.04166667,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.08333333,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.08333333,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.16666667,"enabled":true}]"#),
-        ("火山 MediaKit 视频字幕擦除 (标准版)", 0.00666667, "standard", "[]"),
-        ("火山 MediaKit 视频字幕擦除 (精细版)", 0.01666667, "standard", "[]"),
+        (
+            "火山 MediaKit 官方视频超分计费",
+            0.20f64,
+            "video_quality",
+            r#"[{"resolution":"720p","fps_range":"<=30","rate":0.10,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.15,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.20,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.30,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.50,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.80,"enabled":true}]"#,
+        ),
+        (
+            "火山 MediaKit 视频画质增强 (标准版)",
+            0.0125,
+            "video_quality",
+            r#"[{"resolution":"720p","fps_range":"<=30","rate":0.0125,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.025,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.025,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.05,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.05,"enabled":true},{"resolution":"2k","fps_range":">30","rate":0.10,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.10,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.20,"enabled":true}]"#,
+        ),
+        (
+            "火山 MediaKit 视频画质增强 (专业版)",
+            0.125,
+            "video_quality",
+            r#"[{"resolution":"720p","fps_range":"<=30","rate":0.125,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.25,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.25,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.50,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.50,"enabled":true},{"resolution":"2k","fps_range":">30","rate":1.00,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":1.00,"enabled":true},{"resolution":"4k","fps_range":">30","rate":2.00,"enabled":true}]"#,
+        ),
+        (
+            "火山 MediaKit 视频画质增强 (极速版)",
+            0.00333333,
+            "video_quality",
+            r#"[{"resolution":"720p","fps_range":"<=30","rate":0.00333333,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.00666667,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.00666667,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.01333333,"enabled":true},{"resolution":"2k","fps_range":"<=30","rate":0.01333333,"enabled":true},{"resolution":"2k","fps_range":">30","rate":0.02666667,"enabled":true},{"resolution":"4k","fps_range":"<=30","rate":0.02666667,"enabled":true},{"resolution":"4k","fps_range":">30","rate":0.05333333,"enabled":true}]"#,
+        ),
+        (
+            "火山 MediaKit 视频画质增强 (大模型版)",
+            0.04166667,
+            "video_quality",
+            r#"[{"resolution":"720p","fps_range":"<=30","rate":0.04166667,"enabled":true},{"resolution":"720p","fps_range":">30","rate":0.08333333,"enabled":true},{"resolution":"1080p","fps_range":"<=30","rate":0.08333333,"enabled":true},{"resolution":"1080p","fps_range":">30","rate":0.16666667,"enabled":true}]"#,
+        ),
+        (
+            "火山 MediaKit 视频字幕擦除 (标准版)",
+            0.00666667,
+            "standard",
+            "[]",
+        ),
+        (
+            "火山 MediaKit 视频字幕擦除 (精细版)",
+            0.01666667,
+            "standard",
+            "[]",
+        ),
     ];
 
     for (name, dur_rate, brule, ptiers) in mediakit_rules {
@@ -959,41 +1009,20 @@ pub async fn ensure_volcengine_enhance_system_rules(state: &AppState) -> AppResu
         .execute(pool).await;
     }
 
-    // 3. 保障 MediaKit 转发规则
+    // 3. 保障级联视频与 Vidu 转发规则（MediaKit 转发规则统一由 volc_mediakit_image::seed 维护）
     let preset_forward_rules = [
         (
             "火山方舟 级联视频生成",
             "volcengine",
-            "供视频生成级联画质增强调用的火山方舟专属转发规则",
-            r#"{"target_type":"volcengine","is_cascade":true,"res_mul":{"480p":1.5,"720p":2.15,"1080p":2.25,"2k":2.5,"4k":4.0},"path_rewrite":{"old":"/v1/video/generations","new":"/api/v3/contents/generations/tasks"},"auth_type":"bearer"}"#,
+            "供视频生成级联封装调用的火山方舟专属转发规则",
+            r#"{"target_type":"volcengine","is_cascade":true,"fast_response":true,"res_mul":{"480p":1.5,"720p":2.15,"1080p":2.25,"2k":2.5,"4k":4.0},"path_rewrite":{"old":"/v1/video/generations","new":"/api/v3/contents/generations/tasks"},"auth_type":"bearer"}"#,
             "视频"
         ),
         (
-            "火山 MediaKit 视频画质增强 (标准/专业版)",
-            "volcengine",
-            "火山画质增强标准版与专业版通用转发规则，自动进行路径和请求体参数转换，支持异步任务轮询。",
-            r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
-            "视频"
-        ),
-        (
-            "火山 MediaKit 视频画质增强 (极速版)",
-            "volcengine",
-            "火山画质增强极速版专用转发规则，自动转发至 enhance-video-fast，支持异步任务轮询。",
-            r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video-fast"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
-            "视频"
-        ),
-        (
-            "火山 MediaKit 视频画质增强 (大模型版)",
-            "volcengine",
-            "火山画质增强大模型版专用转发规则，自动转发至 enhance-video-generative，支持异步任务轮询。",
-            r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/enhance-video-generative"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
-            "视频"
-        ),
-        (
-            "火山 MediaKit 视频字幕擦除",
-            "volcengine",
-            "火山视频字幕擦除（标准/精细版）通用转发规则，自动转发至 erase-video-subtitle，支持异步任务轮询。",
-            r#"{"target_type":"volcengine_media_enhance","path_rewrite":{"old":"/v1/video/generations","new":"/api/v1/tools/erase-video-subtitle"},"poll_path":"/api/v1/tasks/${task_id}","auth_type":"bearer"}"#,
+            "Vidu 官方旗舰视频生成",
+            "vidu",
+            "供 Vidu 官方 Q 系列视频模型（viduq4-preview / viduq3-pro 等）调用的专属转发规则，支持 OpenAI 与 Vidu 官方 2 种方式调用，支持文生视频、首帧图生视频、首尾帧生视频与多主体参考生视频自适应选路，支持音视频直出与异步任务轮询。",
+            r#"{"target_type":"vidu","path_rewrite":{"old":"/v1/video/generations","new":"/ent/v2/img2video"},"auth_type":"token","poll_path":"/ent/v2/tasks/${task_id}/creations"}"#,
             "视频"
         )
     ];
@@ -1012,8 +1041,12 @@ pub async fn ensure_volcengine_enhance_system_rules(state: &AppState) -> AppResu
         .execute(pool).await;
     }
 
-    let _ = crate::db::migrations::helpers::volc_mediakit_image::seed(pool).await;
-    let _ = crate::db::migrations::helpers::volc_mediakit_image::backfill_preset_billing_pids(pool).await;
+    let _ = crate::db::migrations::helpers::volc_mediakit_image::ensure_enhance_library_catalog(
+        pool,
+    )
+    .await;
+    let _ = crate::db::migrations::helpers::volc_mediakit_image::backfill_preset_billing_pids(pool)
+        .await;
 
     Ok(())
 }

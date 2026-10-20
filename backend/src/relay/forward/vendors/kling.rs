@@ -15,31 +15,6 @@ use super::super::media;
 // - 直通模式：body 已含 model_name → 原样透传，仅补充默认值
 // 参考文档：https://klingai.com/document-api/apiReference
 
-/// 可灵视频接口透传参数白名单
-const KLING_VIDEO_PASSTHROUGH_KEYS: &[&str] = &[
-    "model_name",
-    "prompt",
-    "negative_prompt",
-    "duration",
-    "mode",
-    "sound",
-    "aspect_ratio",
-    "image",
-    "image_tail",
-    "image_list",
-    "video_list",
-    "type",
-    "multi_shot",
-    "multi_prompt",
-    "callback_url",
-    "external_task_id",
-    "cfg_scale",
-    "camera_control",
-    "shot_type",
-    "element_list",
-    "voice_list",
-];
-
 /// 可灵图片接口透传参数白名单
 const KLING_IMAGE_PASSTHROUGH_KEYS: &[&str] = &[
     "model_name",
@@ -61,26 +36,13 @@ const KLING_IMAGE_PASSTHROUGH_KEYS: &[&str] = &[
     "watermark_info",
 ];
 
-fn is_kling_first_frame(role: &str) -> bool {
-    role == "first_frame" || role == "first"
-}
-
-fn is_kling_end_frame(role: &str) -> bool {
-    role == "last_frame" || role == "end_frame" || role == "last" || role == "tail"
-}
-
 pub(crate) fn build_kling_body(
     model: &str,
     body: &serde_json::Value,
-    category: &str,
+    _category: &str,
     upstream_path: &str,
 ) -> serde_json::Value {
-    let is_omni = upstream_path.contains("omni-video") || upstream_path.contains("omni-image");
-    let keys = if category == "图片" {
-        &KLING_IMAGE_PASSTHROUGH_KEYS[..]
-    } else {
-        &KLING_VIDEO_PASSTHROUGH_KEYS[..]
-    };
+    let is_omni = upstream_path.contains("omni-image");
 
     let mut result = serde_json::Map::new();
 
@@ -92,24 +54,12 @@ pub(crate) fn build_kling_body(
     }
 
     // 白名单驱动透传（跳过 model_name，已处理）
-    for &key in keys {
+    for &key in KLING_IMAGE_PASSTHROUGH_KEYS {
         if key == "model_name" {
             continue;
         }
         if let Some(val) = body.get(key) {
             result.insert(key.to_string(), val.clone());
-        }
-    }
-
-    // 视频声音优先级：generate_audio（布尔）> sound（字符串）
-    // generate_audio 是 OpenAI 兼容扩展参数，可灵官方使用 sound 字段
-    if category == "视频" {
-        if let Some(ga) = body.get("generate_audio") {
-            let enabled = media::json_truthy(ga);
-            result.insert(
-                "sound".to_string(),
-                serde_json::json!(if enabled { "on" } else { "off" }),
-            );
         }
     }
 
@@ -120,177 +70,8 @@ pub(crate) fn build_kling_body(
         }
     }
 
-    // 视频 mode 默认从 resolution 映射（OpenAI 兼容：720p/480p->std，1080p->pro，4k->4k），未提供时兜底 std
-    if category != "图片" && !result.contains_key("mode") {
-        let mode_val = if let Some(res_str) = body.get("resolution").and_then(|v| v.as_str()) {
-            let res_lower = res_str.to_ascii_lowercase();
-            if res_lower == "1080p" {
-                "pro"
-            } else if res_lower == "4k" {
-                "4k"
-            } else {
-                "std" // "720p", "480p" 映射为 std
-            }
-        } else {
-            "std"
-        };
-        result.insert("mode".to_string(), serde_json::json!(mode_val));
-    }
-
-    // 视频：OpenAI 兼容 images / image_urls 数组 → 可灵官方 image / image_tail / image_list
-    // 仅在未使用官方参数时生效，避免覆盖原生调用
-    // omni-video：多图统一走 image_list[].image_url
-    // 非 omni：含 role=reference_image → image_list[].image（多图参考），否则按数量分发首尾帧
-    if category != "图片"
-        && !result.contains_key("image")
-        && !result.contains_key("image_tail")
-        && !result.contains_key("image_list")
-    {
-        let images = media::collect_media_values(body, &["images", "image_urls"]);
-        if !images.is_empty() {
-            // 统一解析媒体数据并过滤空值，兼容 role 和 type
-            let parsed_items: Vec<(String, String)> = images
-                .iter()
-                .filter_map(|item| {
-                    let (url_opt, role) = media::parse_media_item(item, "");
-                    url_opt
-                        .filter(|u| !u.is_empty())
-                        .map(|u| (u.to_string(), role.to_string()))
-                })
-                .collect();
-
-            if !parsed_items.is_empty() {
-                if is_omni {
-                    // omni-video：全部走 image_list[].image_url
-                    let is_len_two = parsed_items.len() == 2;
-                    let is_simple_mode =
-                        is_len_two && parsed_items.iter().all(|(_, role)| role.is_empty());
-
-                    let list: Vec<serde_json::Value> = parsed_items
-                        .into_iter()
-                        .enumerate()
-                        .map(|(idx, (url, role))| {
-                            let mut obj = serde_json::Map::new();
-                            obj.insert("image_url".to_string(), serde_json::json!(url));
-                            if is_simple_mode {
-                                if idx == 0 {
-                                    obj.insert(
-                                        "type".to_string(),
-                                        serde_json::json!("first_frame"),
-                                    );
-                                } else {
-                                    obj.insert("type".to_string(), serde_json::json!("end_frame"));
-                                }
-                            } else {
-                                if is_kling_first_frame(&role) {
-                                    obj.insert(
-                                        "type".to_string(),
-                                        serde_json::json!("first_frame"),
-                                    );
-                                } else if is_kling_end_frame(&role) {
-                                    obj.insert("type".to_string(), serde_json::json!("end_frame"));
-                                }
-                            }
-                            serde_json::Value::Object(obj)
-                        })
-                        .collect();
-
-                    result.insert("image_list".to_string(), serde_json::Value::Array(list));
-                } else {
-                    // 非 omni：含 role=reference_image 或图片数大于 2 → 全部走 image_list[].image（多图参考）
-                    // 否则 → 按数量分配到 image / image_tail 首尾帧
-                    let has_ref_role = parsed_items
-                        .iter()
-                        .any(|(_, role)| role == "reference_image");
-
-                    if has_ref_role || parsed_items.len() > 2 {
-                        let list: Vec<serde_json::Value> = parsed_items
-                            .iter()
-                            .map(|(u, _)| serde_json::json!({ "image": u }))
-                            .collect();
-                        result.insert("image_list".to_string(), serde_json::Value::Array(list));
-                    } else {
-                        let mut first_img: Option<String> = None;
-                        let mut tail_img: Option<String> = None;
-
-                        // 1. 根据显式指定的 role / type 进行归类
-                        for (url, role) in &parsed_items {
-                            if is_kling_first_frame(role) {
-                                first_img = Some(url.clone());
-                            } else if is_kling_end_frame(role) {
-                                tail_img = Some(url.clone());
-                            }
-                        }
-
-                        // 2. 兜底填充（若未指定，首张为首帧，第二张为尾帧）
-                        if first_img.is_none() && tail_img.is_none() {
-                            first_img = Some(parsed_items[0].0.clone());
-                            if parsed_items.len() >= 2 {
-                                tail_img = Some(parsed_items[1].0.clone());
-                            }
-                        } else {
-                            // 填充空缺位置
-                            for (url, role) in &parsed_items {
-                                if !is_kling_first_frame(role) && !is_kling_end_frame(role) {
-                                    if first_img.is_none() {
-                                        first_img = Some(url.clone());
-                                    } else if tail_img.is_none() {
-                                        tail_img = Some(url.clone());
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some(fi) = first_img {
-                            result.insert("image".to_string(), serde_json::json!(fi));
-                        }
-                        if let Some(ti) = tail_img {
-                            result.insert("image_tail".to_string(), serde_json::json!(ti));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 视频：OpenAI 兼容 videos 数组 → 可灵官方 video_list
-    // 仅在未使用官方参数时生效，避免覆盖原生调用
-    if category != "图片" && !result.contains_key("video_list") && is_omni {
-        let videos = media::collect_media_values(body, &["videos"]);
-        if !videos.is_empty() {
-            let parsed_items: Vec<(String, String)> = videos
-                .iter()
-                .filter_map(|item| {
-                    let (url_opt, role) = media::parse_media_item(item, "");
-                    url_opt
-                        .filter(|u| !u.is_empty())
-                        .map(|u| (u.to_string(), role.to_string()))
-                })
-                .collect();
-
-            if !parsed_items.is_empty() {
-                // omni-video：使用 video_list 且结构包含 video_url
-                let list: Vec<serde_json::Value> = parsed_items
-                    .into_iter()
-                    .map(|(url, role)| {
-                        let mut obj = serde_json::Map::new();
-                        obj.insert("video_url".to_string(), serde_json::json!(url));
-                        if !role.is_empty() {
-                            obj.insert("refer_type".to_string(), serde_json::json!(role));
-                        } else {
-                            obj.insert("refer_type".to_string(), serde_json::json!("base"));
-                        }
-                        serde_json::Value::Object(obj)
-                    })
-                    .collect();
-
-                result.insert("video_list".to_string(), serde_json::Value::Array(list));
-            }
-        }
-    }
-
     // 图片 resolution：优先可灵官方 resolution → OpenAI size → 兜底 1k
-    if category == "图片" && !result.contains_key("resolution") {
+    if !result.contains_key("resolution") {
         let fallback = body.get("size").and_then(|v| v.as_str()).unwrap_or("1k");
         result.insert("resolution".to_string(), serde_json::json!(fallback));
     }
@@ -298,24 +79,18 @@ pub(crate) fn build_kling_body(
     // OpenAI 兼容：media::collect_image_urls 统一收集 image/image_urls
     // omni-image：多图 → image_list[].image
     // 非 omni：单图 → image，多图 → subject_image_list[].subject_image
-    if category == "图片"
-        && !result.contains_key("subject_image_list")
-        && !result.contains_key("image_list")
-    {
+    if !result.contains_key("subject_image_list") && !result.contains_key("image_list") {
         let urls = media::collect_image_urls(body, &["image", "image_urls"]);
         result.remove("image");
         result.remove("image_urls");
         if is_omni {
             // omni-image：全部走 image_list[].image
-            match urls.len() {
-                0 => {}
-                _ => {
-                    let list: Vec<serde_json::Value> = urls
-                        .iter()
-                        .map(|u| serde_json::json!({ "image": u }))
-                        .collect();
-                    result.insert("image_list".to_string(), serde_json::json!(list));
-                }
+            if !urls.is_empty() {
+                let list: Vec<serde_json::Value> = urls
+                    .iter()
+                    .map(|u| serde_json::json!({ "image": u }))
+                    .collect();
+                result.insert("image_list".to_string(), serde_json::json!(list));
             }
         } else {
             // 非 omni：单图 → image，多图 → subject_image_list[].subject_image
@@ -429,7 +204,10 @@ fn kling_v3_build_options(body: &serde_json::Value) -> serde_json::Map<String, s
 /// 可灵 3.0：contents / settings / options（模型在 URL）
 /// - 文生：顶层 `prompt`，无 contents
 /// - 图生 / Omni：`contents`（含 prompt 条目 + 媒体；Omni 的 prompt 一律在 contents）
-pub(crate) fn build_kling_v3_body(body: &serde_json::Value, upstream_path: &str) -> serde_json::Value {
+pub(crate) fn build_kling_v3_body(
+    body: &serde_json::Value,
+    upstream_path: &str,
+) -> serde_json::Value {
     let is_omni = upstream_path.contains("omni-video");
 
     // 已含 contents 透传；文生 prompt+settings 也可透传。Omni 禁止仅靠顶层 prompt 透传。

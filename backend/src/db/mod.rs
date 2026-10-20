@@ -133,8 +133,9 @@ impl Database {
                 let uid = format!("{}{:07}", prefix, suffix);
 
                 let count: i64 = sqlx::query_scalar(
-                    &self.format_query("SELECT COUNT(*) FROM users WHERE uid = ?"),
+                    &self.format_query("SELECT COUNT(*) FROM users WHERE uid = ? OR username = ?"),
                 )
+                .bind(&uid)
                 .bind(&uid)
                 .fetch_one(&self.pool)
                 .await?;

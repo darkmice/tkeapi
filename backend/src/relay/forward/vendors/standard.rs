@@ -11,7 +11,10 @@ use super::super::media;
 // 将 OpenAI 风格的参数转换为 DashScope /api/v1/services/aigc/text2image/image-synthesis 格式。
 // 参考文档：https://help.aliyun.com/zh/model-studio/user-guide/wanx-v2-text-to-image-api-reference
 
-pub(crate) fn build_dashscope_image_body(model: &str, body: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn build_dashscope_image_body(
+    model: &str,
+    body: &serde_json::Value,
+) -> serde_json::Value {
     // ── 直通模式 ──
     if body.get("input").is_some() {
         let mut fwd = body.clone();
@@ -147,7 +150,10 @@ const DASHSCOPE_PARAM_KEYS: &[&str] = &[
 ];
 
 /// 构建阿里百炼 DashScope 视频生成请求体
-pub(crate) fn build_dashscope_video_body(model: &str, body: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn build_dashscope_video_body(
+    model: &str,
+    body: &serde_json::Value,
+) -> serde_json::Value {
     // 已有 input：官方 DashScope 体直通，仅替换 model，不改用户参数
     if body.get("input").is_some() {
         let mut fwd = body.clone();
@@ -515,8 +521,10 @@ pub(crate) fn build_content_array(body: &serde_json::Value) -> serde_json::Value
         if !arr_images.is_empty() {
             let defaults = media::infer_image_default_roles(arr_images.len());
             for (i, item) in arr_images.iter().enumerate() {
-                let (url, role) =
-                    media::parse_media_item(item, defaults.get(i).copied().unwrap_or("reference_image"));
+                let (url, role) = media::parse_media_item(
+                    item,
+                    defaults.get(i).copied().unwrap_or("reference_image"),
+                );
                 if let Some(u) = url {
                     let mut entry = serde_json::json!({
                         "type": "image_url",
@@ -569,7 +577,10 @@ pub(crate) fn build_content_array(body: &serde_json::Value) -> serde_json::Value
     media::ensure_image_roles_for_multimodal(content)
 }
 
-pub(crate) fn build_volcengine_content_body(model: &str, body: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn build_volcengine_content_body(
+    model: &str,
+    body: &serde_json::Value,
+) -> serde_json::Value {
     let content = build_content_array(body);
 
     // ── 组装请求体 ──
@@ -813,4 +824,3 @@ pub(crate) fn build_bytefor_video_body(model: &str, body: &serde_json::Value) ->
 
     fwd
 }
-

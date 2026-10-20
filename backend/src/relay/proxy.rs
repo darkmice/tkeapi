@@ -21,11 +21,12 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct UserContext {
+    pub user_id: String,
     pub user_group: String,
     pub level_id: String,
     pub balance: f64,
     pub discount: f64,
-    pub discount_type: i32,
+    pub discount_type: i64,
     /// 用户模型单独折扣(JSON: {"mid": discount})，优先于用户等级折扣
     pub model_discounts: Option<String>,
 }
@@ -34,10 +35,11 @@ impl UserContext {
     /// 仅折扣字段参与计费时的轻量上下文（异步任务结算等）
     pub fn from_discounts(
         discount: f64,
-        discount_type: i32,
+        discount_type: i64,
         model_discounts: Option<String>,
     ) -> Self {
         Self {
+            user_id: String::new(),
             user_group: String::new(),
             level_id: String::new(),
             balance: 0.0,
@@ -50,17 +52,44 @@ impl UserContext {
 
 pub async fn get_user_context(state: &AppState, user_id: &str) -> AppResult<UserContext> {
     // 查询用户信息、等级折扣、折扣模式、模型单独折扣（用于计费时优先匹配用户模型折扣）
-    let (g, l_id, b, gb, cl, d, dt, md): (String, i64, f64, f64, f64, f64, i32, Option<String>) = sqlx::query_as(
-        &state.db.format_query(
-            "SELECT u.user_group, COALESCE(ul.id, 0), u.balance, u.gift_balance, u.credit_limit, COALESCE(ul.discount, 1.0), COALESCE(ul.discount_type, 0), u.model_discounts \
-             FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key \
-             WHERE u.id = ?"
-        )
-    )
+    let (mut g, mut l_id, b, gb, cl, mut d, mut dt, md): (
+        String,
+        i64,
+        f64,
+        f64,
+        f64,
+        f64,
+        i64,
+        Option<String>,
+    ) = sqlx::query_as(&state.db.format_query(
+        "SELECT u.user_group, COALESCE(ul.id, 0), u.balance, u.gift_balance, u.credit_limit, COALESCE(ul.discount, 1.0), COALESCE(ul.discount_type, 0), u.model_discounts \
+         FROM users u LEFT JOIN user_levels ul ON u.user_group = ul.group_key \
+         WHERE u.id = ?",
+    ))
     .bind(user_id)
     .fetch_one(&state.db.pool)
     .await?;
+
+    // 若用户归属等级已被删除或失配（l_id == 0），回退继承系统默认等级的折扣与掩码，防退化为 0 (DISC_ALL)
+    if l_id == 0 {
+        if let Ok(Some((def_id, def_group, def_d, def_dt))) =
+            sqlx::query_as::<_, (i64, String, f64, i64)>(&state.db.format_query(
+                "SELECT id, group_key, discount, discount_type FROM user_levels \
+                 WHERE is_default = 1 OR group_key = 'default' \
+                 ORDER BY is_default DESC, id ASC LIMIT 1",
+            ))
+            .fetch_optional(&state.db.pool)
+            .await
+        {
+            l_id = def_id;
+            g = def_group;
+            d = def_d;
+            dt = def_dt;
+        }
+    }
+
     Ok(UserContext {
+        user_id: user_id.to_string(),
         user_group: g,
         level_id: l_id.to_string(),
         // 可用额 = 系统 + 赠送 + 信控；统一 6 位，避免浮点残渣误判为「有余额」
@@ -71,59 +100,79 @@ pub async fn get_user_context(state: &AppState, user_id: &str) -> AppResult<User
     })
 }
 
-/// 统一折扣策略（仅取 MIN；限价与渠道倍率在 `calculate_relay_cost` 合并后再约束）：
-/// - discount_type = 1 (全站折扣): MIN(用户模型单独折扣, 全站折扣)
-/// - discount_type = 2 (用户等级折扣): MIN(用户模型单独折扣, 用户等级折扣)
-/// - discount_type = 0 (不选择/默认): MIN(用户模型单独折扣, 全站折扣, 用户等级折扣)
+pub const DISC_LEVEL: i64 = 1;      // 1. 用户等级折扣
+pub const DISC_USER_MODEL: i64 = 2; // 2. 用户模型折扣
+pub const DISC_GLOBAL: i64 = 4;     // 3. 模型全站折扣
+pub const DISC_CHANNEL: i64 = 8;    // 4. 上游渠道倍率
+pub const DISC_ALL: i64 = 15;
+pub const DISC_V2_FLAG: i64 = 16;
+
+#[inline]
+pub fn normalize_discount_mask(discount_type: i64) -> i64 {
+    if discount_type >= DISC_V2_FLAG {
+        discount_type & DISC_ALL
+    } else {
+        match discount_type {
+            1 => DISC_USER_MODEL | DISC_GLOBAL,
+            2 => DISC_LEVEL | DISC_USER_MODEL,
+            _ => DISC_ALL,
+        }
+    }
+}
+
+/// 统一折扣策略：对勾选的折扣项（等级/用户模型/全站/渠道倍率）取最低值，再由 `clamp_discount_floor` 保底限价
 pub fn resolve_discount(
     db_model: Option<&crate::models::Model>,
     level_discount: f64,
     user_model_discount: Option<f64>,
-    discount_type: i32,
+    channel_rate: f64,
+    discount_type: i64,
 ) -> (f64, &'static str) {
+    let mask = normalize_discount_mask(discount_type);
+    let global_disc = db_model
+        .filter(|m| m.global_discount_enabled == 1)
+        .map(|m| m.global_discount);
+    let candidates = [
+        (DISC_LEVEL, Some(level_discount), "用户等级折扣"),
+        (DISC_USER_MODEL, user_model_discount, "用户模型折扣"),
+        (DISC_GLOBAL, global_disc, "全站折扣"),
+        (DISC_CHANNEL, Some(channel_rate), "渠道倍率"),
+    ];
+
     let mut min_discount = f64::MAX;
-    let mut source = "用户等级折扣";
-
-    if let Some(umd) = user_model_discount {
-        min_discount = umd;
-        source = "用户模型折扣";
-    }
-
-    // discount_type: 0=全取, 1=仅全站, 2=仅用户等级
-    if discount_type != 1 && level_discount < min_discount {
-        min_discount = level_discount;
-        source = "用户等级折扣";
-    }
-
-    if discount_type != 2 {
-        if let Some(m) = db_model {
-            if m.global_discount_enabled == 1 && m.global_discount < min_discount {
-                min_discount = m.global_discount;
-                source = "全站折扣";
-            }
+    let mut source = "默认倍率";
+    for (bit, val_opt, label) in candidates {
+        if (mask & bit) != 0 {
+        if let Some(val) = val_opt.filter(|&v| {
+            v.is_finite()
+                && v < min_discount
+                && if bit == DISC_GLOBAL { v >= 0.0 } else { v > 0.0 }
+        }) {
+            min_discount = val;
+            source = label;
+        }
         }
     }
 
     if min_discount == f64::MAX {
-        min_discount = level_discount;
-        source = "用户等级折扣";
+        (1.0, "默认倍率")
+    } else {
+        (min_discount, source)
     }
-
-    (min_discount, source)
 }
 
-/// 折扣限价：有效倍率（折扣来源 × 渠道倍率）不得低于模型 `site_discount`
+/// 折扣限价：有效倍率不得低于模型 `site_discount`（未建档模型默认以 1.0 保底防穿透）
 #[inline]
 pub fn clamp_discount_floor(
     effective: f64,
     db_model: Option<&crate::models::Model>,
 ) -> Option<f64> {
-    let m = db_model?;
-    if m.site_discount_enabled == 1 && effective < m.site_discount {
-        Some(m.site_discount)
-    } else {
-        None
-    }
+    let floor = match db_model {
+        Some(m) if m.site_discount_enabled == 1 => m.site_discount,
+        Some(_) => return None,
+        None => 1.0,
+    };
+    (effective < floor - 1e-6).then_some(floor)
 }
 
 /// 从用户 model_discounts JSON 中提取指定模型(mid)的单独折扣
@@ -266,8 +315,8 @@ pub async fn find_active_model_by_mid(state: &AppState, mid: &str) -> Option<cra
 /// 根据 category 推断标准 endpoint 路径（用于错误日志记录）
 pub fn category_endpoint(category: Option<&str>) -> &'static str {
     match category {
-        Some("图片") | Some("图像增强") => "/v1/images/generations",
-        Some("视频") | Some("视频增强") | Some("画质增强") => "/v1/video/generations",
+        Some("图片") => "/v1/images/generations",
+        Some("视频") | Some("封装") => "/v1/video/generations",
         Some("音频") => "/v1/audio/speech",
         Some("向量") => "/v1/embeddings",
         Some("排序") => "/v1/rerank",
@@ -275,17 +324,10 @@ pub fn category_endpoint(category: Option<&str>) -> &'static str {
     }
 }
 
-/// 入口类型与模型真实类型是否互通（视频 ↔ 画质增强，图片 ↔ 画质增强；旧名视频增强/图像增强仍认）
+/// 入口类型与模型真实类型是否互通（视频 ↔ 封装）
 #[inline]
 fn category_compatible(expected: &str, resolved: &str) -> bool {
-    if expected == resolved {
-        return true;
-    }
-    let video_ok = |s: &str| matches!(s, "视频" | "视频增强" | "画质增强");
-    let image_ok = |s: &str| matches!(s, "图片" | "图像增强" | "画质增强");
-    let enhance = |s: &str| matches!(s, "画质增强" | "视频增强" | "图像增强");
-    (enhance(expected) || enhance(resolved))
-        && ((video_ok(expected) && video_ok(resolved)) || (image_ok(expected) && image_ok(resolved)))
+    expected == resolved || matches!((expected, resolved), ("视频", "封装") | ("封装", "视频"))
 }
 
 /// 类型隔离失败文案：真实类型 + 实际入口（action_type 另记入口，见 check_access_with_model）
@@ -307,8 +349,8 @@ pub fn action_type_from_path(endpoint: &str) -> Option<&'static str> {
         .to_ascii_lowercase();
     // 更具体的规则在前
     const RULES: &[(&str, &str)] = &[
-        ("enhance-video", "视频增强"),
-        ("erase-video", "视频增强"),
+        ("enhance-video", "封装"),
+        ("erase-video", "封装"),
         ("enhance-image", "图片"),
         ("remove-image-background", "图片"),
         ("contents/generations", "视频"),
@@ -342,20 +384,20 @@ pub async fn check_model_permission(
     action_type: Option<&str>,
 ) -> AppResult<()> {
     if !token.is_model_allowed(model) {
-        let msg = format!("Model {} not allowed for this token", model);
+        let msg = format!("Model {} does not exist or you do not have access to it", model);
         record_error_log(
             state,
             token,
             None,
             model,
-            403,
+            404,
             endpoint,
             action_type.unwrap_or_default(),
             &msg,
             None,
         )
         .await;
-        return Err(AppError::Forbidden(msg));
+        return Err(AppError::NotFound(msg));
     }
     Ok(())
 }
@@ -395,14 +437,17 @@ pub async fn check_access_with_model(
         find_active_model_exact(state, model, category, Some(channel)).await
     };
 
-    // 获取真实分类
-    let resolved_cat = if let Some(ref m) = db_model {
+    // 获取真实分类（图像工具模型在协议域统一收敛为「图片」）
+    let mut resolved_cat = if let Some(ref m) = db_model {
         m.type_name
             .clone()
             .unwrap_or_else(|| category.unwrap_or("").to_string())
     } else {
         category.unwrap_or("").to_string()
     };
+    if db_model.as_ref().is_some_and(crate::api::plugins::is_plugin_image_tool) && resolved_cat == "封装" {
+        resolved_cat = "图片".to_string();
+    }
 
     let ep = category_endpoint(category);
     let ch_id = Some(channel.id);
@@ -463,18 +508,14 @@ pub async fn check_access_with_model(
     }
 
     // 低余额：按类别限制未完成任务路数（金额门禁已过；不二次扣在途预扣）
-    let inflight_cat = if resolved_cat == "画质增强" {
-        category.unwrap_or("画质增强")
+    let inflight_cat = if resolved_cat == "封装" {
+        category.unwrap_or("封装")
     } else {
         resolved_cat.as_str()
     };
-    if let Err(e) = super::relay_settings::enforce_inflight_gate(
-        &state.db,
-        &token.user_id,
-        avail,
-        inflight_cat,
-    )
-    .await
+    if let Err(e) =
+        super::relay_settings::enforce_inflight_gate(&state.db, &token.user_id, avail, inflight_cat)
+            .await
     {
         if let AppError::TooManyRequests(msg) = &e {
             record_error_log(
@@ -590,7 +631,8 @@ pub async fn select_channel_with_db(
 
 use super::url_utils::join_url;
 
-/// 事务化预扣费：FOR UPDATE 锁行防并发；有 pending 日志时同事务写入 cost/pre_deduct_gift，
+/// 事务化预扣费：全局对齐加锁顺序（先 logs 后 users），彻底杜绝与结算/退款事务死锁；
+/// 持有 users 锁后极速完成扣除并立即 commit（锁持有时间 < 0.3ms）。
 /// 保证崩溃后孤儿清理/启动恢复可按日志退款（避免「钱包已扣、日志 cost=0」）。
 /// 返回赠送钱包实扣金额（供 `pre_deduct_gift` 落库）。
 pub async fn pre_deduct(
@@ -604,6 +646,19 @@ pub async fn pre_deduct(
     }
     let amount = crate::money::round_money(amount);
     let mut tx = state.db.pool.begin().await?;
+
+    // 1. 若存在 pending 日志，先锁 logs 行（对齐全局锁顺序：先 logs 后 users，消除死锁）
+    if let Some(log_id) = pending_log_id {
+        let _exists: i64 = sqlx::query_scalar(&state.db.format_query(
+            "SELECT id FROM logs WHERE id = ? FOR UPDATE",
+        ))
+        .bind(log_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|_| sqlx::Error::Protocol("pre_deduct: pending log missing".into()))?;
+    }
+
+    // 2. 锁定 users 行并校验可用余额
     let (bal, gift, credit): (f64, f64, f64) = sqlx::query_as(&state.db.format_query(
         "SELECT balance, gift_balance, credit_limit FROM users WHERE id = ? FOR UPDATE",
     ))
@@ -611,12 +666,28 @@ pub async fn pre_deduct(
     .fetch_one(&mut *tx)
     .await?;
 
+    // 预扣只看账户（余额 + 赠送 + 信控）。模型卡券不参与预扣，结算时再承担并退回对应预扣。
     if crate::money::round_money(bal + gift + credit) < amount {
         tx.rollback().await?;
         return Err(sqlx::Error::RowNotFound);
     }
     let (gift_deducted, balance_deducted) = crate::money::split_gift_first(amount, gift);
 
+    // 3. 写入 logs 预扣凭证（行已在阶段 1 锁定，HA 续试时可重置状态供清理命中）
+    // coupon_deduct 预扣阶段恒为 0，真实结算才写入会员面值。
+    if let Some(log_id) = pending_log_id {
+        sqlx::query(&state.db.format_query(
+            "UPDATE logs SET cost = ?, pre_deduct_gift = ?, coupon_deduct = 0, pre_deduct_voucher = 0, status_code = 0, is_completed = 0, \
+             error_message = NULL, billing_detail = '请求处理中' WHERE id = ?",
+        ))
+        .bind(amount)
+        .bind(gift_deducted)
+        .bind(log_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    // 4. 扣减 users 钱包，紧随 commit 极速放锁（持有 users 锁 < 0.3ms）
     sqlx::query(&state.db.format_query(
         "UPDATE users SET balance = balance - ?, gift_balance = gift_balance - ? WHERE id = ?",
     ))
@@ -625,38 +696,6 @@ pub async fn pre_deduct(
     .bind(user_id)
     .execute(&mut *tx)
     .await?;
-
-    // 写入预扣凭证；HA 失败复用同一 pending 时重置为处理中，供崩溃补偿/孤儿清理命中。
-    // 冻结成功后不会再 pre_deduct，无需对冻结态做分支防护。
-    if let Some(log_id) = pending_log_id {
-        let touched = sqlx::query(&state.db.format_query(
-            "UPDATE logs SET cost = ?, pre_deduct_gift = ?, status_code = 0, is_completed = 0, \
-             error_message = NULL, billing_detail = '请求处理中' WHERE id = ?",
-        ))
-        .bind(amount)
-        .bind(gift_deducted)
-        .bind(log_id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if touched == 0 {
-            tx.rollback().await?;
-            tracing::warn!(
-                "[PreDeduct] pending log {} 不存在，回滚预扣 user={}",
-                log_id,
-                user_id
-            );
-            return Err(sqlx::Error::Protocol(
-                "pre_deduct: pending log missing".into(),
-            ));
-        }
-    } else {
-        tracing::warn!(
-            "[PreDeduct] 无 pending_log_id，仅扣钱包无法崩溃退款 user={} amount={:.6}",
-            user_id,
-            amount
-        );
-    }
 
     tx.commit().await?;
     Ok(gift_deducted)
@@ -671,7 +710,7 @@ pub async fn pre_deduct_or_intercept(
     pre_deduction: f64,
     ep: &str,
     start_time: std::time::Instant,
-    is_stream: i32,
+    is_stream: i64,
     request_content_str: &str,
     upstream_body_str: &str,
     ep_tag: Option<String>,
@@ -760,7 +799,7 @@ pub struct PendingLog<'a> {
     pub token_id: i64,
     pub model: &'a str,
     pub endpoint: &'a str,
-    pub is_stream: i32,
+    pub is_stream: i64,
     pub request_content: Option<&'a str>,
     pub upstream_url: Option<&'a str>,
     pub channel: &'a crate::models::Channel,
@@ -801,14 +840,13 @@ pub async fn record_pending_log(p: PendingLog<'_>) -> Option<i64> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("");
-    let (mut action_type, billing_pid, enable_log) =
+    let (meta_cat, billing_pid, enable_log) =
         resolve_model_meta(state, model, category, Some(channel), db_model).await;
-    // 元信息未解析到类型时透传调用方 category（业务模块已知，无需再猜 endpoint）
-    if action_type.is_empty() {
-        if let Some(cat) = category.map(str::trim).filter(|c| !c.is_empty()) {
-            action_type = cat.to_string();
-        }
-    }
+    let action_type = category
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .unwrap_or(meta_cat);
     let generated_log_id = requested_log_id
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -858,6 +896,8 @@ pub async fn record_pending_log(p: PendingLog<'_>) -> Option<i64> {
         .fetch_one(&state.db.pool)
         .await;
 
+    super::relay_settings::release_pre_log_inflight(user_id, &action_type);
+
     match res {
         Ok(id) => {
             crate::relay_debug!(
@@ -888,10 +928,10 @@ async fn resolve_model_meta(
     hint_category: Option<&str>,
     channel: Option<&crate::models::Channel>,
     db_model: Option<&crate::models::Model>,
-) -> (String, Option<String>, i32) {
+) -> (String, Option<String>, i64) {
     let mut action_type = String::new();
     let mut billing_pid: Option<String> = None;
-    let mut enable_log: i32 = 0;
+    let mut enable_log: i64 = 0;
 
     // 统一 JOIN 查询，根据是否有 db_model 选择最优 WHERE 条件
     use sqlx::Row;
@@ -981,8 +1021,8 @@ async fn resolve_model_meta(
     };
 
     action_type = row.try_get("category_name").unwrap_or_default();
-    if action_type == "画质增强" {
-        if let Some(cat) = hint_category.filter(|c| !c.is_empty() && *c != "画质增强") {
+    if action_type == "封装" {
+        if let Some(cat) = hint_category.filter(|c| !c.is_empty() && *c != "封装") {
             action_type = cat.to_string();
         }
     } else if action_type.is_empty() {
@@ -991,7 +1031,9 @@ async fn resolve_model_meta(
         }
     }
     billing_pid = row.try_get("billing_pid").unwrap_or(None);
-    enable_log = row.try_get("enable_log_content").unwrap_or(0);
+    enable_log = row
+        .try_get::<i64, _>("enable_log_content")
+        .unwrap_or(0);
 
     crate::relay_debug!(
         "[ModelMeta] 模型={} 类别={} PID={} 日志内容开关={} 来源={}",
@@ -1023,7 +1065,7 @@ pub async fn record_error_log(
     let cat = if !category.is_empty() {
         category
     } else {
-        action_type_from_path(real_ep).unwrap_or_default()
+        action_type_from_path(real_ep).unwrap_or("其它")
     };
     let prefix = if !cat.is_empty() && cat != "聊天" {
         "tsk_"
@@ -1062,7 +1104,7 @@ pub struct BillRecord<'a> {
     pub pre_deducted: f64,
     pub pre_deduct_gift: f64,
     pub latency_ms: u32,
-    pub is_stream: i32,
+    pub is_stream: i64,
     pub status_code: u16,
     pub error_msg: Option<&'a str>,
     pub request: Option<String>,
@@ -1142,20 +1184,27 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
     // 级联：从 plugin_tag.cascade 补 version/resolution（不改用户入参）
     if let Some(tag) = plugin_tag {
         if feat.version.is_none() {
-            if let Some(ver) = crate::relay::cascade::cascade_json_str(tag, "/cascade/version")
-            {
+            if let Some(ver) = crate::relay::cascade::cascade_json_str(tag, "/cascade/version") {
                 feat.version = Some(ver);
             }
         }
         if feat.resolution.is_none() {
-            if let Some(res) =
-                crate::relay::cascade::cascade_json_str(tag, "/cascade/resolution")
-            {
+            if let Some(res) = crate::relay::cascade::cascade_json_str(tag, "/cascade/resolution") {
                 feat.resolution = Some(res);
             }
         }
     }
-    let has_video_val: i16 = if feat.has_video { 1 } else { 0 };
+    // 异步任务等未先行调用 calculate_relay_cost 的路径：提交时刻锁定模型的时段折扣快照，防跨时段结算漂移
+    if feat.locked_site_discount.is_none() || feat.locked_global_discount.is_none() {
+        if let Some(m) = db_model.filter(|m| crate::models::discount_schedule_enabled(&m.discount_schedule)) {
+            let mut m = m.clone();
+            let site_tz = super::relay_settings::get_cached_site_timezone(&state.db).await;
+            m.apply_discount_schedule_now(site_tz.as_ref());
+            feat.locked_site_discount = Some(m.site_discount);
+            feat.locked_global_discount = Some(m.global_discount);
+        }
+    }
+    let has_video_val: i64 = if feat.has_video { 1 } else { 0 };
     let billing_features_json: Option<String> = serde_json::to_string(&feat).ok();
     let prompt_for_log = usage.context_input_tokens();
 
@@ -1229,7 +1278,7 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
         // 异步节流更新令牌最后使用时间（彻底移出主结算事务，消除高并发下针对同一 token 的行排他锁争夺）
         super::token_quota::touch_token_last_used(state, token.id);
 
-        let (settled_cost, apply_balance) = crate::money::settlement_delta(cost, pre_deducted);
+        let (settled_cost, _apply_balance) = crate::money::settlement_delta(cost, pre_deducted);
         let site_tz = crate::relay::relay_settings::get_cached_site_timezone(&state.db).await;
         let tz = crate::api::date_helper::resolve_user_timedisplay_name(
             &state.db,
@@ -1244,10 +1293,12 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
             None
         };
 
-        let final_action_type = if !category.is_empty() {
+        let final_action_type = if let Some(cat) = hint_category.map(str::trim).filter(|c| !c.is_empty()) {
+            cat.to_string()
+        } else if !category.is_empty() {
             category.clone()
         } else {
-            hint_category.unwrap_or("").to_string()
+            action_type_from_path(system_endpoint).unwrap_or("其它").to_string()
         };
 
         // 【倒序写入第一阶段：大日志落库与 CAS 防重校验】
@@ -1374,18 +1425,61 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
 
             // 【倒序写入第三阶段：用户钱包扣减/退补（锁持有时间压缩至 0.3ms 极速放锁）】
             // 钱包更新后只做同事务的小额返佣入账，然后立即 commit。不要在这里写大文本。
+            // 冻结仍是预扣，不占卡券。同步请求在这里结清，才由卡券承担并退回已冻余额。
+            let charge_ok = (200..400).contains(&status_code);
+            let (voucher_final, voucher_held) = if commission_log_id > 0 && !is_freeze && charge_ok {
+                super::voucher::retarget_for_log(
+                    &state.db,
+                    &mut tx,
+                    &token.user_id,
+                    commission_log_id,
+                    model_name,
+                    settled_cost,
+                )
+                .await?
+            } else {
+                (0.0, 0.0)
+            };
+            let (settled_rest, pre_rest, _) = crate::money::wallet_leg(
+                settled_cost,
+                pre_deducted,
+                voucher_final,
+                voucher_held,
+            );
+            #[cfg(feature = "commercial_plugins")]
+            let (coupon_final, coupon_held) = if commission_log_id > 0 && !is_freeze && charge_ok {
+                crate::api::plugins::marketing_membership::billing::retarget_for_log(
+                    state,
+                    &mut tx,
+                    &token.user_id,
+                    commission_log_id,
+                    model_name,
+                    settled_rest,
+                )
+                .await?
+            } else {
+                (0.0, 0.0)
+            };
+            #[cfg(not(feature = "commercial_plugins"))]
+            let (coupon_final, coupon_held) = (0.0, 0.0);
+            let (wallet_settled, wallet_pre, wallet_apply) = crate::money::wallet_leg(
+                settled_rest,
+                pre_rest,
+                coupon_final,
+                coupon_held,
+            );
             let consumption_award = crate::services::affiliate::prepare_consumption_commission(
                 &state.db,
                 &mut tx,
                 &token.user_id,
-                settled_cost,
-                pre_deducted,
+                wallet_settled,
+                wallet_pre,
                 pre_deduct_gift,
                 is_freeze,
             )
             .await
             .map_err(|e| sqlx::Error::Protocol(format!("commission: {e}")))?;
-            if apply_balance > 0.0 {
+            if wallet_apply > 0.0 {
                 sqlx::query(&state.db.format_query(
                     "UPDATE users SET
                      balance = CASE WHEN gift_balance >= ? THEN balance ELSE balance - (? - gift_balance) END,
@@ -1395,14 +1489,14 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
                      updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?",
                 ))
-                .bind(apply_balance).bind(apply_balance)
-                .bind(pre_deduct_gift).bind(apply_balance).bind(apply_balance)
-                .bind(apply_balance).bind(apply_balance).bind(settled_cost).bind(&token.user_id)
+                .bind(wallet_apply).bind(wallet_apply)
+                .bind(pre_deduct_gift).bind(wallet_apply).bind(wallet_apply)
+                .bind(wallet_apply).bind(wallet_apply).bind(wallet_settled).bind(&token.user_id)
                 .execute(&mut *tx)
                 .await?;
-            } else if apply_balance < 0.0 {
-                let refund = -apply_balance;
-                let gift_cost = settled_cost.min(pre_deduct_gift);
+            } else if wallet_apply < 0.0 {
+                let refund = -wallet_apply;
+                let gift_cost = wallet_settled.min(pre_deduct_gift);
                 let gift_refund = pre_deduct_gift - gift_cost;
                 let balance_refund = refund - gift_refund;
                 sqlx::query(&state.db.format_query(
@@ -1410,7 +1504,7 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
                 ))
                 .bind(balance_refund)
                 .bind(gift_refund)
-                .bind(settled_cost)
+                .bind(wallet_settled)
                 .bind(gift_cost)
                 .bind(&token.user_id)
                 .execute(&mut *tx)
@@ -1420,7 +1514,7 @@ pub async fn record_and_bill_inner(p: BillRecord<'_>) {
                 let (add_used, add_gift) = if is_freeze {
                     (0.0, 0.0)
                 } else {
-                    (settled_cost, settled_cost.min(pre_deduct_gift))
+                    (wallet_settled, wallet_settled.min(pre_deduct_gift))
                 };
                 sqlx::query(&state.db.format_query(
                     "UPDATE users SET used_quota = used_quota + ?, gift_used_quota = gift_used_quota + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1564,7 +1658,43 @@ async fn settle_pending_prepay(
         return false;
     }
 
-    if let Err(e) = refund_wallet_sql(&state.db, &mut *tx, &user_id, cost, pre_deduct_gift).await {
+    let voucher_refunded = match crate::relay::voucher::release_holds(&state.db, &mut tx, &user_id, log_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[{tag}] 退回模型卡券失败 日志ID={}: {:?}", log_id, e);
+            let _ = tx.rollback().await;
+            return false;
+        }
+    };
+    #[cfg(feature = "commercial_plugins")]
+    let coupon_refunded = match crate::api::plugins::marketing_membership::billing::refund_coupon_prepay(
+        state, &mut tx, &user_id, log_id,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[{tag}] 退回卡券失败 日志ID={}: {:?}", log_id, e);
+            let _ = tx.rollback().await;
+            return false;
+        }
+    };
+    #[cfg(not(feature = "commercial_plugins"))]
+    let coupon_refunded = 0.0;
+    let (balance_refund, gift_refund) = crate::money::wallet_refund_parts(
+        cost,
+        pre_deduct_gift,
+        voucher_refunded + coupon_refunded,
+    );
+    if let Err(e) = refund_wallet_sql(
+        &state.db,
+        &mut *tx,
+        &user_id,
+        balance_refund + gift_refund,
+        gift_refund,
+    )
+    .await
+    {
         tracing::warn!(
             "[{tag}] 退款失败 用户ID={} 日志ID={}: {:?}",
             user_id,
@@ -1630,9 +1760,8 @@ where
         return Ok(());
     }
     // 赠送退回不超过 cost，避免脏数据导致 balance 被扣成负向
-    let cost = crate::money::round_money(cost.max(0.0));
-    let gift_refund = crate::money::round_money(pre_deduct_gift.min(cost).max(0.0));
-    let balance_refund = crate::money::round_money(cost - gift_refund);
+    let (balance_refund, gift_refund) =
+        crate::money::wallet_refund_parts(cost, pre_deduct_gift, 0.0);
     sqlx::query(&db.format_query(
         "UPDATE users SET balance = balance + ?, gift_balance = gift_balance + ?, \
          updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1752,14 +1881,20 @@ pub fn is_poll_transport_retryable(status: u16) -> bool {
     )
 }
 
-/// 上游失败对外错误：日志与客户端共用同一 HTTP 状态码（4xx/5xx 透出，其余按 502）
-/// 错误体经 `format_as_openai_error` 收成标准 OpenAI error；`headers` 可选透传上游诊断头
+/// 上游失败对外错误：根据客户端请求路径决定是否格式化为 OpenAI 错误
+/// - OpenAI 兼容路由：经 norm_err_msg 收成标准 OpenAI 错误结构
+/// - 官方原生路由：直接透传上游原始错误响应体，绝不擅自包装
 pub fn upstream_fail(
     status: u16,
     raw_msg: &str,
     headers: Option<axum::http::HeaderMap>,
+    raw_path: &str,
 ) -> crate::error::AppError {
-    let msg = sanitize_error_message(&norm_err_msg(raw_msg));
+    let msg = if super::response_formatter::is_openai_compatible_path(raw_path) {
+        sanitize_error_message(&norm_err_msg(raw_msg))
+    } else {
+        raw_msg.to_string()
+    };
     crate::error::AppError::UpstreamHttpError(normalize_error_http_status(status), msg, headers)
 }
 
@@ -1777,7 +1912,7 @@ pub struct ZeroCostUpstreamFail<'a> {
     pub prefer_http_status: Option<u16>,
     pub endpoint: &'a str,
     pub latency_ms: u32,
-    pub is_stream: i32,
+    pub is_stream: i64,
     pub request_content: String,
     pub response_body: String,
     pub response_content: Option<String>,
@@ -1988,22 +2123,26 @@ fn classify_error_code(code: &str) -> Option<u16> {
     {
         return Some(401);
     }
-    // 限流/超额
-    if c.contains("rate")
-        || c.contains("limit")
-        || c.contains("quota")
-        || c.contains("throttl")
-        || c.contains("exceeded")
-    {
-        return Some(429);
-    }
-    // 超时/不可用
+    // 超时/不可用（优先于限流判定，避免 deadline_exceeded 等被 exceeded 误判）
     if c.contains("timeout")
+        || c.contains("deadline")
         || c.contains("gateway")
         || c.contains("unavailable")
         || c.contains("overload")
     {
         return Some(504);
+    }
+    // 限流/超额
+    if c.contains("rate")
+        || c.contains("limit")
+        || c.contains("quota")
+        || c.contains("throttl")
+        || c.contains("quota_exceeded")
+        || c.contains("rate_limit_exceeded")
+        || c.contains("limit_exceeded")
+        || c.contains("concurrency_limit")
+    {
+        return Some(429);
     }
     // 上游服务内部错误
     if c.contains("internal") || c.contains("server_error") || c.contains("service_error") {
@@ -2020,7 +2159,10 @@ fn classify_error_text(msg: &str) -> u16 {
     if m.contains("overdue")
         || m.contains("out of budget")
         || m.contains("insufficient_balance")
+        || m.contains("insufficient_quota")
         || m.contains("insufficient fund")
+        || m.contains("insufficient_quota")
+        || m.contains("insufficient quota")
         || m.contains("payment required")
         || m.contains("balance")
         || m.contains("payment")
@@ -2030,12 +2172,16 @@ fn classify_error_text(msg: &str) -> u16 {
     {
         return 402;
     }
-    // 400：内容风控（须在 403 之前）
+    // 400：内容风控与客户端请求错误（须在 403 之前）
     if is_content_policy(&m)
         || m.contains("content_filter")
         || m.contains("敏感")
         || m.contains("违规")
         || m.contains("版权")
+        || m.contains("failed to download media")
+        || m.contains("check if the link is accessible")
+        || m.contains("素材转换失败")
+        || m.contains("素材处理失败")
     {
         return 400;
     }
@@ -2053,9 +2199,12 @@ fn classify_error_text(msg: &str) -> u16 {
     if m.contains("auth")
         || m.contains("unauthorized")
         || m.contains("api_key")
+        || m.contains("api key")
         || m.contains("credential")
         || m.contains("invalid_key")
+        || m.contains("invalid key")
         || m.contains("bad_key")
+        || m.contains("bad key")
         || m.contains("revoked")
         || m.contains("unauthenticated")
         || m.contains("鉴权")
@@ -2064,24 +2213,13 @@ fn classify_error_text(msg: &str) -> u16 {
     {
         return 401;
     }
-    // 429：限流/超额
-    if m.contains("too many requests")
-        || m.contains("too_many_requests")
-        || m.contains("limit")
-        || m.contains("quota")
-        || m.contains("exceeded")
-        || m.contains("rate")
-        || m.contains("insufficient")
-        || m.contains("额度")
-        || m.contains("限流")
-        || m.contains("并发")
-        || m.contains("超出")
-        || m.contains("不足")
-    {
-        return 429;
-    }
-    // 504：超时/网关/连接中断
+    // 504：超时/网关/连接中断（优先于 429 匹配，避免 deadline exceeded 被误判为限流）
     if m.contains("timeout")
+        || m.contains("timed out")
+        || m.contains("timedout")
+        || m.contains("deadline exceeded")
+        || m.contains("context deadline")
+        || m.contains("read body err")
         || m.contains("gateway")
         || m.contains("connect")
         || m.contains("disconnect")
@@ -2092,6 +2230,24 @@ fn classify_error_text(msg: &str) -> u16 {
         || m.contains("中断")
     {
         return 504;
+    }
+    // 429：限流/超额（收敛专有短语，杜绝泛词误伤）
+    if m.contains("too many requests")
+        || m.contains("too_many_requests")
+        || m.contains("rate limit")
+        || m.contains("rate_limit")
+        || m.contains("ratelimit")
+        || m.contains("quota exceeded")
+        || m.contains("limit exceeded")
+        || m.contains("concurrency limit")
+        || m.contains("quota")
+        || m.contains("throttl")
+        || m.contains("限流")
+        || m.contains("频率限制")
+        || m.contains("并发限制")
+        || m.contains("并发超限")
+    {
+        return 429;
     }
     // 500：上游服务器内部故障
     if m.contains("internal")
@@ -2441,6 +2597,9 @@ pub fn extract_request_audio_urls(body: &serde_json::Value) -> Vec<String> {
     if urls.is_empty() {
         urls = extract_string_array_urls(body, "audios");
     }
+    if urls.is_empty() {
+        urls = extract_string_array_urls(body, "sounds");
+    }
     urls.sort();
     urls.dedup();
     urls
@@ -2536,3 +2695,204 @@ fn parse_mp3_duration(data: &[u8]) -> Option<f64> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_infer_error_status_code_accuracy() {
+        // 1. 素材转换与下载失败（应归为客户端 400 错误，杜绝误判为 429）
+        let user_err = "素材转换失败: [Failed to download media] tos: request error: Message=tos: read body err:context deadline exceeded";
+        assert_eq!(infer_error_status_code_from_str(user_err), 400);
+
+        // 2. 纯网络超时（应归为 504 网关超时，杜绝误判为 429）
+        let timeout_err = "tos: request error: Message=tos: read body err:context deadline exceeded";
+        assert_eq!(infer_error_status_code_from_str(timeout_err), 504);
+
+        // 3. 真实限流（必须 100% 保持识别为 429）
+        assert_eq!(infer_error_status_code_from_str("rate limit exceeded"), 429);
+        assert_eq!(infer_error_status_code_from_str("too many requests"), 429);
+        assert_eq!(infer_error_status_code_from_str("触发并发限制，请稍后重试"), 429);
+        assert_eq!(infer_error_status_code_from_str("quota exceeded for this model"), 429);
+        assert_eq!(infer_error_status_code_from_str("API rate throttled"), 429);
+
+        // 4. 欠费/余额不足（402）
+        assert_eq!(infer_error_status_code_from_str("insufficient_quota"), 402);
+        assert_eq!(infer_error_status_code_from_str("账户余额不足，请充值"), 402);
+
+        // 5. 鉴权失败（401）
+        assert_eq!(infer_error_status_code_from_str("Incorrect API key provided"), 401);
+
+        // 6. 权限不足（403）
+        assert_eq!(infer_error_status_code_from_str("Access denied for current resource"), 403);
+
+        // 7. 内容风控（400）
+        assert_eq!(infer_error_status_code_from_str("content sensitive policy violation"), 400);
+
+        // 8. 显式带有数字 code 的 JSON（优先采用数字 code）
+        let json_400 = serde_json::json!({
+            "error": {
+                "code": "400",
+                "message": "素材转换失败: context deadline exceeded"
+            }
+        });
+        assert_eq!(infer_error_status_code(&json_400), 400);
+
+        let json_429 = serde_json::json!({
+            "error": {
+                "code": "429",
+                "message": "Too Many Requests"
+            }
+        });
+        assert_eq!(infer_error_status_code(&json_429), 429);
+
+        // 9. 阿里百炼/DashScope 异步任务失败与 degenerate 文本（必须为 400，杜绝误判为 429）
+        let dashscope_degenerate_json = serde_json::json!({
+            "output": {
+                "task_id": "0f9774f7",
+                "task_status": "FAILED",
+                "code": "InvalidParameter",
+                "message": "Input Video url https://oss.aliyun.com/sample.mp4 contains degenerate frame timestamps"
+            }
+        });
+        assert_eq!(infer_error_status_code(&dashscope_degenerate_json), 400);
+        assert_eq!(
+            infer_error_status_code_from_str("Input Video url contains degenerate frame timestamps"),
+            400
+        );
+    }
+
+    #[test]
+    fn test_upstream_fail_passthrough() {
+        let raw_vidu_err = r#"{"code":40001,"message":"invalid parameters","detail":"image prompt required"}"#;
+
+        // 1. 官方原生路由：原始错误体 100% 原样透传，严禁转为 OpenAI 格式
+        let err_official = upstream_fail(400, raw_vidu_err, None, "/ent/v2/img2video");
+        match &err_official {
+            crate::error::AppError::UpstreamHttpError(status, msg, _) => {
+                assert_eq!(*status, 400);
+                assert_eq!(msg, raw_vidu_err);
+                assert!(!msg.contains("\"type\":\"upstream_error\""));
+            }
+            _ => panic!("Expected UpstreamHttpError"),
+        }
+        // 验证进入 IntoResponse 后，输出的 JSON 就是原样 Vidu 错误
+        use axum::response::IntoResponse;
+        let resp = err_official.into_response();
+        assert_eq!(resp.status().as_u16(), 400);
+
+        // 1.1 复合路由测试（含 upstream_path，如 /ent/v2/img2video|/ent/v2/img2video）
+        let err_composite = upstream_fail(400, raw_vidu_err, None, "/ent/v2/img2video|/ent/v2/img2video");
+        match err_composite {
+            crate::error::AppError::UpstreamHttpError(status, msg, _) => {
+                assert_eq!(status, 400);
+                assert_eq!(msg, raw_vidu_err);
+            }
+            _ => panic!("Expected UpstreamHttpError"),
+        }
+
+        // 2. OpenAI 兼容路由：错误体转换为 OpenAI 标准 {"error": {...}}
+        let err_openai = upstream_fail(400, raw_vidu_err, None, "/v1/video/generations");
+        match err_openai {
+            crate::error::AppError::UpstreamHttpError(status, msg, _) => {
+                assert_eq!(status, 400);
+                let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+                assert!(v.get("error").is_some());
+                assert_eq!(v["error"]["code"], "40001");
+                assert_eq!(v["error"]["message"], "image prompt required");
+            }
+            _ => panic!("Expected UpstreamHttpError"),
+        }
+    }
+
+    #[test]
+    fn test_discount_mask_and_price_floor_clamping() {
+        // 1. 兼容旧版枚举与新版位掩码 (16 | mask)
+        assert_eq!(normalize_discount_mask(0), DISC_ALL);
+        assert_eq!(normalize_discount_mask(1), DISC_USER_MODEL | DISC_GLOBAL);
+        assert_eq!(normalize_discount_mask(2), DISC_LEVEL | DISC_USER_MODEL);
+        assert_eq!(normalize_discount_mask(DISC_V2_FLAG), 0);
+        assert_eq!(
+            normalize_discount_mask(DISC_V2_FLAG | DISC_LEVEL | DISC_CHANNEL),
+            DISC_LEVEL | DISC_CHANNEL
+        );
+
+        // 2. 勾选项最低值匹配与全不选回退 1.0x 原价
+        assert_eq!(
+            resolve_discount(None, 0.8, Some(0.7), 0.6, DISC_V2_FLAG | DISC_ALL),
+            (0.6, "渠道倍率")
+        );
+        assert_eq!(
+            resolve_discount(
+                None,
+                0.8,
+                Some(0.7),
+                0.6,
+                DISC_V2_FLAG | DISC_LEVEL | DISC_USER_MODEL
+            ),
+            (0.7, "用户模型折扣")
+        );
+        assert_eq!(
+            resolve_discount(None, 0.8, Some(0.7), 0.6, DISC_V2_FLAG),
+            (1.0, "默认倍率")
+        );
+
+        // 3. 未建档模型 (None) 默认以 1.0 保底防亏损
+        assert_eq!(clamp_discount_floor(0.6, None), Some(1.0));
+        assert_eq!(clamp_discount_floor(1.0, None), None);
+
+        // 4. 全站折扣 0 是免费；等级和渠道的 0 仍忽略
+        assert_eq!(
+            resolve_discount(None, 0.0, None, 0.0, DISC_V2_FLAG | DISC_LEVEL | DISC_CHANNEL),
+            (1.0, "默认倍率")
+        );
+        let free = discount_model(0.0, 1, 0.0, 1);
+        assert_eq!(
+            resolve_discount(Some(&free), 0.8, Some(0.7), 0.6, DISC_V2_FLAG | DISC_ALL),
+            (0.0, "全站折扣")
+        );
+        assert_eq!(clamp_discount_floor(0.0, Some(&free)), None);
+        let floored = discount_model(0.0, 1, 0.5, 1);
+        assert_eq!(clamp_discount_floor(0.0, Some(&floored)), Some(0.5));
+    }
+
+    fn discount_model(global: f64, global_on: i64, site: f64, site_on: i64) -> crate::models::Model {
+        crate::models::Model {
+            id: 1,
+            mid: "000001".into(),
+            name: "t".into(),
+            model_id: "t".into(),
+            original_id: String::new(),
+            model_id_alias: String::new(),
+            provider_id: None,
+            type_id: None,
+            api_provider_id: None,
+            group_ratios: "{}".into(),
+            billing_rule_id: None,
+            pre_deduction: 1.0,
+            is_active: 1,
+            forward_rule_ids: None,
+            enable_log_content: 0,
+            site_discount: site,
+            site_discount_enabled: site_on,
+            global_discount: global,
+            global_discount_enabled: global_on,
+            discount_schedule: String::new(),
+            logo: None,
+            remark: None,
+            description: None,
+            feature_attributes: None,
+            is_system: 0,
+            library_mid: None,
+            is_listed: 1,
+            listed_count: 0,
+            library_kind: None,
+            sort_order: 0,
+            created_at: crate::time_system::DbTs::default(),
+            updated_at: crate::time_system::DbTs::default(),
+            type_name: None,
+        }
+    }
+}
+
